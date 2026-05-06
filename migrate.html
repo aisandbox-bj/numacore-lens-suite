@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NumaCore Migrate — V4 Flat → V5</title>
+<script src="numacore_lib.js"></script>
+<style>
+  :root {
+    --bg-deep:    #0a0e1a;
+    --bg-panel:   #0f1525;
+    --bg-card:    #141b2d;
+    --bg-card2:   #1a2340;
+    --accent:     #64b5f6;
+    --green:      #4caf50;
+    --orange:     #ff9800;
+    --red:        #f44336;
+    --gold:       #ffd54f;
+    --teal:       #4dd0e1;
+    --text-pri:   #e8f0fe;
+    --text-sec:   #8eaac8;
+    --text-dim:   #6a829e;
+    --border:     rgba(100,181,246,0.18);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-deep); color: var(--text-pri);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 32px 24px 60px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header.head {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 22px; margin-bottom: 32px;
+  }
+  .eyebrow {
+    font-size: 10px; color: var(--text-dim); letter-spacing: 0.18em;
+    text-transform: uppercase; margin-bottom: 8px;
+  }
+  h1 {
+    font-size: 26px; font-weight: 700; color: var(--text-pri);
+    line-height: 1.25; margin-bottom: 6px;
+  }
+  .sub { font-size: 13px; color: var(--text-sec); }
+
+  .step {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 24px; margin-bottom: 18px;
+    border-left: 4px solid var(--accent);
+  }
+  .step .step-num {
+    display: inline-block; width: 24px; height: 24px;
+    border-radius: 50%; background: var(--accent); color: var(--bg-deep);
+    font-weight: 700; font-size: 12px;
+    text-align: center; line-height: 24px; margin-right: 10px;
+    vertical-align: middle;
+  }
+  .step h2 {
+    display: inline-block; vertical-align: middle;
+    font-size: 16px; font-weight: 600; color: var(--text-pri);
+  }
+  .step p {
+    margin-top: 10px; font-size: 13px; color: var(--text-sec);
+  }
+  .step.done { border-left-color: var(--green); }
+  .step.warn { border-left-color: var(--orange); }
+  .step.error { border-left-color: var(--red); }
+
+  /* Drop zone */
+  .drop {
+    margin-top: 14px;
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 38px 24px;
+    text-align: center;
+    background: var(--bg-card2);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .drop:hover, .drop.drag-over {
+    border-color: var(--accent);
+    background: rgba(100,181,246,0.06);
+  }
+  .drop .drop-icon { font-size: 36px; margin-bottom: 10px; opacity: 0.7; }
+  .drop .drop-msg { font-size: 14px; color: var(--text-sec); }
+  .drop .drop-msg .a-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+  .drop .drop-hint { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+  input[type=file] { display: none; }
+
+  /* Audit panel */
+  .audit { display: none; }
+  .audit.show { display: block; }
+  .audit-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px; flex-wrap: wrap; gap: 10px;
+  }
+  .audit-status {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px; border-radius: 20px; font-size: 12px;
+    font-weight: 600; letter-spacing: 0.05em;
+  }
+  .audit-status.ok    { background: rgba(76,175,80,0.15);  color: var(--green); border: 1px solid rgba(76,175,80,0.3); }
+  .audit-status.warn  { background: rgba(255,152,0,0.15);  color: var(--orange); border: 1px solid rgba(255,152,0,0.3); }
+  .audit-status.error { background: rgba(244,67,54,0.15);  color: var(--red); border: 1px solid rgba(244,67,54,0.3); }
+
+  table.counts {
+    width: 100%; border-collapse: collapse;
+    font-size: 13px; margin: 8px 0 16px;
+  }
+  table.counts th {
+    background: var(--bg-card2); color: var(--text-sec);
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 10px 12px; text-align: left; border: 1px solid var(--border);
+    font-weight: 600;
+  }
+  table.counts td {
+    padding: 9px 12px; border: 1px solid var(--border);
+    color: var(--text-pri); vertical-align: top;
+  }
+  table.counts td.match  { color: var(--green); }
+  table.counts td.diff   { color: var(--orange); font-weight: 600; }
+  table.counts td.label  { color: var(--accent); font-weight: 500; width: 36%; }
+
+  ul.issues { list-style: none; padding-left: 0; margin-top: 8px; }
+  ul.issues li {
+    padding: 8px 12px 8px 32px; position: relative; font-size: 13px;
+    background: var(--bg-card2); border-radius: 6px; margin-bottom: 6px;
+    border-left: 3px solid var(--text-dim);
+  }
+  ul.issues li::before {
+    position: absolute; left: 10px; top: 8px;
+    font-size: 13px; font-weight: 700;
+  }
+  ul.issues li.fatal { border-left-color: var(--red); }
+  ul.issues li.fatal::before { content: '⛔'; }
+  ul.issues li.warn  { border-left-color: var(--orange); }
+  ul.issues li.warn::before { content: '⚠'; color: var(--orange); }
+  ul.issues li.info  { border-left-color: var(--accent); }
+  ul.issues li.info::before  { content: 'ℹ'; color: var(--accent); }
+
+  .btn-row {
+    display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap;
+  }
+  .btn {
+    padding: 10px 20px; font-size: 13px; font-weight: 600;
+    border-radius: 6px; cursor: pointer; border: 1px solid transparent;
+    font-family: inherit;
+  }
+  .btn-primary {
+    background: var(--accent); color: var(--bg-deep); border-color: var(--accent);
+  }
+  .btn-primary:hover { background: #4fa3e6; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary {
+    background: transparent; color: var(--text-pri); border-color: var(--border);
+  }
+  .btn-secondary:hover { background: var(--bg-card2); border-color: var(--accent); }
+
+  .file-info {
+    background: var(--bg-card2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px; margin-bottom: 14px;
+    font-size: 12px; color: var(--text-sec); display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .file-info span strong { color: var(--text-pri); }
+
+  .footer {
+    margin-top: 50px; padding-top: 22px; border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text-dim); text-align: center;
+  }
+  code {
+    font-family: 'Consolas','Monaco',monospace;
+    background: var(--bg-card2); padding: 1px 6px; border-radius: 3px;
+    font-size: 12px; color: var(--teal);
+  }
+
+  .callout {
+    background: rgba(255,213,79,0.06); border: 1px solid rgba(255,213,79,0.25);
+    border-left: 4px solid var(--gold); border-radius: 8px;
+    padding: 14px 18px; margin: 16px 0; font-size: 13px; color: var(--text-pri);
+  }
+  .callout strong { color: var(--gold); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="head">
+    <div class="eyebrow">NumaCore Lens Suite · Chunk 2 · Schema migration</div>
+    <h1>Migrate Fleet JSON: V4 Flat → V5</h1>
+    <div class="sub">Drop a current fleet file. The page reshapes it into the V5 schema and runs an audit. Your file stays in this browser — nothing is uploaded anywhere.</div>
+  </header>
+
+  <!-- STEP 1: drop -->
+  <div class="step" id="step1">
+    <span class="step-num">1</span><h2>Drop your fleet JSON</h2>
+    <p>Use a <strong>copy</strong> of the file, not your live working version. The migrator never overwrites the input — but your file manager might if you drag-and-drop carelessly.</p>
+    <div class="drop" id="dropZone">
+      <div class="drop-icon">📁</div>
+      <div class="drop-msg">Drop a <code>.json</code> file here, or <span class="a-link" id="browseLink">browse for one</span>.</div>
+      <div class="drop-hint">The file is read into this browser tab only. It is not uploaded anywhere.</div>
+      <input type="file" id="fileInput" accept=".json,application/json">
+    </div>
+  </div>
+
+  <!-- STEP 2: audit results -->
+  <div class="step audit" id="step2">
+    <span class="step-num">2</span><h2>Migration audit</h2>
+    <div class="audit show" id="auditPanel">
+      <div class="file-info" id="fileInfo"></div>
+      <div class="audit-head">
+        <span id="auditStatus" class="audit-status">…</span>
+        <span style="font-size:12px;color:var(--text-dim)" id="auditSummary"></span>
+      </div>
+
+      <div style="font-size:11px;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase;margin-top:14px;margin-bottom:6px">Counts</div>
+      <table class="counts">
+        <thead>
+          <tr><th>Entity</th><th>Before (V4 Flat)</th><th>After (V5)</th><th>Status</th></tr>
+        </thead>
+        <tbody id="countsBody"></tbody>
+      </table>
+
+      <div style="font-size:11px;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase;margin-top:18px;margin-bottom:6px">Issues</div>
+      <ul class="issues" id="issuesList"></ul>
+    </div>
+  </div>
+
+  <!-- STEP 3: download -->
+  <div class="step audit" id="step3">
+    <span class="step-num">3</span><h2>Download the migrated V5 file</h2>
+    <p>Save the V5 file alongside your V4 backup. Open it in <code>cadence.html</code> first as a sanity check (it ships with V5 reading in Chunk 3). Until Chunk 4, leave your <strong>production</strong> fleet file alone.</p>
+    <div class="callout">
+      <strong>Do not use this file in production yet.</strong> This is a sandbox migration so we can prove the migration script works. Cadence v18 (V5 reader) ships in Chunk 3; the production cutover is the named release event in Chunk 4.
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="downloadBtn" disabled>⬇ Download V5 JSON</button>
+      <button class="btn btn-secondary" id="resetBtn">Start over</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    NumaCore Lens Suite migration utility · uses <code>numacore_lib.js</code> v1.1<br>
+    Migration logic per Schema V5 spec §11. Idempotent — running this on a V5 file does nothing.
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Library check ─────────────────────────────────────────────
+  if (!window.NumaCoreLib || !NumaCoreLib.migrateV4FlatToV5) {
+    document.body.innerHTML = '<div style="padding:40px;color:#f44336;font-family:sans-serif">'
+      + '<h2>Library not loaded</h2>'
+      + '<p><code>numacore_lib.js</code> must sit in the same folder as this file (or one folder up if this is in a subdir). '
+      + 'For GitHub Pages, both files belong in the repo root.</p></div>';
+    return;
+  }
+
+  var lib = window.NumaCoreLib;
+  var current = { input: null, migrated: null, audit: null, filename: '' };
+
+  // ── DOM refs ─────────────────────────────────────────────
+  var dropZone     = document.getElementById('dropZone');
+  var fileInput    = document.getElementById('fileInput');
+  var browseLink   = document.getElementById('browseLink');
+  var step2        = document.getElementById('step2');
+  var step3        = document.getElementById('step3');
+  var fileInfo     = document.getElementById('fileInfo');
+  var auditStatus  = document.getElementById('auditStatus');
+  var auditSummary = document.getElementById('auditSummary');
+  var countsBody   = document.getElementById('countsBody');
+  var issuesList   = document.getElementById('issuesList');
+  var downloadBtn  = document.getElementById('downloadBtn');
+  var resetBtn     = document.getElementById('resetBtn');
+
+  // ── File pickers ─────────────────────────────────────────
+  dropZone.addEventListener('click', function () { fileInput.click(); });
+  browseLink.addEventListener('click', function (e) {
+    e.stopPropagation();
+    fileInput.click();
+  });
+
+  dropZone.addEventListener('dragover', function (e) {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', function () {
+    dropZone.classList.remove('drag-over');
+  });
+  dropZone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+
+  fileInput.addEventListener('change', function (e) {
+    if (e.target.files.length) handleFile(e.target.files[0]);
+    fileInput.value = '';
+  });
+
+  resetBtn.addEventListener('click', function () {
+    current = { input: null, migrated: null, audit: null, filename: '' };
+    step2.classList.remove('show');
+    step3.classList.remove('show');
+    downloadBtn.disabled = true;
+    lib.showToast('Reset — drop another file', 'info');
+  });
+
+  // ── Handle a dropped file ─────────────────────────────────
+  function handleFile(file) {
+    lib.loadFleetFile(file, function (json, name) {
+      current.input = json;
+      current.filename = name;
+      runMigration();
+    }, function (errMsg) {
+      current = { input: null, migrated: null, audit: null, filename: '' };
+      lib.showToast(errMsg, 'error', 4000);
+    });
+  }
+
+  // ── Run migration + render audit ─────────────────────────
+  function runMigration() {
+    var result = lib.migrateV4FlatToV5(current.input);
+    current.migrated = result.migrated;
+    current.audit = result.audit;
+
+    renderFileInfo();
+    renderAuditStatus();
+    renderCounts();
+    renderIssues();
+
+    step2.classList.add('show');
+    step3.classList.add('show');
+    downloadBtn.disabled = !result.migrated;
+
+    // scroll to audit panel
+    setTimeout(function () {
+      step2.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }
+
+  function renderFileInfo() {
+    var input = current.input || {};
+    var fmt = function (n) { return (n == null) ? '—' : String(n); };
+    var sizeKB = (JSON.stringify(input).length / 1024).toFixed(1);
+    fileInfo.innerHTML =
+        '<span><strong>File:</strong> ' + lib.esc(current.filename) + '</span>'
+      + '<span><strong>Size:</strong> ' + sizeKB + ' KB</span>'
+      + '<span><strong>Schema (declared):</strong> ' + lib.esc(fmt(input.schema_version || (input.meta && input.meta.schemaVersion) || '—')) + '</span>'
+      + '<span><strong>Client code:</strong> ' + lib.esc(fmt(input.client_code || (input.meta && input.meta.clientCode) || '—')) + '</span>';
+  }
+
+  function renderAuditStatus() {
+    var a = current.audit || { issues: [], ok: false };
+    var fatal = a.issues.filter(function (i) { return i.severity === 'fatal'; }).length;
+    var warns = a.issues.filter(function (i) { return i.severity === 'warn'; }).length;
+
+    auditStatus.classList.remove('ok', 'warn', 'error');
+    if (!a.ok || fatal > 0) {
+      auditStatus.classList.add('error');
+      auditStatus.textContent = '✗ Migration failed';
+    } else if (warns > 0) {
+      auditStatus.classList.add('warn');
+      auditStatus.textContent = '⚠ Migration succeeded with warnings';
+    } else {
+      auditStatus.classList.add('ok');
+      auditStatus.textContent = '✓ Clean migration';
+    }
+    auditSummary.textContent = a.idMapSize
+      ? a.idMapSize + ' component IDs mapped'
+      : 'Already V5 — no changes needed';
+  }
+
+  function renderCounts() {
+    var c = (current.audit && current.audit.counts) || { before: {}, after: {} };
+    var rows = [
+      ['Components', 'components'],
+      ['Component history', 'componentHistory'],
+      ['Projects', 'projects'],
+      ['Component date overrides', 'componentDateOverrides'],
+      ['Decisions / decision log', 'decisions'],
+      ['Oil samples (ConMon)', 'oil_samples']
+    ];
+    countsBody.innerHTML = rows.map(function (r) {
+      var label = r[0], key = r[1];
+      var before = c.before[key];
+      var after = c.after[key];
+      var status, statusCls;
+      if (before === undefined && after === undefined) { status = '—'; statusCls = ''; }
+      else if (before === after) { status = '✓ match'; statusCls = 'match'; }
+      else { status = '⚠ ' + (after - before) + ' diff'; statusCls = 'diff'; }
+      return '<tr>'
+        + '<td class="label">' + label + '</td>'
+        + '<td>' + (before === undefined ? '—' : before) + '</td>'
+        + '<td>' + (after === undefined ? '—' : after) + '</td>'
+        + '<td class="' + statusCls + '">' + status + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function renderIssues() {
+    var issues = (current.audit && current.audit.issues) || [];
+    if (!issues.length) {
+      issuesList.innerHTML = '<li class="info">No issues — counts match, FK references intact.</li>';
+      return;
+    }
+    issuesList.innerHTML = issues.map(function (i) {
+      return '<li class="' + (i.severity || 'info') + '">' + lib.esc(i.msg) + '</li>';
+    }).join('');
+  }
+
+  // ── Download ─────────────────────────────────────────────
+  downloadBtn.addEventListener('click', function () {
+    if (!current.migrated) return;
+    var clientCode = (current.migrated.meta && current.migrated.meta.clientCode) || 'CLIENT';
+    var ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(/:/g, '-');
+    var safeName = String(clientCode).replace(/[^A-Z0-9_]/gi, '_');
+    var fname = safeName + '_fleet_v5_' + ts + '.json';
+
+    var blob = new Blob([JSON.stringify(current.migrated, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+
+    lib.showToast('Saved ' + fname, 'success', 3000);
+  });
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,563 @@
+/**
+ * numacore_lib.js — NumaCore Lens Suite shared helpers
+ *
+ * Loaded by all four suite tools via <script src="numacore_lib.js"></script>.
+ * Exposes a single global: window.NumaCoreLib
+ *
+ * No external dependencies, no build step. Works on file:// and https
+ * (GitHub Pages production deployment + standalone disk runs).
+ *
+ * Lifted from existing tool implementations:
+ *   esc()         — Intake v7.5:761
+ *   parseDate()   — Intake v7.5:771
+ *   fmtDate()     — synthesised from CPT v17:1652-1660
+ *   scopedKey()   — CPT v17:1219 (getSaveKey pattern)
+ *   showToast()   — CPT v17:2299 (extended with severity)
+ *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
+ *
+ * Version 1.1.0 — Chunk 2 adds V5 migration helpers
+ *   (makeComponentId, validateFleetJSON_v5, migrateV4FlatToV5).
+ * Version 1.0.0 — Chunk 1 baseline (six helpers).
+ */
+(function () {
+  'use strict';
+
+  var VERSION = '1.1.0';
+  var DEFAULT_TZ = 'America/Edmonton';
+
+  // ─────────────────────────────────────────────────────────────
+  // HTML ESCAPE
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Escape a value for safe innerHTML interpolation.
+   * Handles null/undefined gracefully (returns empty string).
+   * Escapes the five XML-special characters plus single quote.
+   */
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // DATE PARSING
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Parse a value of any common origin into an ISO date string (YYYY-MM-DD).
+   * Handles ISO strings, Excel serial numbers, JS Date objects.
+   * Returns null if unparseable.
+   */
+  function parseDate(val) {
+    if (val == null || val === '') return null;
+    if (val instanceof Date) {
+      if (isNaN(val)) return null;
+      return val.toISOString().split('T')[0];
+    }
+    if (typeof val === 'number') {
+      // Excel serial date — origin 1900-01-01, offset 25569 days from Unix epoch
+      var d = new Date(Math.round((val - 25569) * 86400 * 1000));
+      if (isNaN(d)) return null;
+      return d.toISOString().split('T')[0];
+    }
+    if (typeof val === 'string') {
+      var s = val.trim();
+      if (!s) return null;
+      var dd = new Date(s);
+      if (!isNaN(dd)) return dd.toISOString().split('T')[0];
+    }
+    return null;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // DATE FORMATTING
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Format an ISO date string for display.
+   * Format options:
+   *   'iso'       (default) — returns the input as-is (YYYY-MM-DD)
+   *   'short'     — "Jan 5, 2026"
+   *   'monthYear' — "Jan 26"
+   *   'long'      — "January 5, 2026"
+   * Timezone-aware via DEFAULT_TZ ('America/Edmonton' / Mountain).
+   */
+  function fmtDate(s, format) {
+    if (!s) return '';
+    format = format || 'iso';
+    if (format === 'iso') return String(s).slice(0, 10);
+
+    var d = (s instanceof Date) ? s : new Date(String(s).slice(0, 10) + 'T00:00:00');
+    if (isNaN(d)) return '';
+
+    var opts = { timeZone: DEFAULT_TZ };
+    if (format === 'short') {
+      opts.year = 'numeric'; opts.month = 'short'; opts.day = 'numeric';
+    } else if (format === 'monthYear') {
+      opts.year = '2-digit'; opts.month = 'short';
+    } else if (format === 'long') {
+      opts.year = 'numeric'; opts.month = 'long'; opts.day = 'numeric';
+    } else {
+      opts.year = 'numeric'; opts.month = 'short';
+    }
+    return d.toLocaleDateString('en-CA', opts);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SCOPED LOCALSTORAGE KEY
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Build a localStorage key scoped to a clientCode.
+   * Pattern: <prefix>_<sanitised_clientCode>.
+   * Sanitises clientCode by replacing non-alphanumeric/underscore with '_'.
+   * Used by Cadence autosave, Intake state persistence, Deploy autosave.
+   */
+  function scopedKey(prefix, clientCode) {
+    var code = String(clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
+    return prefix + '_' + code;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TOAST NOTIFICATIONS
+  // ─────────────────────────────────────────────────────────────
+  var _toastTimer = null;
+  var _toastEl = null;
+
+  /**
+   * Show a transient toast notification.
+   * Severity: 'info' (default) | 'success' | 'warn' | 'error'.
+   * Default duration: 2800 ms.
+   * Auto-creates the toast container on first call. Idempotent.
+   */
+  function showToast(msg, severity, durationMs) {
+    severity = severity || 'info';
+    durationMs = durationMs || 2800;
+
+    if (!_toastEl) {
+      _toastEl = document.createElement('div');
+      _toastEl.id = '_numacoreToast';
+      _toastEl.style.cssText = [
+        'position:fixed',
+        'bottom:24px',
+        'left:50%',
+        'transform:translateX(-50%) translateY(20px)',
+        'padding:10px 18px',
+        'border-radius:8px',
+        'font-size:12px',
+        'font-weight:500',
+        'color:#e6edf3',
+        'box-shadow:0 4px 20px rgba(0,0,0,0.6)',
+        'z-index:9999',
+        'opacity:0',
+        'transition:opacity 0.2s, transform 0.2s',
+        'pointer-events:none',
+        'max-width:420px',
+        'text-align:center',
+        'font-family:"Segoe UI",system-ui,sans-serif',
+        'line-height:1.45'
+      ].join(';');
+      document.body.appendChild(_toastEl);
+    }
+
+    var sevStyles = {
+      info:    { bg: '#21262d', border: '#30363d' },
+      success: { bg: '#1b3a2a', border: '#2ea043' },
+      warn:    { bg: '#3a2a1b', border: '#d29922' },
+      error:   { bg: '#3a1b1b', border: '#f85149' }
+    };
+    var sty = sevStyles[severity] || sevStyles.info;
+    _toastEl.style.background = sty.bg;
+    _toastEl.style.border = '1px solid ' + sty.border;
+
+    _toastEl.textContent = msg;
+    _toastEl.style.opacity = '1';
+    _toastEl.style.transform = 'translateX(-50%) translateY(0)';
+
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () {
+      if (_toastEl) {
+        _toastEl.style.opacity = '0';
+        _toastEl.style.transform = 'translateX(-50%) translateY(10px)';
+      }
+    }, durationMs);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // FLEET FILE LOAD
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Load a fleet JSON file via FileReader. Validates extension and parses.
+   * Calls onSuccess(json, filename) on success.
+   * Calls onError(message) on failure (wrong extension, parse error, read error).
+   */
+  function loadFleetFile(file, onSuccess, onError) {
+    if (!file) {
+      if (onError) onError('No file provided');
+      return;
+    }
+    if (!file.name || !file.name.toLowerCase().endsWith('.json')) {
+      if (onError) onError('Please drop a .json file (got: ' + (file.name || 'unnamed') + ')');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      try {
+        var json = JSON.parse(ev.target.result);
+        if (onSuccess) onSuccess(json, file.name);
+      } catch (err) {
+        if (onError) onError('Could not parse JSON: ' + err.message);
+      }
+    };
+    reader.onerror = function () {
+      if (onError) onError('Could not read file');
+    };
+    reader.readAsText(file);
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // V5 SCHEMA HELPERS (added in Chunk 2)
+  // ═════════════════════════════════════════════════════════════
+
+  /**
+   * Build a deterministic string component ID from a unit's FLOC,
+   * the component name, and an optional position label. Same inputs
+   * always produce the same ID. Critical for FK stability across
+   * imports and re-imports.
+   *
+   * Format: <floc_slug>_<component_name_slug>[_<position_slug>]
+   * Example: makeComponentId('WA500-12345', 'Engine')
+   *          → 'wa500_12345_engine'
+   * Example: makeComponentId('PC5500-67890', 'Final Drive', 'LH')
+   *          → 'pc5500_67890_final_drive_lh'
+   */
+  function makeComponentId(unit_floc, component_name, position) {
+    function slug(s) {
+      return String(s || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '');
+    }
+    var parts = [slug(unit_floc), slug(component_name)];
+    if (position && String(position).trim()) parts.push(slug(position));
+    return parts.filter(Boolean).join('_');
+  }
+
+  /**
+   * Validate a fleet JSON against the V5 spec.
+   * Returns: { ok: boolean, issues: [{ severity, msg }] }
+   *  severity: 'fatal' | 'warn' | 'info'
+   * 'ok' is true if there are no fatal issues.
+   */
+  function validateFleetJSON_v5(json) {
+    var issues = [];
+    if (!json || typeof json !== 'object') {
+      issues.push({ severity: 'fatal', msg: 'Input is not a JSON object' });
+      return { ok: false, issues: issues };
+    }
+    if (!json.meta || typeof json.meta !== 'object') {
+      issues.push({ severity: 'warn', msg: 'meta block missing' });
+    } else {
+      if (json.meta.schemaVersion !== 5) {
+        issues.push({
+          severity: 'warn',
+          msg: 'meta.schemaVersion is ' + JSON.stringify(json.meta.schemaVersion) + ' (expected 5)'
+        });
+      }
+      if (!json.meta.clientCode) {
+        issues.push({ severity: 'warn', msg: 'meta.clientCode is empty' });
+      }
+    }
+    if (!json.masterData || typeof json.masterData !== 'object') {
+      issues.push({ severity: 'fatal', msg: 'masterData block missing' });
+      return { ok: false, issues: issues };
+    }
+    if (!Array.isArray(json.masterData.components)) {
+      issues.push({ severity: 'fatal', msg: 'masterData.components is not an array' });
+    }
+    if (!json.workingData || typeof json.workingData !== 'object') {
+      issues.push({ severity: 'warn', msg: 'workingData block missing — defaults to empty' });
+    }
+    // FK integrity check across components ↔ projectComponents
+    var components = (json.masterData && json.masterData.components) || [];
+    var projComp  = (json.workingData && json.workingData.projectComponents) || [];
+    if (Array.isArray(components) && Array.isArray(projComp) && components.length && projComp.length) {
+      var validIds = {};
+      components.forEach(function (c) { if (c && c.id != null) validIds[c.id] = true; });
+      var dangling = 0;
+      projComp.forEach(function (pc) {
+        if (!pc || pc.component_id == null) return;
+        if (!validIds[pc.component_id]) dangling++;
+      });
+      if (dangling > 0) {
+        issues.push({
+          severity: 'warn',
+          msg: dangling + ' projectComponents row(s) reference component_id values that do not exist in masterData.components'
+        });
+      }
+    }
+    return { ok: !issues.some(function (i) { return i.severity === 'fatal'; }), issues: issues };
+  }
+
+  /**
+   * One-shot V4 Flat → V5 migration.
+   * Returns: { migrated, audit }
+   *   migrated: the V5-shaped JSON (or the unchanged input if already V5)
+   *   audit: { ok, issues, counts: { before, after }, idMapSize }
+   *
+   * Behaviour:
+   *  - Idempotent: if input is already V5 (meta.schemaVersion === 5), returns
+   *    it unchanged with audit.ok = true.
+   *  - Component IDs become deterministic strings via makeComponentId().
+   *  - FK references in working.componentDates → componentDateOverrides,
+   *    working.decisionLog → decisions, working.projects[].linkedIds → both
+   *    preserved on projects AND surfaced as projectComponents[].
+   *  - oil_samples[] preserved at the JSON root for Lens v3.5 compatibility
+   *    (not yet routed through masterData.conditionMonitoring — that's Chunk 8).
+   *  - fleets[] and units[] derived from unique fleet / unit_floc tuples on
+   *    components. sn_prefix / unit_variant_id default to null (FleetConfig
+   *    later, Chunk 9a).
+   *  - All new V5 entities (componentPockets, partsLibrary, etc.) initialised
+   *    as empty arrays.
+   *
+   * Counts/key audits surface mismatches as warn-level issues. FATAL only on
+   * unparseable input.
+   */
+  function migrateV4FlatToV5(input) {
+    var audit = {
+      ok: false,
+      issues: [],
+      counts: { before: {}, after: {} },
+      idMapSize: 0,
+      droppedFKs: 0
+    };
+
+    if (!input || typeof input !== 'object') {
+      audit.issues.push({ severity: 'fatal', msg: 'Input is not a JSON object' });
+      return { migrated: null, audit: audit };
+    }
+
+    // Idempotent — already V5
+    if (input.meta && input.meta.schemaVersion === 5) {
+      audit.issues.push({ severity: 'info', msg: 'Input is already V5 — no migration needed' });
+      audit.ok = true;
+      return { migrated: input, audit: audit };
+    }
+
+    var working = input.working || {};
+    audit.counts.before = {
+      components:              (input.components       || []).length,
+      componentHistory:        (input.componentHistory || []).length,
+      projects:                (working.projects       || []).length,
+      componentDateOverrides:  (working.componentDates || []).length,
+      decisions:               (working.decisionLog    || []).length,
+      oil_samples:             (input.oil_samples      || []).length
+    };
+
+    // 1. Build id_map (numeric old ID → new string ID) and rewrite components
+    var id_map = {};
+    var newComponents = (input.components || []).map(function (c) {
+      var floc = c.unit_floc || c.unit || c.unit_id || '';
+      var new_id = makeComponentId(floc, c.component, c.position);
+      if (c.id !== undefined && c.id !== null) {
+        id_map[String(c.id)] = new_id;
+      }
+      var out = {};
+      Object.keys(c).forEach(function (k) { out[k] = c[k]; });
+      out.id = new_id;
+      out.unit_floc = floc;
+      if (out.replacement_strategy == null) out.replacement_strategy = 'usage_based';
+      if (out.parts_status == null) out.parts_status = 'none';
+      return out;
+    });
+    audit.idMapSize = Object.keys(id_map).length;
+
+    // 2. Rewrite componentDateOverrides (was working.componentDates)
+    var newDateOverrides = (working.componentDates || []).map(function (o) {
+      var new_id = id_map[String(o.id)];
+      if (!new_id) {
+        audit.droppedFKs++;
+        audit.issues.push({
+          severity: 'warn',
+          msg: 'componentDates entry references unknown component id ' + JSON.stringify(o.id) + ' — entry dropped'
+        });
+        return null;
+      }
+      return {
+        component_id: new_id,
+        override_date: o.changeout_date,
+        override_reason: o.reason || '',
+        set_at: o.set_at || ''
+      };
+    }).filter(Boolean);
+
+    // 3. Rewrite decisions (was working.decisionLog)
+    var newDecisions = (working.decisionLog || []).map(function (d) {
+      var out = {};
+      Object.keys(d || {}).forEach(function (k) { out[k] = d[k]; });
+      if (d && d.component_id !== undefined && d.component_id !== null) {
+        var new_id = id_map[String(d.component_id)];
+        if (new_id) {
+          out.component_id = new_id;
+        } else {
+          audit.issues.push({
+            severity: 'warn',
+            msg: 'decisions entry references unknown component_id ' + JSON.stringify(d.component_id) + ' — left as-is'
+          });
+        }
+      }
+      return out;
+    });
+
+    // 4. Rewrite projects' linkedIds → string IDs
+    var newProjects = (working.projects || []).map(function (p) {
+      var out = {};
+      Object.keys(p || {}).forEach(function (k) { out[k] = p[k]; });
+      if (Array.isArray(p.linkedIds)) {
+        out.linkedIds = p.linkedIds.map(function (oldId) {
+          return id_map[String(oldId)] || oldId;
+        });
+      }
+      return out;
+    });
+
+    // 4a. Surface projectComponents from project linkedIds (V5 explicit join table)
+    var projectComponents = [];
+    newProjects.forEach(function (p) {
+      (p.linkedIds || []).forEach(function (cid) {
+        projectComponents.push({ project_id: p.id, component_id: cid });
+      });
+    });
+
+    // 5. Derive fleets[] from unique fleet names
+    var fleetMap = {};
+    newComponents.forEach(function (c) {
+      if (c.fleet && !fleetMap[c.fleet]) {
+        fleetMap[c.fleet] = { id: c.fleet, name: c.fleet, type: '' };
+      }
+    });
+    var fleets = Object.keys(fleetMap).map(function (k) { return fleetMap[k]; });
+
+    // 6. Derive units[] from unique unit_floc tuples
+    var unitMap = {};
+    newComponents.forEach(function (c) {
+      var floc = c.unit_floc;
+      if (!floc || unitMap[floc]) return;
+      unitMap[floc] = {
+        floc: floc,
+        id: c.unit || floc,
+        fleet_id: c.fleet || '',
+        model: c.model || '',
+        sn_prefix: null,
+        unit_variant_id: null,
+        status: 'active',
+        expected_life_hours: null
+      };
+    });
+    var units = Object.keys(unitMap).map(function (k) { return unitMap[k]; });
+
+    // 7. Construct V5 output
+    var meta = {
+      schemaVersion: 5,
+      clientCode:    input.client_code || (input.meta && input.meta.clientCode) || 'CLIENT',
+      clientName:   (input.meta && input.meta.clientName) || '',
+      site:         (input.meta && input.meta.site) || '',
+      currency:     (input.meta && input.meta.currency) || 'AUD',
+      lastSaved:    (input.meta && input.meta.lastSaved) || new Date().toISOString(),
+      migratedAt:    new Date().toISOString(),
+      migratedFrom:  input.schema_version || 'v4 FINAL'
+    };
+
+    var migrated = {
+      meta: meta,
+      masterData: {
+        fleets: fleets,
+        units: units,
+        components: newComponents,
+        componentHistory: input.componentHistory || [],
+        componentPockets: [],
+        partsLibrary: [],
+        readings: [],
+        utilizationProfiles: [],
+        unitActivitySchedule: [],
+        fleetPlan: [],
+        costs: [],
+        workOrders: [],
+        materialRequirements: [],
+        materials: [],
+        conditionMonitoring: [],
+        budget: []
+      },
+      workingData: {
+        projects: newProjects,
+        projectComponents: projectComponents,
+        projectDetails: [],
+        checklistItems: [],
+        actionItems: [],
+        projectNotes: [],
+        componentDateOverrides: newDateOverrides,
+        decisions: newDecisions
+      },
+      appState: {
+        ui_settings: input.ui_settings || {}
+      },
+      // Preserved at root for Lens v3.5 backward compatibility — Chunk 8
+      // re-routes through masterData.conditionMonitoring with vocabulary fix.
+      oil_samples: input.oil_samples || []
+    };
+
+    // 8. Post-migration counts + audit
+    audit.counts.after = {
+      components:             migrated.masterData.components.length,
+      componentHistory:       migrated.masterData.componentHistory.length,
+      projects:               migrated.workingData.projects.length,
+      componentDateOverrides: migrated.workingData.componentDateOverrides.length,
+      decisions:              migrated.workingData.decisions.length,
+      oil_samples:            migrated.oil_samples.length
+    };
+
+    Object.keys(audit.counts.before).forEach(function (k) {
+      if (audit.counts.before[k] !== audit.counts.after[k]) {
+        audit.issues.push({
+          severity: 'warn',
+          msg: 'Count mismatch on ' + k + ': before=' + audit.counts.before[k] + ', after=' + audit.counts.after[k] + ' (likely dropped due to missing FK)'
+        });
+      }
+    });
+
+    // FK integrity audit
+    var validIds = {};
+    migrated.masterData.components.forEach(function (c) { if (c.id) validIds[c.id] = true; });
+    var dangling = 0;
+    migrated.workingData.projectComponents.forEach(function (pc) {
+      if (!validIds[pc.component_id]) dangling++;
+    });
+    if (dangling > 0) {
+      audit.issues.push({
+        severity: 'warn',
+        msg: dangling + ' projectComponents reference component IDs that no longer exist'
+      });
+    }
+
+    audit.ok = !audit.issues.some(function (i) { return i.severity === 'fatal'; });
+    return { migrated: migrated, audit: audit };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // EXPORT
+  // ─────────────────────────────────────────────────────────────
+  window.NumaCoreLib = {
+    esc: esc,
+    parseDate: parseDate,
+    fmtDate: fmtDate,
+    scopedKey: scopedKey,
+    showToast: showToast,
+    loadFleetFile: loadFleetFile,
+    // Chunk 2 — V5 migration helpers
+    makeComponentId: makeComponentId,
+    validateFleetJSON_v5: validateFleetJSON_v5,
+    migrateV4FlatToV5: migrateV4FlatToV5,
+    VERSION: VERSION
+  };
+})();
