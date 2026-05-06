@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>NumaCore FleetConfig v0.1</title>
+<script src="numacore_lib.js"></script>
+<style>
+  :root {
+    --bg-deep: #0a0e1a; --bg-panel: #0f1525; --bg-card: #141b2d; --bg-card2: #1a2340;
+    --accent: #64b5f6; --green: #4caf50; --orange: #ff9800; --red: #f44336;
+    --gold: #ffd54f; --teal: #4dd0e1;
+    --text-pri: #e8f0fe; --text-sec: #8eaac8; --text-dim: #6a829e;
+    --border: rgba(100,181,246,0.18);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg-deep); color: var(--text-pri); font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.55; padding: 28px 36px 56px; min-height: 100vh; }
+  header.head { display:flex; align-items:flex-end; gap:18px; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 22px; }
+  header.head h1 { font-size: 22px; font-weight: 700; color: var(--text-pri); letter-spacing: 0.02em; }
+  header.head .sub { font-size: 12px; color: var(--text-sec); }
+  header.head .sv { margin-left:auto; font-size:11px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; }
+  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+  .btn { background: var(--bg-card2); border: 1px solid var(--border); color: var(--text-pri); padding: 7px 14px; border-radius: 5px; font-size: 13px; cursor: pointer; }
+  .btn:hover { background: var(--bg-card); border-color: var(--accent); }
+  .btn.primary { background: rgba(100,181,246,0.12); border-color: var(--accent); color: var(--accent); }
+  .btn.gold { background: rgba(255,213,79,0.12); border-color: var(--gold); color: var(--gold); }
+  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 30px; text-align: center; font-size: 13px; color: var(--text-sec); background: var(--bg-panel); cursor: pointer; transition: border-color 0.15s; }
+  #drop.hover { border-color: var(--accent); color: var(--accent); }
+  #drop.loaded { background: rgba(76,175,80,0.06); border-color: var(--green); color: var(--green); }
+  .tabs { display:flex; gap:4px; margin: 18px 0 8px; border-bottom:1px solid var(--border); }
+  .tab { padding: 8px 18px; cursor: pointer; font-size: 12px; letter-spacing: 0.04em; border-bottom: 2px solid transparent; color: var(--text-sec); }
+  .tab.active { border-bottom-color: var(--accent); color: var(--accent); }
+  .panel { display: none; padding: 14px 0; }
+  .panel.active { display: block; }
+  .grid { display: grid; gap: 14px; }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .card h3 { font-size: 13px; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { background: var(--bg-card2); color: var(--text-sec); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
+  td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text-pri); vertical-align: middle; }
+  td input, td select { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-pri); padding: 4px 6px; border-radius: 3px; font-size: 12px; width: 100%; }
+  .scroll-box { max-height: 60vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+  .meta-strip { display:flex; gap:16px; font-size:11px; color: var(--text-dim); padding: 6px 0; }
+  .meta-strip strong { color: var(--text-pri); }
+  .toast { position: fixed; bottom: 30px; right: 30px; background: var(--bg-card); border: 1px solid var(--accent); padding: 11px 18px; border-radius: 6px; color: var(--text-pri); font-size: 13px; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+  .toast.warn  { border-color: var(--gold); color: var(--gold); }
+  .badge { display:inline-block; font-size:9px; padding:2px 7px; border-radius:9px; letter-spacing:0.06em; text-transform:uppercase; }
+  .badge.unconfig { background: rgba(255,152,0,0.15); color: var(--orange); border: 1px solid rgba(255,152,0,0.3); }
+  .badge.ok { background: rgba(76,175,80,0.12); color: var(--green); border: 1px solid rgba(76,175,80,0.3); }
+  .conflict-banner { background: rgba(255,152,0,0.1); border: 1px solid var(--orange); border-radius: 6px; padding: 10px 14px; font-size: 12px; color: var(--orange); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<header class="head">
+  <div>
+    <h1>NumaCore FleetConfig <span style="color:var(--text-dim);font-weight:400;font-size:14px">v0.1</span></h1>
+    <div class="sub">Fleet &amp; Model Manager (M1) · Utilization Profile Editor (M4)</div>
+  </div>
+  <div class="sv" id="loaded-meta">No fleet loaded</div>
+</header>
+
+<div id="loadGate">
+  <div id="drop" onclick="document.getElementById('fileIn').click()">
+    Drop or click to load fleet JSON. FleetConfig reads V5 nested or V4 Flat;
+    saves preserve the loaded shape.
+  </div>
+  <input type="file" id="fileIn" accept=".json" style="display:none" onchange="onFileChange(event)">
+</div>
+
+<div id="appBody" style="display:none">
+  <div class="row" style="margin-bottom:10px">
+    <button class="btn" onclick="resetLoad()">Load different file</button>
+    <button class="btn primary" onclick="exportFleet()">Save fleet JSON</button>
+    <span id="conflictBanner"></span>
+  </div>
+  <div class="meta-strip" id="metaStrip"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="m1" onclick="switchTab('m1')">M1 — Fleet &amp; Model Manager</div>
+    <div class="tab" data-tab="m4" onclick="switchTab('m4')">M4 — Utilization Profile Editor</div>
+  </div>
+
+  <!-- ── M1: Fleet & Model Manager ── -->
+  <div id="panel-m1" class="panel active">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" onclick="addFleet()">+ Fleet</button>
+      <button class="btn" onclick="addUnit()">+ Unit</button>
+    </div>
+    <div class="grid" style="grid-template-columns: 1fr 2fr">
+      <div class="card">
+        <h3>Fleets</h3>
+        <div class="scroll-box">
+          <table>
+            <thead><tr><th>Name</th><th>Type</th><th></th></tr></thead>
+            <tbody id="fleetsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Units</h3>
+        <div class="scroll-box">
+          <table>
+            <thead><tr>
+              <th>Unit (FLOC)</th><th>Fleet</th><th>Model</th>
+              <th>SN Prefix</th><th>Variant ID</th>
+              <th>Status</th><th>Exp. Life Hrs</th><th>Pockets</th>
+            </tr></thead>
+            <tbody id="unitsTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── M4: Utilization Profile Editor ── -->
+  <div id="panel-m4" class="panel">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn" onclick="addUtilProfile('fleet')">+ Fleet rate</button>
+      <button class="btn" onclick="addUtilProfile('model')">+ Model rate</button>
+      <button class="btn" onclick="addUtilProfile('unit')">+ Unit rate</button>
+      <button class="btn gold" onclick="deriveUtilFromReadings()" title="Suggest util_rate per fleet from readings[] history">Suggest from readings</button>
+    </div>
+    <div class="card">
+      <h3>Utilization Profiles</h3>
+      <div class="scroll-box">
+        <table>
+          <thead><tr>
+            <th>Scope</th><th>Target</th><th>Rate (hrs/day)</th>
+            <th>Effective From</th><th>Source</th><th>Notes</th><th></th>
+          </tr></thead>
+          <tbody id="utilTbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>Monthly Activity Schedule</h3>
+      <div class="scroll-box">
+        <table>
+          <thead><tr><th>Unit</th><th>Year-Month</th><th>Active?</th><th>Override Rate</th><th>Reason</th><th></th></tr></thead>
+          <tbody id="activityTbody"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" onclick="addActivityRow()">+ Activity row</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toastEl" class="toast" style="display:none"></div>
+
+<script>
+// ── Shared lib shims (numacore_lib.js loaded above) ─────────────────────────
+const esc = (window.NumaCoreLib && NumaCoreLib.esc) || function(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+};
+function showToast(msg, sev) {
+  const el = document.getElementById('toastEl');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'toast' + (sev ? (' ' + sev) : '');
+  el.style.display = 'block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { el.style.display = 'none'; }, 2400);
+}
+
+const VERSION = '0.1';
+let _originalJSON = null;
+let _isV5 = false;
+let _meta = {};
+// FleetConfig owns these slices ONLY (per V5 Migration Plan §slice ownership).
+// All edits are recorded into in-memory copies; export merges back via spread.
+let state = {
+  fleets:               [],   // masterData.fleets[]
+  units:                [],   // masterData.units[]
+  utilizationProfiles:  [],   // masterData.utilizationProfiles[]
+  unitActivitySchedule: []    // masterData.unitActivitySchedule[]
+  // componentPockets, partsLibrary deferred to v0.2 (Chunk 9c).
+};
+
+// ── File load + slice extraction ─────────────────────────────────────────────
+function onFileChange(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const json = JSON.parse(ev.target.result);
+      ingest(json);
+    } catch(err) {
+      showToast('Could not parse JSON: ' + err.message, 'error');
+    }
+  };
+  r.readAsText(f);
+}
+['dragover','dragleave','drop'].forEach(t => {
+  document.getElementById('drop').addEventListener(t, e => {
+    e.preventDefault(); e.stopPropagation();
+    const dz = document.getElementById('drop');
+    if (t === 'dragover') dz.classList.add('hover');
+    else dz.classList.remove('hover');
+    if (t === 'drop' && e.dataTransfer.files[0]) {
+      const f = e.dataTransfer.files[0];
+      const r = new FileReader();
+      r.onload = ev => { try { ingest(JSON.parse(ev.target.result)); } catch(err) { showToast('Parse failed: '+err.message,'error'); } };
+      r.readAsText(f);
+    }
+  });
+});
+
+function ingest(json) {
+  _originalJSON = json;
+  _meta = json.meta || {};
+  _isV5 = !!(json.masterData && typeof json.masterData === 'object');
+  // Pull owned slices. Both V5 and V4 Flat carry these inside masterData on
+  // V5; V4 Flat files don't have fleets/units/utilizationProfiles at all —
+  // synthesise from components on a one-time bootstrap.
+  if (_isV5) {
+    state.fleets               = (json.masterData.fleets || []).slice();
+    state.units                = (json.masterData.units  || []).slice();
+    state.utilizationProfiles  = (json.masterData.utilizationProfiles  || []).slice();
+    state.unitActivitySchedule = (json.masterData.unitActivitySchedule || []).slice();
+  } else {
+    bootstrapFromV4Flat(json);
+  }
+  // Conflict detection vs Lens settings: if components carry util_rate AND
+  // utilizationProfiles is empty, surface a banner so the operator can decide
+  // whether to derive (clobber) or keep the per-component values.
+  detectConflicts();
+  document.getElementById('loadGate').style.display = 'none';
+  document.getElementById('appBody').style.display = 'block';
+  document.getElementById('loaded-meta').textContent =
+    (_meta.clientCode || '—') + ' · Schema ' + (_isV5 ? 'V5' : 'V4 Flat');
+  renderMetaStrip();
+  renderM1();
+  renderM4();
+  showToast('Loaded ' + (_isV5 ? 'V5' : 'V4 Flat') + ' — ' + state.units.length + ' units');
+}
+
+function bootstrapFromV4Flat(json) {
+  const comps = json.components || [];
+  const fleetSet = new Set(); const unitMap = new Map();
+  comps.forEach(c => {
+    fleetSet.add(c.fleet);
+    if (c.unit && !unitMap.has(c.unit)) {
+      unitMap.set(c.unit, { id: c.unit, floc: c.unit_floc || c.unit, fleet_id: c.fleet, model: c.model, status: 'active', expected_life_hours: null, sn_prefix: null, unit_variant_id: null, notes: '' });
+    }
+  });
+  state.fleets = Array.from(fleetSet).map(f => ({ id: f, name: f, type: '' }));
+  state.units = Array.from(unitMap.values());
+  state.utilizationProfiles = [];
+  state.unitActivitySchedule = [];
+  showToast('V4 Flat — synthesised ' + state.fleets.length + ' fleets / ' + state.units.length + ' units from components', 'warn');
+}
+
+function detectConflicts() {
+  const banner = document.getElementById('conflictBanner');
+  banner.innerHTML = '';
+  if (!_originalJSON) return;
+  const comps = (_isV5 ? _originalJSON.masterData.components : _originalJSON.components) || [];
+  const compsWithUtil = comps.filter(c => Number(c.util_rate) > 0).length;
+  if (compsWithUtil > 0 && state.utilizationProfiles.length === 0) {
+    banner.innerHTML = '<span class="conflict-banner">' +
+      compsWithUtil + ' components carry per-component util_rate values, but no utilizationProfiles[] exist. Edits here will not propagate back to components — use Suggest from readings then save.' +
+      '</span>';
+  }
+}
+
+function renderMetaStrip() {
+  document.getElementById('metaStrip').innerHTML =
+    '<span><strong>Client:</strong> ' + esc(_meta.clientCode || '—') + '</span>' +
+    '<span><strong>Last saved:</strong> ' + esc(_meta.lastSaved || '—') + '</span>' +
+    '<span><strong>Schema:</strong> ' + (_isV5 ? 'V5' : 'V4 Flat') + '</span>';
+}
+
+function resetLoad() {
+  if (!confirm('Discard unsaved edits and reload?')) return;
+  document.getElementById('loadGate').style.display = '';
+  document.getElementById('appBody').style.display = 'none';
+  _originalJSON = null; _meta = {}; _isV5 = false;
+  state = { fleets:[], units:[], utilizationProfiles:[], unitActivitySchedule:[] };
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(t) {
+  document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === t));
+  document.querySelectorAll('.panel').forEach(el => el.classList.toggle('active', el.id === ('panel-' + t)));
+}
+
+// ── M1 renderers ─────────────────────────────────────────────────────────────
+function renderM1() {
+  // Fleets
+  document.getElementById('fleetsTbody').innerHTML = state.fleets.map((f, i) =>
+    '<tr><td><input value="' + esc(f.name || '') + '" onchange="state.fleets[' + i + '].name=this.value"></td>' +
+    '<td><input value="' + esc(f.type || '') + '" onchange="state.fleets[' + i + '].type=this.value"></td>' +
+    '<td><button class="btn" onclick="deleteFleet(' + i + ')">&times;</button></td></tr>'
+  ).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-dim);padding:14px">No fleets defined.</td></tr>';
+  // Units — show pocket-config status (always "Unconfigured" in v0.1; v0.2 wires the pocket editor)
+  document.getElementById('unitsTbody').innerHTML = state.units.map((u, i) => {
+    const pocketBadge = '<span class="badge unconfig">Unconfigured</span>';
+    return '<tr>' +
+      '<td><input value="' + esc(u.floc || u.id || '') + '" onchange="state.units[' + i + '].floc=this.value"></td>' +
+      '<td>' + fleetSelect(u.fleet_id, i) + '</td>' +
+      '<td><input value="' + esc(u.model || '') + '" onchange="state.units[' + i + '].model=this.value"></td>' +
+      '<td><input value="' + esc(u.sn_prefix || '') + '" onchange="state.units[' + i + '].sn_prefix=this.value||null"></td>' +
+      '<td><input value="' + esc(u.unit_variant_id || '') + '" onchange="state.units[' + i + '].unit_variant_id=this.value||null"></td>' +
+      '<td>' + statusSelect(u.status || 'active', i) + '</td>' +
+      '<td><input type="number" value="' + (u.expected_life_hours == null ? '' : u.expected_life_hours) + '" onchange="state.units[' + i + '].expected_life_hours=parseFloat(this.value)||null"></td>' +
+      '<td>' + pocketBadge + '</td>' +
+    '</tr>';
+  }).join('') || '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:14px">No units defined.</td></tr>';
+}
+function fleetSelect(val, i) {
+  return '<select onchange="state.units[' + i + '].fleet_id=this.value">' +
+    state.fleets.map(f => '<option value="' + esc(f.id) + '"' + (f.id === val ? ' selected' : '') + '>' + esc(f.name || f.id) + '</option>').join('') +
+  '</select>';
+}
+function statusSelect(val, i) {
+  const opts = ['active','retired','standby'];
+  return '<select onchange="state.units[' + i + '].status=this.value">' +
+    opts.map(o => '<option' + (o === val ? ' selected' : '') + '>' + o + '</option>').join('') +
+  '</select>';
+}
+function addFleet() { state.fleets.push({ id: 'fleet_' + Date.now().toString(36), name: 'New fleet', type: '' }); renderM1(); }
+function addUnit()  { state.units.push({ id: 'unit_' + Date.now().toString(36), floc: '', fleet_id: state.fleets[0]?.id || '', model: '', status: 'active', expected_life_hours: null, sn_prefix: null, unit_variant_id: null, notes: '' }); renderM1(); }
+function deleteFleet(i) { if (!confirm('Delete this fleet? Units will need a new fleet assignment.')) return; state.fleets.splice(i,1); renderM1(); }
+
+// ── M4 renderers ─────────────────────────────────────────────────────────────
+function renderM4() {
+  document.getElementById('utilTbody').innerHTML = state.utilizationProfiles.map((p, i) =>
+    '<tr>' +
+      '<td>' + scopeSelect(p.scope || 'fleet', i) + '</td>' +
+      '<td><input value="' + esc(p.target_id || '') + '" onchange="state.utilizationProfiles[' + i + '].target_id=this.value"></td>' +
+      '<td><input type="number" step="0.1" value="' + (p.rate_hrs_day == null ? '' : p.rate_hrs_day) + '" onchange="state.utilizationProfiles[' + i + '].rate_hrs_day=parseFloat(this.value)||null"></td>' +
+      '<td><input type="date" value="' + esc(p.effective_from || '') + '" onchange="state.utilizationProfiles[' + i + '].effective_from=this.value"></td>' +
+      '<td>' + sourceSelect(p.source || 'manual', i) + '</td>' +
+      '<td><input value="' + esc(p.notes || '') + '" onchange="state.utilizationProfiles[' + i + '].notes=this.value"></td>' +
+      '<td><button class="btn" onclick="deleteUtil(' + i + ')">&times;</button></td>' +
+    '</tr>'
+  ).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:14px">No utilization profiles defined.</td></tr>';
+
+  document.getElementById('activityTbody').innerHTML = state.unitActivitySchedule.map((a, i) =>
+    '<tr>' +
+      '<td><input value="' + esc(a.unit_id || '') + '" onchange="state.unitActivitySchedule[' + i + '].unit_id=this.value"></td>' +
+      '<td><input placeholder="YYYY-MM" value="' + esc(a.year_month || '') + '" onchange="state.unitActivitySchedule[' + i + '].year_month=this.value"></td>' +
+      '<td><input type="checkbox"' + (a.active === false ? '' : ' checked') + ' onchange="state.unitActivitySchedule[' + i + '].active=this.checked"></td>' +
+      '<td><input type="number" step="0.1" value="' + (a.override_rate == null ? '' : a.override_rate) + '" onchange="state.unitActivitySchedule[' + i + '].override_rate=parseFloat(this.value)||null"></td>' +
+      '<td><input value="' + esc(a.reason || '') + '" onchange="state.unitActivitySchedule[' + i + '].reason=this.value"></td>' +
+      '<td><button class="btn" onclick="deleteActivity(' + i + ')">&times;</button></td>' +
+    '</tr>'
+  ).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:14px">No activity overrides defined.</td></tr>';
+}
+function scopeSelect(val, i) {
+  return '<select onchange="state.utilizationProfiles[' + i + '].scope=this.value">' +
+    ['fleet','model','unit'].map(o => '<option' + (o === val ? ' selected' : '') + '>' + o + '</option>').join('') +
+  '</select>';
+}
+function sourceSelect(val, i) {
+  const opts = ['manual','derived','imported'];
+  return '<select onchange="state.utilizationProfiles[' + i + '].source=this.value">' +
+    opts.map(o => '<option' + (o === val ? ' selected' : '') + '>' + o + '</option>').join('') +
+  '</select>';
+}
+function addUtilProfile(scope) {
+  state.utilizationProfiles.push({ id: 'util_' + Date.now().toString(36), scope: scope, target_id: '', rate_hrs_day: null, effective_from: new Date().toISOString().slice(0,10), source: 'manual', notes: '' });
+  renderM4();
+}
+function deleteUtil(i) { state.utilizationProfiles.splice(i,1); renderM4(); }
+function addActivityRow() { state.unitActivitySchedule.push({ unit_id: '', year_month: '', active: true, override_rate: null, reason: '' }); renderM4(); }
+function deleteActivity(i) { state.unitActivitySchedule.splice(i,1); renderM4(); }
+
+function deriveUtilFromReadings() {
+  if (!_originalJSON) return;
+  const readings = (_isV5 ? _originalJSON.masterData?.readings : _originalJSON.readings) || [];
+  if (!readings.length) { showToast('No readings[] in this file.', 'warn'); return; }
+  // Group readings by fleet (via unit lookup) and compute average hrs/day
+  // across the most recent 365 days. Simple aggregator — refined in v0.2.
+  const unitsById = {}; state.units.forEach(u => { unitsById[u.id] = u; unitsById[u.floc] = u; });
+  const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const perFleet = {};
+  readings.forEach(r => {
+    const ts = (typeof r.timestamp === 'string' ? Date.parse(r.timestamp) : r.timestamp) || 0;
+    if (ts < cutoff) return;
+    const u = unitsById[r.unit_id]; if (!u) return;
+    const fleet = u.fleet_id;
+    if (!perFleet[fleet]) perFleet[fleet] = { hrs: 0, days: 0 };
+    perFleet[fleet].hrs += Number(r.smu_delta || 0);
+    perFleet[fleet].days += Number(r.day_span || 1);
+  });
+  let added = 0;
+  Object.keys(perFleet).forEach(fleet => {
+    const rec = perFleet[fleet];
+    if (rec.days <= 0) return;
+    const rate = Math.round((rec.hrs / rec.days) * 10) / 10;
+    state.utilizationProfiles.push({ id: 'util_'+fleet+'_'+Date.now().toString(36), scope:'fleet', target_id: fleet, rate_hrs_day: rate, effective_from: new Date().toISOString().slice(0,10), source: 'derived', notes: '12-month derived rate' });
+    added++;
+  });
+  showToast(added ? ('Derived ' + added + ' fleet rates from readings.') : 'No qualifying readings.', added ? '' : 'warn');
+  renderM4();
+}
+
+// ── Save / export ────────────────────────────────────────────────────────────
+function exportFleet() {
+  if (!_originalJSON) return;
+  const out = JSON.parse(JSON.stringify(_originalJSON));   // preserve foreign slices
+  out.meta = out.meta || {};
+  out.meta.lastSaved = new Date().toISOString();
+  if (_isV5) {
+    out.masterData = out.masterData || {};
+    out.masterData.fleets               = state.fleets;
+    out.masterData.units                = state.units;
+    out.masterData.utilizationProfiles  = state.utilizationProfiles;
+    out.masterData.unitActivitySchedule = state.unitActivitySchedule;
+  } else {
+    // V4 Flat fallback — append the new slices into the same root location
+    // FleetConfig used. Lens v3.x ignores unknown keys; the upgrade path is
+    // a migration to V5 where they belong.
+    out.fleets               = state.fleets;
+    out.units                = state.units;
+    out.utilizationProfiles  = state.utilizationProfiles;
+    out.unitActivitySchedule = state.unitActivitySchedule;
+  }
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const cc = (out.meta.clientCode || 'CLIENT').replace(/[^A-Z0-9_]/gi,'_');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = cc + '_fleet.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Saved fleet JSON');
+}
+</script>
+</body>
+</html>
