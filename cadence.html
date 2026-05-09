@@ -129,6 +129,9 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .diamond.ghost{background:transparent!important;clip-path:none!important;width:13px;height:13px;border:2px dashed currentColor;transform:translate(-50%,-50%) rotate(45deg);z-index:5;opacity:.5;pointer-events:none}
 .diamond.today-marker{clip-path:none;width:13px;height:13px;background:transparent;border:2px solid currentColor;transform:translate(-50%,-50%) rotate(45deg);pointer-events:none;opacity:.7}
 .diamond.comp-d.cm-marker{opacity:0.5;filter:saturate(0.3) brightness(1.2)}
+/* v18.1 — projected (forecast) changeouts: smaller, hollow/outlined, lower-opacity, non-interactive */
+.diamond.projected-d{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);width:10px;height:10px;background:transparent;outline:1.5px solid currentColor;outline-offset:-1.5px;opacity:0.55;pointer-events:none;z-index:8;transform:translate(-50%,-50%)}
+.diamond.projected-d.condition{outline-style:dashed}
 .cm-label{position:absolute;font-size:7px;font-weight:800;pointer-events:none;letter-spacing:.3px;font-family:monospace;opacity:.75}
 
 /* ── PROJECT BARS ── */
@@ -747,6 +750,9 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
       <button class="gran-btn active" id="granMonth">Months</button>
       <button class="gran-btn" id="granWeeks">Weeks</button>
     </div>
+    <div class="gran-toggle" title="Show projected future changeouts based on benchmark hours and utilization rate">
+      <button class="gran-btn" id="projToggleBtn">&#9671; Projections</button>
+    </div>
     <button class="btn btn-filter" id="filterBtn">&#9881; Filter</button>
   </div>
 </div>
@@ -1245,7 +1251,8 @@ function _doSave() {
       decisionLog: state.decisionLog,
       visibleMonths: state.visibleMonths,
       granularity:   state.granularity,
-      abScopeState:  Object.assign({}, _ab.scopeState)
+      abScopeState:  Object.assign({}, _ab.scopeState),
+      showProjections: state.showProjections   // v18.1
     };
     localStorage.setItem(getSaveKey(), JSON.stringify(snap));
     _setSaveIndicator('saved', snap.savedAt);
@@ -1284,6 +1291,7 @@ function _restoreState() {
     if (snap.visibleMonths) state.visibleMonths = snap.visibleMonths;
     if (snap.granularity)   state.granularity   = snap.granularity;
     if (snap.abScopeState)  Object.assign(_ab.scopeState, snap.abScopeState);
+    if (typeof snap.showProjections === 'boolean') state.showProjections = snap.showProjections;   // v18.1
     return snap.savedAt;
   } catch(e) {
     console.warn('State restore failed:', e);
@@ -1337,6 +1345,7 @@ const state = {
   projConfig: { fleetOrder: [], termLabel: 'Project' },
   decisionLog: [],  // [{ts, type, desc, projId, before, after}]
   searchFilters: { model: '', fleet: '', unit: '' },
+  showProjections: false, // v18.1 — multi-cycle changeout projection toggle (off by default)
 };
 
 // ─── FLEET COLORS ─────────────────────────────────────────────────
@@ -1969,6 +1978,35 @@ function renderTimeline() {
             { label: '✂  Break Link', danger:true, action:()=> breakLink(r.id) }
           ]);
         });
+
+        // v18.1 — Multi-cycle changeout projection. Renders hollow forecast
+        // diamonds at primary + N×cycleDays out to the timeline window edge.
+        // Skipped if toggle off, or if benchmark/util_rate missing (cycle math
+        // requires both). Projections are visual-only: not draggable, no context
+        // menu, no Decision Log, not seen by Auto-Build, not persisted in JSON
+        // (recomputed on every render from r.benchmark + r.util_rate + changeout_date).
+        if (state.showProjections && r.benchmark > 0 && r.util_rate > 0) {
+          const cycleDays = r.benchmark / r.util_rate;
+          if (cycleDays > 0 && isFinite(cycleDays)) {
+            const startMs = new Date(r.changeout_date).getTime();
+            const windowEndMs = timelineStart().getTime() + state.visibleMonths * 30.5 * DAY_MS;
+            const isCondition = r.replacement_strategy === 'condition_based';
+            // Cap projection count to avoid runaway loops if cycleDays is tiny
+            const MAX_CYCLES = 20;
+            for (let n = 1; n <= MAX_CYCLES; n++) {
+              const projMs = startMs + n * cycleDays * DAY_MS;
+              if (projMs > windowEndMs) break;
+              const projDate = new Date(projMs).toISOString().split('T')[0];
+              const projX = dateToX(projDate);
+              if (projX > tw) break;   // beyond timeline edge
+              const pd = document.createElement('div');
+              pd.className = 'diamond projected-d' + (isCondition ? ' condition' : '');
+              pd.style.cssText = `left:${projX}px;top:${cy}px;color:${r.color}`;
+              pd.title = `Projected changeout #${n+1} — ${projDate} (cycle ≈ ${Math.round(cycleDays)} days)`;
+              wrap.appendChild(pd);
+            }
+          }
+        }
         }  // end else (cx <= tw)
       }
     } else if (row.type === 'unit') {
@@ -3483,6 +3521,10 @@ function render() {
   renderTimeline();
   renderConnectors();
   renderDetailPanel();
+  // v18.1 — keep projection toggle button visually in sync with state
+  // (covers reload-restore, programmatic state changes, and shell load-fleet pushes)
+  const _projBtn = document.getElementById('projToggleBtn');
+  if (_projBtn) _projBtn.classList.toggle('active', !!state.showProjections);
 }
 
 // ─── DETAIL PANEL ────────────────────────────────────────────────
@@ -3904,6 +3946,14 @@ document.getElementById('resetFilter').onclick = () => {
 };
 document.getElementById('monthSlider').oninput = function() {
   document.getElementById('monthVal').textContent=this.value;
+};
+
+// v18.1 — Multi-cycle changeout projection toggle
+document.getElementById('projToggleBtn').onclick = function() {
+  state.showProjections = !state.showProjections;
+  this.classList.toggle('active', state.showProjections);
+  _scheduleSave();    // persist via existing autosave debouncer
+  render();
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -6113,6 +6163,22 @@ function _initFromJSON(json) {
     }
   });
 
+  // v18.1 — Wire _restoreState() into the load path. Layers any localStorage
+  // autosave (drag-set dates, project edits, decision-log additions) on top of
+  // the file's data. Runs AFTER file overrides + today-clamp + replacement_strategy
+  // default so localStorage represents the user's most-recent in-session intent.
+  // Existing #clearSaveBtn provides the "discard autosave" affordance.
+  const _restoredAt = _restoreState();
+  if (_restoredAt) {
+    setTimeout(() => {
+      try {
+        const ts = new Date(_restoredAt).toLocaleString('en-CA',
+          { hour:'2-digit', minute:'2-digit', month:'short', day:'numeric' });
+        showToast(`↻ Restored autosave from ${ts} — clear via the Clear Saved button if not wanted`);
+      } catch(e) { console.warn('Restore toast failed:', e); }
+    }, 700);
+  }
+
   // Copy to state.data AFTER all overrides and clamp are applied
   state.data = DATA.map(r => ({...r}));
 
@@ -6216,9 +6282,16 @@ function saveToFile() {
   const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
-  const code = (_meta.clientCode || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
-  const saveTs = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-').replace(':','-');
-  a.download = code + '_fleet_' + saveTs + '.json';
+  const code = _meta.clientCode || 'CLIENT';
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Falls back to legacy minute-precision pattern if lib not loaded.
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function') {
+    a.download = window.NumaCoreLib.buildSaveFilename(code, { fleetData: snap });
+  } else {
+    const safeCC = code.replace(/[^A-Z0-9_]/gi, '_');
+    const saveTs = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-').replace(':','-');
+    a.download = safeCC + '_fleet_' + saveTs + '.json';
+  }
   a.click();
   URL.revokeObjectURL(a.href);
   showToast('Fleet data saved to ' + a.download);

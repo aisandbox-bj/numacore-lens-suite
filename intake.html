@@ -661,6 +661,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
+const VERSION = '8.1';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -1699,7 +1700,7 @@ function buildFleetJSON() {
 
   return {
     meta: {
-      schemaVersion:  'v17',
+      schemaVersion:  'v18',
       clientCode:     clientCode,
       clientName:     '',
       site:           '',
@@ -1860,8 +1861,20 @@ function setExportPreview(format) {
 function exportJSON(format) {
   const json = (format === 'v5') ? buildFleetJSONv5() : buildFleetJSON();
   const clientCode = json.meta.clientCode || 'CLIENT';
-  const suffix = (format === 'v5') ? '_fleet_v5.json' : '_fleet.json';
-  const filename = `${clientCode}${suffix}`;
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Suffix encodes the format so a v5 export and a v17/v4-flat export of the
+  // same client/timestamp don't collide on disk. Falls back to legacy
+  // <cc>_fleet[_v5].json if lib not loaded.
+  let filename;
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function') {
+    filename = window.NumaCoreLib.buildSaveFilename(clientCode, {
+      fleetData: json,
+      suffix: (format === 'v5') ? 'v5' : null
+    });
+  } else {
+    const legacySuffix = (format === 'v5') ? '_fleet_v5.json' : '_fleet.json';
+    filename = `${clientCode}${legacySuffix}`;
+  }
   const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3010,8 +3023,14 @@ function cancelMergeReview() {
 function exportUpdatedJSON() {
   if (!state.updatedFleetJSON) return;
   const clientCode = state.updatedFleetJSON.meta?.clientCode || 'CLIENT';
-  const ts = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-');
-  const filename = `${clientCode}_fleet_${ts}.json`;
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  let filename;
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function') {
+    filename = window.NumaCoreLib.buildSaveFilename(clientCode, { fleetData: state.updatedFleetJSON });
+  } else {
+    const ts = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-');
+    filename = `${clientCode}_fleet_${ts}.json`;
+  }
   const blob = new Blob([JSON.stringify(state.updatedFleetJSON, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3977,10 +3996,17 @@ function commitConmonSamples() {
   fj.meta.lastConmonImport = new Date().toISOString();
   // Download
   const clientCode = (fj.meta && fj.meta.clientCode) ? fj.meta.clientCode : 'CLIENT';
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // 'v5-conmon' suffix preserves the semantic distinction (this export merges
+  // ConMon samples into the v5 fleet JSON) so multiple intermediate save types
+  // remain distinguishable in the operator's saved-files folder.
+  const filename = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
+    ? window.NumaCoreLib.buildSaveFilename(clientCode, { fleetData: fj, suffix: 'v5-conmon' })
+    : `${clientCode}_fleet_v5_with_conmon.json`;
   const blob = new Blob([JSON.stringify(fj, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `${clientCode}_fleet_v5_with_conmon.json`;
+  a.download = filename;
   a.click();
   alert(`✓ Committed ${newRecords.length} sample(s) to conditionMonitoring. Total after trim: ${trimmed.length}.`);
 }

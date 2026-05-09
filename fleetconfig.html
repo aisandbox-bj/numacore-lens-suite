@@ -423,10 +423,14 @@ function exportFleet() {
     out.unitActivitySchedule = state.unitActivitySchedule;
   }
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-  const cc = (out.meta.clientCode || 'CLIENT').replace(/[^A-Z0-9_]/gi,'_');
+  const cc = out.meta.clientCode || 'CLIENT';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = cc + '_fleet.json';
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Falls back to legacy <cc>_fleet.json (overwrite-in-place) if lib not loaded.
+  a.download = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
+    ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: out })
+    : (cc.replace(/[^A-Z0-9_]/gi,'_') + '_fleet.json');
   a.click();
   URL.revokeObjectURL(a.href);
   showToast('Saved fleet JSON');

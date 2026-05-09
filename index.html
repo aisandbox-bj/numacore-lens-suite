@@ -2046,7 +2046,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.0';
+const VERSION = '4.1';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2579,7 +2579,9 @@ function openConMonHistory(unit_id, groupKey, allSamples) {
   document.getElementById('cmh-subtitle').textContent =
     unit_id.toUpperCase() + ' · ' + sorted.length + ' sample' + (sorted.length === 1 ? '' : 's');
 
-  var body = '<div class="cmh-timeline">';
+  // v4.1 — Build sample-list HTML (right column) once. Each entry stamped with
+  // data-cmh-idx so the graph can scroll-and-flash the matching card on click.
+  var listHtml = '<div class="cmh-timeline">';
   sorted.forEach(function(s, i) {
     var colour  = CONMON_BAND_COLOUR[s.band] || CONMON_BAND_COLOUR.unknown;
     var coolant = s.is_coolant;
@@ -2590,29 +2592,192 @@ function openConMonHistory(unit_id, groupKey, allSamples) {
     var ltst    = latest ? ' · LATEST' : '';
     var bandLbl = coolant ? 'COOLANT'
       : (s.band || 'unknown').replace('_', ' ').toUpperCase();
-    body +=
-      '<div class="cmh-entry' + (latest ? ' cmh-latest' : '') + '">' +
+    listHtml +=
+      '<div class="cmh-entry' + (latest ? ' cmh-latest' : '') + '" data-cmh-idx="' + i + '">' +
         '<div class="cmh-entry-header">' +
           '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
           '<span class="cmh-date">' + dateStr + stale + ltst + '</span>' +
           (rnkStr ? '<span class="cmh-rank" style="color:' + colour + '">rank ' + rnkStr + '</span>' : '') +
         '</div>';
     if (Array.isArray(s.trends) && s.trends.length) {
-      body += '<div class="cmh-trends">';
+      listHtml += '<div class="cmh-trends">';
       s.trends.forEach(function(t) {
         var tc = CONMON_BAND_COLOUR[getBandFromRank(t.rank)] || CONMON_BAND_COLOUR.unknown;
-        body += '<span class="cmh-trend-item" style="color:' + tc + '">' +
+        listHtml += '<span class="cmh-trend-item" style="color:' + tc + '">' +
           (t.label || '—') +
           ' <span class="cmh-trend-rank">' + (typeof t.rank === 'number' ? t.rank.toFixed(1) : '—') + '</span>' +
           '</span>';
       });
-      body += '</div>';
+      listHtml += '</div>';
     }
-    body += '</div>';
+    listHtml += '</div>';
   });
-  body += '</div>';
-  document.getElementById('cmh-body').innerHTML = body;
+  listHtml += '</div>';
+
+  // v4.1 — Single-sample edge case: hide graph column, list takes full width.
+  // (Per operator spec — a graph with one point is meaningless.)
+  var body = document.getElementById('cmh-body');
+  if (sorted.length < 2) {
+    body.classList.remove('cmh-split');
+    body.innerHTML = listHtml;
+  } else {
+    body.classList.add('cmh-split');
+    body.innerHTML =
+      '<div class="cmh-graph-col">' +
+        _renderConMonTrendSVG(sorted) +
+        '<div class="cmh-graph-caption">Severity trend · click point to scroll list · caution rank 6 · high rank 8</div>' +
+      '</div>' +
+      '<div class="cmh-list-col">' + listHtml + '</div>';
+    // Wire graph-point clicks to scroll-and-flash the list entry.
+    body.querySelectorAll('#cmh-graph-svg .cmh-point').forEach(function(pt) {
+      pt.addEventListener('click', function() {
+        var idx = pt.getAttribute('data-cmh-idx');
+        if (idx === null) return;
+        var card = body.querySelector('.cmh-entry[data-cmh-idx="' + idx + '"]');
+        if (!card) return;
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        card.classList.remove('cmh-flash'); void card.offsetWidth; card.classList.add('cmh-flash');
+      });
+    });
+  }
   document.getElementById('cm-history-overlay').classList.add('open');
+}
+
+// v4.1 — Render the inline SVG sample-severity trend graph.
+// X-axis: real-date spacing (linear time) so unequal sampling intervals are visible.
+// Y-axis: rank, low at bottom (intuitive — high spike = bad). Auto-scales to data
+// but always includes 0 and >= 10 so the threshold lines (caution=6, high=8) are visible.
+// Points colour-coded by condition_band; line connects all (including grey points
+// for missing rank/band so trajectory is unbroken).
+function _renderConMonTrendSVG(sorted) {
+  var W = 380, H = 240;                   // viewBox dimensions; SVG width:100% scales to container
+  var padL = 32, padR = 12, padT = 14, padB = 28;
+  var plotW = W - padL - padR, plotH = H - padT - padB;
+
+  // Resolve x for each sample by date (ms since epoch). Missing dates get the
+  // mean of neighbours so they don't crash the scale; if all missing, fall back
+  // to equal spacing.
+  var xs = sorted.map(function(s) {
+    var t = s.sample_date ? Date.parse(s.sample_date) : NaN;
+    return isFinite(t) ? t : null;
+  });
+  var validX = xs.filter(function(v) { return v !== null; });
+  if (validX.length < 2) {
+    // Equal-spacing fallback if dates missing
+    xs = sorted.map(function(_, i) { return i; });
+  } else {
+    // Fill nulls with neighbour mean (best-effort) so the line stays unbroken
+    var minX = Math.min.apply(null, validX), maxX = Math.max.apply(null, validX);
+    xs = xs.map(function(v, i) {
+      if (v !== null) return v;
+      // Forward/back fill — simple linear interp would be safer but rare case
+      return minX + (maxX - minX) * (i / Math.max(1, sorted.length - 1));
+    });
+  }
+  var xMin = Math.min.apply(null, xs), xMax = Math.max.apply(null, xs);
+  var xSpan = (xMax - xMin) || 1;
+  var xOf = function(v) { return padL + ((v - xMin) / xSpan) * plotW; };
+
+  // Y-axis: ranks. Always include [0..max(10, dataMax+1)].
+  var ranks = sorted.map(function(s) {
+    return (typeof s.sample_rank === 'number' && isFinite(s.sample_rank)) ? s.sample_rank : null;
+  });
+  var validR = ranks.filter(function(v) { return v !== null; });
+  var rMax = validR.length ? Math.max.apply(null, validR) : 10;
+  var yMax = Math.max(10, Math.ceil(rMax + 1));
+  var yOf = function(v) { return padT + plotH - ((v / yMax) * plotH); };  // low at bottom
+
+  // Build segments
+  var axisX1 = padL, axisX2 = padL + plotW;
+  var threshCautionY = yOf(6);
+  var threshHighY    = yOf(8);
+  var lineSegs = [];   // path d='M ... L ...'
+  var pointsSvg = [];
+
+  sorted.forEach(function(s, i) {
+    var x = xOf(xs[i]);
+    var rank = ranks[i];
+    var displayRank = (rank === null) ? 0 : rank;
+    var y = yOf(displayRank);
+    if (i === 0) lineSegs.push('M ' + x.toFixed(1) + ' ' + y.toFixed(1));
+    else        lineSegs.push('L ' + x.toFixed(1) + ' ' + y.toFixed(1));
+
+    var colour = (rank === null)
+      ? '#6a7fa0'   // grey for missing rank
+      : (CONMON_BAND_COLOUR[s.band] || CONMON_BAND_COLOUR.unknown);
+    var dateStr = s.sample_date || 'Date unknown';
+    var bandLbl = s.is_coolant ? 'COOLANT'
+      : (s.band || 'unknown').replace('_', ' ').toUpperCase();
+    var stale = isSampleStale(s);
+    var rankTipStr = (rank === null) ? 'rank not recorded' : 'rank ' + rank.toFixed(1);
+    var trendsTip = '';
+    if (Array.isArray(s.trends) && s.trends.length) {
+      trendsTip = ' · flagged: ' + s.trends.slice(0, 3).map(function(t) {
+        return (t.label || '?');
+      }).join(', ') + (s.trends.length > 3 ? '…' : '');
+    }
+    var staleTip = stale ? ' · STALE' : '';
+    var fullTip  = dateStr + ' · ' + bandLbl + ' · ' + rankTipStr + staleTip + trendsTip;
+    pointsSvg.push(
+      '<circle class="cmh-point" data-cmh-idx="' + i + '" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="4" ' +
+      'fill="' + colour + '" style="color:' + colour + '">' +
+      '<title>' + esc(fullTip) + '</title></circle>'
+    );
+    if (stale) {
+      // Small ⚠ marker above the point — purely visual annotation
+      pointsSvg.push(
+        '<text class="cmh-stale-flag" x="' + x.toFixed(1) + '" y="' + (y - 8).toFixed(1) + '" text-anchor="middle">⚠</text>'
+      );
+    }
+  });
+
+  // X-axis date ticks — first, middle, last
+  var dateTicks = [];
+  if (validX.length >= 2) {
+    var firstD = new Date(xMin), lastD = new Date(xMax);
+    var midD   = new Date((xMin + xMax) / 2);
+    var fmt = function(d) {
+      try {
+        return d.toLocaleDateString('en-CA', { year: '2-digit', month: 'short' });
+      } catch(e) { return d.toISOString().slice(0, 10); }
+    };
+    dateTicks.push({ x: padL, label: fmt(firstD), anchor: 'start' });
+    dateTicks.push({ x: padL + plotW / 2, label: fmt(midD), anchor: 'middle' });
+    dateTicks.push({ x: padL + plotW, label: fmt(lastD), anchor: 'end' });
+  }
+
+  // Y-axis ticks at 0, 5, yMax
+  var yTicks = [
+    { v: 0,    label: '0' },
+    { v: 5,    label: '5' },
+    { v: yMax, label: String(yMax) }
+  ];
+
+  var svg =
+    '<svg id="cmh-graph-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">' +
+      // Axes
+      '<line class="cmh-axis-line" x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (padL + plotW) + '" y2="' + (padT + plotH) + '"/>' +
+      '<line class="cmh-axis-line" x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (padT + plotH) + '"/>' +
+      // Threshold lines
+      '<line class="cmh-thresh-caution" x1="' + axisX1 + '" y1="' + threshCautionY + '" x2="' + axisX2 + '" y2="' + threshCautionY + '"/>' +
+      '<line class="cmh-thresh-high"    x1="' + axisX1 + '" y1="' + threshHighY    + '" x2="' + axisX2 + '" y2="' + threshHighY    + '"/>' +
+      '<text class="cmh-thresh-label" x="' + (axisX2 - 2) + '" y="' + (threshCautionY - 2) + '" text-anchor="end">caution</text>' +
+      '<text class="cmh-thresh-label" x="' + (axisX2 - 2) + '" y="' + (threshHighY    - 2) + '" text-anchor="end">high</text>' +
+      // Y-axis ticks
+      yTicks.map(function(t) {
+        return '<text class="cmh-axis-tick" x="' + (padL - 4) + '" y="' + (yOf(t.v) + 3) + '" text-anchor="end">' + t.label + '</text>';
+      }).join('') +
+      '<text class="cmh-axis-label" x="6" y="' + (padT + 8) + '">RANK</text>' +
+      // X-axis date ticks
+      dateTicks.map(function(t) {
+        return '<text class="cmh-axis-tick" x="' + t.x + '" y="' + (H - 8) + '" text-anchor="' + t.anchor + '">' + esc(t.label) + '</text>';
+      }).join('') +
+      // Trend line
+      '<path class="cmh-line" d="' + lineSegs.join(' ') + '"/>' +
+      // Points (drawn last so they sit on top)
+      pointsSvg.join('') +
+    '</svg>';
+  return svg;
 }
 
 function closeConMonHistory() {
@@ -3715,7 +3880,11 @@ function exportFleetJSON() {
   out.meta = out.meta || {};
   out.meta.lastSaved = new Date().toISOString();
   const cc = (out.meta && out.meta.clientCode) ? out.meta.clientCode : 'fleet';
-  const fname = cc + '_fleet.json';
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Falls back to legacy <cc>_fleet.json if lib not loaded.
+  const fname = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
+    ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: out })
+    : (cc + '_fleet.json');
   const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -5777,9 +5946,38 @@ function renderHeatmapBoth(fleet, model) {
 #cm-history-overlay.open { display:flex; }
 #cm-history-modal {
   background:#061a15; border:1px solid rgba(61,201,160,0.28); border-radius:12px;
-  padding:22px 24px; min-width:360px; max-width:540px; width:90%;
+  padding:22px 24px; min-width:680px; max-width:860px; width:90%;
   max-height:80vh; display:flex; flex-direction:column;
   box-shadow:0 20px 60px rgba(0,0,0,0.85);
+}
+/* v4.1 — Side-by-side layout: graph LEFT, sample list RIGHT. Modal width 720-860 per operator spec. */
+#cmh-body.cmh-split { display:flex; gap:16px; flex:1; min-height:0; }
+.cmh-graph-col { flex:1 1 50%; min-width:280px; display:flex; flex-direction:column; align-items:stretch; }
+.cmh-list-col  { flex:1 1 50%; min-width:280px; overflow-y:auto; padding-right:2px; }
+/* Responsive fallback — narrow viewports stack graph above list. */
+@media (max-width:640px) {
+  #cm-history-modal { min-width:0; max-width:95vw; }
+  #cmh-body.cmh-split { flex-direction:column; gap:12px; }
+  .cmh-graph-col, .cmh-list-col { flex:1 1 auto; min-width:0; }
+}
+/* Trend graph SVG container */
+#cmh-graph-svg { width:100%; height:240px; background:rgba(255,255,255,0.015); border:1px solid rgba(255,255,255,0.05); border-radius:6px; }
+.cmh-graph-caption { font-size:0.58rem; color:#5dcaa5; letter-spacing:0.6px; text-transform:uppercase; margin:6px 4px 0; opacity:0.7; }
+/* Trend graph elements (inline SVG styling) */
+#cmh-graph-svg .cmh-axis-line { stroke:rgba(255,255,255,0.12); stroke-width:1; }
+#cmh-graph-svg .cmh-axis-tick { fill:#5dcaa5; font-size:9px; font-family:monospace; }
+#cmh-graph-svg .cmh-axis-label { fill:#5dcaa5; font-size:8px; letter-spacing:0.5px; text-transform:uppercase; }
+#cmh-graph-svg .cmh-thresh-caution { stroke:#f59e0b; stroke-width:1; stroke-dasharray:3,3; opacity:0.35; }
+#cmh-graph-svg .cmh-thresh-high    { stroke:#ef4444; stroke-width:1; stroke-dasharray:3,3; opacity:0.4; }
+#cmh-graph-svg .cmh-thresh-label   { fill:#5dcaa5; font-size:8px; opacity:0.6; }
+#cmh-graph-svg .cmh-line { fill:none; stroke:#3dc9a0; stroke-width:1.4; opacity:0.55; }
+#cmh-graph-svg .cmh-point { stroke:rgba(0,0,0,0.4); stroke-width:1; cursor:pointer; transition:r 0.1s; }
+#cmh-graph-svg .cmh-point:hover { r:6; filter:drop-shadow(0 0 4px currentColor); }
+#cmh-graph-svg .cmh-stale-flag { fill:#f59e0b; font-size:10px; pointer-events:none; }
+.cmh-entry.cmh-flash { animation: cmhFlash 1.4s ease-out; }
+@keyframes cmhFlash {
+  0%   { box-shadow: 0 0 0 0 rgba(61,201,160,0.55); border-color:rgba(61,201,160,0.7); }
+  100% { box-shadow: 0 0 0 12px rgba(61,201,160,0); }
 }
 .cmh-header { margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid rgba(61,201,160,0.12); }
 .cmh-header h3 { font-size:0.95rem; color:#3dc9a0; letter-spacing:1.5px; text-transform:uppercase; margin:0 0 4px 0; }

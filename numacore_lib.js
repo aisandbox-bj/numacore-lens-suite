@@ -15,6 +15,8 @@
  *   showToast()   — CPT v17:2299 (extended with severity)
  *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
  *
+ * Version 1.2.0 — Chunk 11 adds save-filename helper
+ *   (buildSaveFilename) for cross-tool consistency.
  * Version 1.1.0 — Chunk 2 adds V5 migration helpers
  *   (makeComponentId, validateFleetJSON_v5, migrateV4FlatToV5).
  * Version 1.0.0 — Chunk 1 baseline (six helpers).
@@ -22,7 +24,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.1.0';
+  var VERSION = '1.2.0';
   var DEFAULT_TZ = 'America/Edmonton';
 
   // ─────────────────────────────────────────────────────────────
@@ -545,6 +547,71 @@
   }
 
   // ─────────────────────────────────────────────────────────────
+  // SAVE FILENAME — Chunk 11 (v1.2.0)
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Build a unified save filename across all suite tools.
+   *
+   * Format: <safeClientCode>_<YYYY-MM-DD_HH-MM-SS>[_<suffix>].<ext>
+   *
+   * Examples:
+   *   buildSaveFilename('CLIENT')                              → 'CLIENT_2026-05-08_14-30-45.json'
+   *   buildSaveFilename('Acme Corp')                           → 'Acme_Corp_2026-05-08_14-30-45.json'
+   *   buildSaveFilename('CLIENT', { suffix: 'v5-conmon' })     → 'CLIENT_2026-05-08_14-30-45_v5-conmon.json'
+   *   buildSaveFilename('CLIENT', { tz: 'America/Vancouver' }) → 'CLIENT_2026-05-08_07-30-45.json' (in Pacific)
+   *
+   * @param {string} clientCode — sanitized to [A-Z0-9_]; falls back to 'CLIENT' if empty.
+   * @param {object} [opts]
+   * @param {Date|string} [opts.ts] — timestamp; defaults to new Date().
+   * @param {string} [opts.tz]     — IANA timezone (e.g. 'America/Vancouver'); defaults to
+   *                                 fleetData.masterData.clientSettings.timezone if available
+   *                                 (Chunk 12 — falls back to browser-local until Chunk 12 lands).
+   * @param {string} [opts.suffix] — optional decoration appended after datetime.
+   * @param {string} [opts.ext]    — file extension without dot. Defaults to 'json'.
+   * @param {object} [opts.fleetData] — optional fleet JSON object to read clientSettings.timezone from.
+   * @returns {string}
+   */
+  function buildSaveFilename(clientCode, opts) {
+    opts = opts || {};
+    var safeCC = String(clientCode || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
+    var ts     = opts.ts ? (opts.ts instanceof Date ? opts.ts : new Date(opts.ts)) : new Date();
+    if (isNaN(ts.getTime())) ts = new Date();
+    // Resolve timezone — explicit opts.tz beats fleetData.masterData.clientSettings.timezone
+    // beats browser local. clientSettings is a Chunk 12 slot; safe to read defensively.
+    var tz = opts.tz;
+    if (!tz && opts.fleetData && opts.fleetData.masterData && opts.fleetData.masterData.clientSettings) {
+      tz = opts.fleetData.masterData.clientSettings.timezone;
+    }
+    // Format datetime as YYYY-MM-DD_HH-MM-SS in the chosen TZ.
+    // Use Intl.DateTimeFormat with toParts() for reliable locale-independent assembly.
+    var fmtOpts = {
+      year:   'numeric', month:  '2-digit', day:    '2-digit',
+      hour:   '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    };
+    if (tz) fmtOpts.timeZone = tz;
+    var parts;
+    try {
+      parts = new Intl.DateTimeFormat('en-CA', fmtOpts).formatToParts(ts);
+    } catch (e) {
+      // Invalid timezone — fall back to browser local (drop the tz option)
+      delete fmtOpts.timeZone;
+      parts = new Intl.DateTimeFormat('en-CA', fmtOpts).formatToParts(ts);
+    }
+    var get = function (type) {
+      var p = parts.find(function (x) { return x.type === type; });
+      return p ? p.value : '00';
+    };
+    // Some locales return 'hour: 24' for midnight — normalize to '00'.
+    var hh = get('hour'); if (hh === '24') hh = '00';
+    var dt = get('year') + '-' + get('month') + '-' + get('day') +
+             '_' + hh + '-' + get('minute') + '-' + get('second');
+    var suffix = opts.suffix ? '_' + String(opts.suffix).replace(/[^A-Z0-9_-]/gi, '_') : '';
+    var ext    = (opts.ext || 'json').replace(/[^A-Z0-9]/gi, '');
+    return safeCC + '_' + dt + suffix + '.' + ext;
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // EXPORT
   // ─────────────────────────────────────────────────────────────
   window.NumaCoreLib = {
@@ -558,6 +625,8 @@
     makeComponentId: makeComponentId,
     validateFleetJSON_v5: validateFleetJSON_v5,
     migrateV4FlatToV5: migrateV4FlatToV5,
+    // Chunk 11 — save-filename consistency
+    buildSaveFilename: buildSaveFilename,
     VERSION: VERSION
   };
 })();

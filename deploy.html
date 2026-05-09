@@ -2901,7 +2901,15 @@ function saveSession() {
   // is now newer than any pending backup.
   if (!fleetData.meta) fleetData.meta = {};
   fleetData.meta.lastSaved = new Date().toISOString();
-  const fname = _fleetFilename || ((fleetData?.meta?.clientCode || 'CLIENT') + '_fleet.json');
+  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Deliberate behavior change: every save now produces a NEW timestamped
+  // filename (no save-back to _fleetFilename). Trade-off documented in
+  // Deploy v8.6 Backlog. Mission Control flow unaffected (Deploy posts
+  // request-save through Lens, which has its own helper call).
+  const cc = fleetData?.meta?.clientCode || 'CLIENT';
+  const fname = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
+    ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: fleetData })
+    : (_fleetFilename || (cc + '_fleet.json'));
   const blob = new Blob([JSON.stringify(fleetData, null, 2)], { type:'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
