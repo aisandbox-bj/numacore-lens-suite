@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NumaCore Lens Suite — User Manual v1</title>
+<style>
+:root{
+  /* Backgrounds */
+  --bg-deep:#0a0e1a;
+  --bg-panel:#0f1525;
+  --bg-card:#141b2d;
+  --bg-card2:#1a2340;
+  /* Lens brand */
+  --lens-bg:#030f0c;
+  --lens-bg-surface:#081a15;
+  --lens-accent:#3dc9a0;
+  --lens-accent-soft:#1d9e75;
+  --lens-accent-glow:#0b6648;
+  --lens-text-high:#e0faf2;
+  /* Text */
+  --text-pri:#e8f0fe;
+  --text-sec:#8eaac8;
+  --text-dim:#6a829e;
+  /* Status */
+  --green:#4caf50;
+  --gold:#ffd54f;
+  --orange:#ff9800;
+  --red:#f44336;
+  --teal:#4dd0e1;
+  /* Tool accents */
+  --accent-pulse:#e24b4a;
+  --accent-vitals:#1d9e75;
+  --accent-horizon:#378add;
+  --accent-cadence:#ba7517;
+  --accent-deploy:#9b97e8;
+  --accent-intake:#888780;
+  /* Borders */
+  --border:rgba(100,181,246,0.18);
+  --border-soft:rgba(255,255,255,0.07);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg-deep);color:var(--text-pri);font-family:'Segoe UI',system-ui,Arial,sans-serif;line-height:1.65;font-size:14px}
+body{background:radial-gradient(ellipse at top, #0e1430 0%, var(--bg-deep) 60%) fixed}
+
+/* Layout shell */
+.manual-shell{max-width:1080px;margin:0 auto;padding:36px 48px 80px}
+@media (max-width:780px){.manual-shell{padding:24px 18px 60px}}
+
+/* Header */
+.manual-header{padding-bottom:18px;border-bottom:1px solid var(--border);margin-bottom:22px}
+.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:0.18em;color:var(--lens-accent);margin-bottom:6px}
+.manual-header h1{font-size:30px;font-weight:600;margin:0 0 4px;letter-spacing:-0.01em}
+.manual-header h1 .version{color:var(--lens-accent);font-weight:400;font-size:24px;margin-left:8px}
+.manual-header .subtitle{color:var(--text-sec);font-size:13px}
+
+/* Section nav (4 chips) */
+.section-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.section-chip{background:var(--bg-card);color:var(--text-sec);border:1px solid var(--border);border-radius:14px;padding:5px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;transition:all 0.15s;font-family:inherit}
+.section-chip:hover{border-color:var(--lens-accent-soft);color:var(--text-pri)}
+.section-chip.active{background:rgba(61,201,160,0.12);border-color:var(--lens-accent);color:var(--lens-text-high)}
+
+/* Tab nav (15 buttons) */
+.tab-nav{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:24px;padding-bottom:0}
+.tab-btn{background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);padding:8px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s;font-family:inherit;margin-bottom:-1px;white-space:nowrap}
+.tab-btn:hover{color:var(--text-pri)}
+.tab-btn.active{color:var(--lens-accent);border-bottom-color:var(--lens-accent)}
+.tab-btn .num{color:var(--text-dim);margin-right:6px;font-weight:400}
+.tab-btn.active .num{color:var(--lens-accent-soft)}
+
+/* Panels */
+.tab-panel{display:none;animation:fadeIn 0.2s ease-out}
+.tab-panel.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.tab-panel h2{font-size:22px;font-weight:600;margin:0 0 4px;letter-spacing:-0.01em}
+.tab-panel h2 .panel-num{color:var(--text-dim);font-weight:400;margin-right:10px}
+.tab-panel .lede{color:var(--text-sec);font-size:14px;margin:0 0 22px}
+.tab-panel h3{font-size:16px;font-weight:600;margin:28px 0 8px;color:var(--lens-text-high)}
+.tab-panel h4{font-size:13px;font-weight:600;margin:18px 0 6px;color:var(--text-pri);text-transform:uppercase;letter-spacing:0.06em}
+.tab-panel p{margin:0 0 12px}
+.tab-panel ul,.tab-panel ol{margin:0 0 14px;padding-left:22px}
+.tab-panel li{margin-bottom:5px}
+.tab-panel a{color:var(--lens-accent);text-decoration:none}
+.tab-panel a:hover{text-decoration:underline}
+
+/* Status badges */
+.badge{display:inline-block;font-size:10px;padding:2px 9px;border-radius:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;border:1px solid;vertical-align:middle}
+.badge.done{background:rgba(76,175,80,0.15);color:var(--green);border-color:rgba(76,175,80,0.35)}
+.badge.wip{background:rgba(255,213,79,0.15);color:var(--gold);border-color:rgba(255,213,79,0.35)}
+.badge.todo{background:rgba(106,130,158,0.15);color:var(--text-dim);border-color:rgba(106,130,158,0.4)}
+.badge.warn{background:rgba(255,152,0,0.15);color:var(--orange);border-color:rgba(255,152,0,0.35)}
+.badge.crit{background:rgba(244,67,54,0.15);color:var(--red);border-color:rgba(244,67,54,0.35)}
+
+/* Callouts */
+.callout{background:var(--bg-card);border:1px solid var(--border);border-left:4px solid var(--gold);border-radius:6px;padding:14px 18px;margin:16px 0}
+.callout.coming{border-left-color:var(--accent-horizon)}
+.callout.warn{border-left-color:var(--orange)}
+.callout.danger{border-left-color:var(--red)}
+.callout.tip{border-left-color:var(--lens-accent)}
+.callout-title{font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--gold);font-weight:600;margin-bottom:4px}
+.callout.coming .callout-title{color:var(--accent-horizon)}
+.callout.warn .callout-title{color:var(--orange)}
+.callout.danger .callout-title{color:var(--red)}
+.callout.tip .callout-title{color:var(--lens-accent)}
+.callout p:last-child{margin-bottom:0}
+
+/* Code */
+code{background:var(--bg-card2);color:var(--teal);padding:1px 6px;border-radius:3px;font-size:12.5px;font-family:'Consolas','SF Mono',monospace}
+pre{background:var(--bg-card2);color:var(--teal);padding:14px 16px;border-radius:6px;border:1px solid var(--border-soft);font-size:12px;font-family:'Consolas','SF Mono',monospace;overflow-x:auto;line-height:1.5;margin:12px 0}
+pre code{background:none;padding:0;color:inherit}
+
+/* Tables */
+table{width:100%;border-collapse:collapse;margin:12px 0 18px;font-size:13px}
+thead th{background:var(--bg-card2);color:var(--text-sec);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;padding:10px 12px;text-align:left;font-weight:600;border:1px solid var(--border)}
+tbody td{padding:9px 12px;border:1px solid var(--border);vertical-align:top}
+tbody tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+tbody tr:hover td{background:rgba(61,201,160,0.04)}
+table code{font-size:11.5px}
+
+/* Definition list */
+dl.glossary dt{font-weight:600;color:var(--lens-text-high);margin-top:14px;font-size:14px}
+dl.glossary dd{margin:2px 0 0;color:var(--text-sec);padding-left:0}
+
+/* Mind map */
+.mindmap-wrap{margin:18px 0 26px;background:var(--lens-bg);border:1px solid var(--border-soft);border-radius:10px;padding:12px;position:relative;overflow:hidden}
+.mindmap-wrap::before{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(61,201,160,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(61,201,160,0.04) 1px,transparent 1px);background-size:28px 28px;pointer-events:none}
+.mindmap-svg{width:100%;height:auto;display:block;position:relative}
+.mm-node{cursor:pointer;transition:filter 0.15s}
+.mm-node:hover{filter:brightness(1.18) drop-shadow(0 0 8px currentColor)}
+.mm-node text{font-family:'Segoe UI',system-ui,sans-serif;font-weight:600;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.mm-connector{stroke:var(--lens-accent-glow);stroke-width:1.4;opacity:0.55;fill:none}
+.mm-hint{text-align:center;color:var(--text-dim);font-size:11px;margin-top:6px;letter-spacing:0.05em}
+
+/* Pillar grid */
+.pillar-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 22px}
+.pillar{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
+.pillar-num{font-size:10px;color:var(--lens-accent);text-transform:uppercase;letter-spacing:0.12em;font-weight:600;margin-bottom:4px}
+.pillar h4{margin:0 0 6px;font-size:13px;text-transform:none;letter-spacing:0;color:var(--lens-text-high)}
+.pillar p{margin:0;color:var(--text-sec);font-size:12.5px}
+
+/* Tool-accent dot */
+.tool-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+
+/* Footer */
+footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color:var(--text-dim);font-size:11px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+/* Copy button */
+.copy-btn{background:var(--bg-card);color:var(--text-sec);border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:inherit;transition:all 0.15s}
+.copy-btn:hover{background:var(--bg-card2);color:var(--text-pri);border-color:var(--lens-accent-soft)}
+.copy-btn.copied{background:rgba(76,175,80,0.18);border-color:var(--green);color:var(--green)}
+
+/* Stage marker (Stage 1 placeholder content for tabs to be built) */
+.stage-marker{background:var(--bg-card);border:1px dashed var(--border);border-radius:8px;padding:30px;text-align:center;color:var(--text-dim);margin:20px 0}
+.stage-marker .lbl{font-size:10px;text-transform:uppercase;letter-spacing:0.15em;color:var(--gold);font-weight:600;margin-bottom:8px}
+.stage-marker p{margin:6px 0;font-size:13px}
+
+/* Sub-tab list (used inside Cadence) */
+.subtab-list{list-style:none;padding:0;margin:8px 0 16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.subtab-list li{background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:10px 12px}
+.subtab-list .nm{font-weight:600;color:var(--lens-text-high);font-size:13px;display:block;margin-bottom:2px}
+.subtab-list .desc{color:var(--text-sec);font-size:12px}
+
+/* Slice ownership grid */
+.slice-grid{display:grid;grid-template-columns:140px 1fr;gap:6px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:14px 16px;font-size:12.5px;margin:10px 0 16px}
+.slice-grid .k{color:var(--lens-accent);font-weight:600}
+.slice-grid .v{color:var(--text-sec);font-family:'Consolas',monospace;font-size:11.5px}
+
+/* Prompt blocks (Spin-off tab) */
+.prompt-block{margin:14px 0 26px;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg-card)}
+.prompt-block-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-card2);border-bottom:1px solid var(--border)}
+.prompt-block-header .title{font-size:11.5px;font-weight:600;color:var(--lens-text-high);text-transform:uppercase;letter-spacing:0.08em}
+.prompt-block pre{margin:0;border:none;border-radius:0;max-height:420px;overflow-y:auto;background:transparent;font-size:11.5px;line-height:1.55;color:var(--text-pri);white-space:pre-wrap;word-break:break-word}
+
+/* Footnote */
+.note{color:var(--text-dim);font-size:11.5px;font-style:italic}
+</style>
+</head>
+<body>
+<div class="manual-shell">
+
+<header class="manual-header">
+  <div class="eyebrow">NumaCore Lens Suite</div>
+  <h1>User Manual <span class="version">v1</span></h1>
+  <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-05-08.</div>
+</header>
+
+<nav class="section-nav" id="sectionNav">
+  <button class="section-chip active" data-section="getting-started">Getting Started</button>
+  <button class="section-chip" data-section="five-panels">The Five Panels</button>
+  <button class="section-chip" data-section="supporting">Supporting Tools</button>
+  <button class="section-chip" data-section="reference">Reference</button>
+</nav>
+
+<nav class="tab-nav" id="tabNav">
+  <button class="tab-btn active" data-tab="overview"      data-section="getting-started"><span class="num">1.</span>Overview</button>
+  <button class="tab-btn"        data-tab="setup"         data-section="getting-started"><span class="num">2.</span>Setup</button>
+  <button class="tab-btn"        data-tab="lens"          data-section="five-panels"><span class="num">3.</span>Lens</button>
+  <button class="tab-btn"        data-tab="pulse"         data-section="five-panels"><span class="num">4.</span>Pulse</button>
+  <button class="tab-btn"        data-tab="vitals"        data-section="five-panels"><span class="num">5.</span>Vitals</button>
+  <button class="tab-btn"        data-tab="horizon"       data-section="five-panels"><span class="num">6.</span>Horizon</button>
+  <button class="tab-btn"        data-tab="cadence"       data-section="five-panels"><span class="num">7.</span>Cadence</button>
+  <button class="tab-btn"        data-tab="deploy"        data-section="five-panels"><span class="num">8.</span>Deploy</button>
+  <button class="tab-btn"        data-tab="intake"        data-section="supporting"><span class="num">9.</span>Intake</button>
+  <button class="tab-btn"        data-tab="fleetconfig"   data-section="supporting"><span class="num">10.</span>FleetConfig</button>
+  <button class="tab-btn"        data-tab="migrate"       data-section="supporting"><span class="num">11.</span>Migrate</button>
+  <button class="tab-btn"        data-tab="troubleshoot"  data-section="reference"><span class="num">12.</span>Troubleshooting</button>
+  <button class="tab-btn"        data-tab="roadmap"       data-section="reference"><span class="num">13.</span>Roadmap</button>
+  <button class="tab-btn"        data-tab="glossary"      data-section="reference"><span class="num">14.</span>Glossary</button>
+  <button class="tab-btn"        data-tab="prompts"       data-section="reference"><span class="num">15.</span>Spin-off Prompts</button>
+</nav>
+
+<main>
+
+<!-- ====================================================================== -->
+<!-- TAB 1 — OVERVIEW                                                        -->
+<!-- ====================================================================== -->
+<section id="tab-overview" class="tab-panel active">
+  <h2><span class="panel-num">1</span>Overview</h2>
+  <p class="lede">NumaCore Lens is a single-page web app suite that delivers PCR-as-a-Service: predicting when major mining-equipment components reach end of life, scheduling their replacement, and managing the projects that execute the work.</p>
+
+  <div class="mindmap-wrap">
+    <svg class="mindmap-svg" viewBox="0 0 1000 660" role="img" aria-label="NumaCore Lens Suite mind map">
+      <defs>
+        <radialGradient id="lensFill" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#0d2a22"/>
+          <stop offset="100%" stop-color="#020907"/>
+        </radialGradient>
+        <radialGradient id="lensHalo" cx="50%" cy="50%" r="50%">
+          <stop offset="60%" stop-color="rgba(61,201,160,0)"/>
+          <stop offset="100%" stop-color="rgba(61,201,160,0.18)"/>
+        </radialGradient>
+      </defs>
+
+      <!-- Header hint -->
+      <text x="500" y="30" text-anchor="middle" font-size="9" fill="var(--text-dim)" letter-spacing="0.22em">CLICK ANY NODE TO JUMP TO ITS TAB</text>
+
+      <!-- Soft halo behind Lens for depth -->
+      <circle cx="500" cy="290" r="115" fill="url(#lensHalo)"/>
+
+      <!-- Inner-ring connectors (edge-to-edge) -->
+      <g class="mm-connectors" stroke="var(--lens-accent-glow)" stroke-width="1.2" fill="none" opacity="0.6">
+        <line x1="500" y1="222" x2="500" y2="134"/>
+        <line x1="565" y1="269" x2="650" y2="241"/>
+        <line x1="540" y1="345" x2="593" y2="418"/>
+        <line x1="460" y1="345" x2="407" y2="418"/>
+        <line x1="435" y1="269" x2="350" y2="241"/>
+      </g>
+
+      <!-- Outer-ring connectors (dashed, lower opacity) -->
+      <g class="mm-connectors" stroke="var(--lens-accent-glow)" stroke-width="1" fill="none" opacity="0.35" stroke-dasharray="3,4">
+        <line x1="452" y1="338" x2="244" y2="546"/>
+        <line x1="500" y1="358" x2="500" y2="546"/>
+        <line x1="548" y1="338" x2="756" y2="546"/>
+      </g>
+
+      <!-- Lens centre node -->
+      <g class="mm-node" data-target="lens" style="color:var(--lens-accent)">
+        <circle cx="500" cy="290" r="78" fill="none" stroke="var(--lens-accent)" stroke-width="0.6" opacity="0.3"/>
+        <circle cx="500" cy="290" r="68" fill="url(#lensFill)" stroke="var(--lens-accent)" stroke-width="2"/>
+        <text x="500" y="284" font-size="20" font-weight="700" fill="var(--lens-text-high)">LENS</text>
+        <text x="500" y="307" font-size="9" letter-spacing="0.18em" fill="var(--lens-accent-soft)">HOST APP</text>
+      </g>
+
+      <!-- Five panels — symmetric ring at 72° spacing -->
+      <g class="mm-node" data-target="pulse" style="color:var(--accent-pulse)">
+        <circle cx="500" cy="90" r="44" fill="rgba(226,75,74,0.10)" stroke="var(--accent-pulse)" stroke-width="1.6"/>
+        <text x="500" y="86" font-size="14" font-weight="600" fill="#ffeceb">PULSE</text>
+        <text x="500" y="103" font-size="8.5" letter-spacing="0.12em" fill="var(--text-dim)">FLEET HEALTH</text>
+      </g>
+
+      <g class="mm-node" data-target="vitals" style="color:var(--accent-vitals)">
+        <circle cx="690" cy="228" r="44" fill="rgba(29,158,117,0.10)" stroke="var(--accent-vitals)" stroke-width="1.6"/>
+        <text x="690" y="224" font-size="14" font-weight="600" fill="#dff5ea">VITALS</text>
+        <text x="690" y="241" font-size="8.5" letter-spacing="0.12em" fill="var(--text-dim)">DRILL DOWN</text>
+      </g>
+
+      <g class="mm-node" data-target="cadence" style="color:var(--accent-cadence)">
+        <circle cx="618" cy="452" r="44" fill="rgba(186,117,23,0.10)" stroke="var(--accent-cadence)" stroke-width="1.6"/>
+        <text x="618" y="448" font-size="14" font-weight="600" fill="#f7e3b8">CADENCE</text>
+        <text x="618" y="465" font-size="8.5" letter-spacing="0.12em" fill="var(--text-dim)">PCR SCHEDULE</text>
+      </g>
+
+      <g class="mm-node" data-target="deploy" style="color:var(--accent-deploy)">
+        <circle cx="382" cy="452" r="44" fill="rgba(155,151,232,0.10)" stroke="var(--accent-deploy)" stroke-width="1.6"/>
+        <text x="382" y="448" font-size="14" font-weight="600" fill="#e6e3ff">DEPLOY</text>
+        <text x="382" y="465" font-size="8.5" letter-spacing="0.12em" fill="var(--text-dim)">EXECUTION</text>
+      </g>
+
+      <g class="mm-node" data-target="horizon" style="color:var(--accent-horizon)">
+        <circle cx="310" cy="228" r="44" fill="rgba(55,138,221,0.10)" stroke="var(--accent-horizon)" stroke-width="1.6"/>
+        <text x="310" y="224" font-size="14" font-weight="600" fill="#dcecfa">HORIZON</text>
+        <text x="310" y="241" font-size="8.5" letter-spacing="0.12em" fill="var(--text-dim)">CAPITAL PLAN</text>
+      </g>
+
+      <!-- Three supporting tools — clearly secondary, separated below -->
+      <g class="mm-node" data-target="intake" style="color:var(--accent-intake)">
+        <circle cx="220" cy="580" r="34" fill="rgba(136,135,128,0.08)" stroke="var(--accent-intake)" stroke-width="1.3"/>
+        <text x="220" y="577" font-size="11" font-weight="600" fill="#e6e6df">INTAKE</text>
+        <text x="220" y="592" font-size="7.5" letter-spacing="0.14em" fill="var(--text-dim)">DATA INGESTION</text>
+      </g>
+      <g class="mm-node" data-target="fleetconfig" style="color:var(--accent-intake)">
+        <circle cx="500" cy="580" r="34" fill="rgba(136,135,128,0.08)" stroke="var(--accent-intake)" stroke-width="1.3"/>
+        <text x="500" y="577" font-size="10" font-weight="600" fill="#e6e6df">FLEETCONFIG</text>
+        <text x="500" y="592" font-size="7.5" letter-spacing="0.14em" fill="var(--text-dim)">FLEETS &amp; UNITS</text>
+      </g>
+      <g class="mm-node" data-target="migrate" style="color:var(--accent-intake)">
+        <circle cx="780" cy="580" r="34" fill="rgba(136,135,128,0.08)" stroke="var(--accent-intake)" stroke-width="1.3"/>
+        <text x="780" y="577" font-size="11" font-weight="600" fill="#e6e6df">MIGRATE</text>
+        <text x="780" y="592" font-size="7.5" letter-spacing="0.14em" fill="var(--text-dim)">V4 → V5</text>
+      </g>
+
+      <!-- Section labels -->
+      <text x="500" y="50" text-anchor="middle" font-size="8.5" letter-spacing="0.22em" fill="var(--lens-accent-soft)" opacity="0.7">THE FIVE PANELS</text>
+      <text x="500" y="638" text-anchor="middle" font-size="8.5" letter-spacing="0.22em" fill="var(--text-dim)" opacity="0.7">SUPPORTING TOOLS</text>
+    </svg>
+  </div>
+
+  <h3>What it is</h3>
+  <p>Five panels (Pulse, Vitals, Horizon, Cadence, Deploy) hosted by <b>Lens</b> — the Mission Control shell. Lens loads Cadence and Deploy as embedded iframes; Pulse, Vitals, and Horizon render natively inside Lens itself. Three supporting tools (Intake, FleetConfig, Migrate) run standalone as data-prep utilities.</p>
+  <p>The whole suite is single-file HTML per tool. No server, no build step, no login. Opens from <code>file://</code> or hosted on GitHub Pages — both first-class. Client data lives in a single <code>[ClientCode]_fleet.json</code> that never leaves the workstation.</p>
+
+  <h3>What it isn't</h3>
+  <ul>
+    <li>Not licensed software. Tools are the internal delivery engine for the advisory service — never distributed to clients.</li>
+    <li>Not multi-user. One operator, one JSON file at a time. No concurrent editing.</li>
+    <li>Not a CMMS. Doesn't run work orders, doesn't dispatch crews, doesn't replace SAP/EAM. It schedules <i>what should happen</i>; SAP records <i>what did happen</i>.</li>
+  </ul>
+
+  <h3>The four pillars (what every feature must serve)</h3>
+  <div class="pillar-grid">
+    <div class="pillar">
+      <div class="pillar-num">Pillar 1</div>
+      <h4>Specialise deeply</h4>
+      <p>Long-term component planning, reliability, sustainability. Not day-to-day dispatch.</p>
+    </div>
+    <div class="pillar">
+      <div class="pillar-num">Pillar 2</div>
+      <h4>Productise the service</h4>
+      <p>Defined scope, fixed retainer, repeatable delivery across multiple clients.</p>
+    </div>
+    <div class="pillar">
+      <div class="pillar-num">Pillar 3</div>
+      <h4>Build annuity income</h4>
+      <p>Recurring retainer base instead of single-client billable hours.</p>
+    </div>
+    <div class="pillar">
+      <div class="pillar-num">Pillar 4</div>
+      <h4>Cross-client data moat</h4>
+      <p>Every engagement adds to a benchmark dataset. Compounds. Eventually licensable.</p>
+    </div>
+  </div>
+
+  <h3>Mission Control mental model</h3>
+  <p>One JSON in at meeting start. Work happens across all five panels. One JSON out at meeting end. Children (Cadence, Deploy) broadcast snapshots on autosave; Lens swaps them into <code>lensRawData</code> and re-broadcasts to siblings. Each tool owns specific JSON slices and never writes outside its lane — see the <a href="#" data-jump="lens">Lens tab</a> for the full slice-ownership rules.</p>
+
+  <div class="callout tip">
+    <div class="callout-title">Operator note</div>
+    <p>This manual is the operator memory aid (v1). Two copy-paste agent prompts in the <a href="#" data-jump="prompts">Spin-off Prompts</a> tab generate updated client-facing and future-operator variants when you need them — they re-read the suite's current state each time, so they don't go stale.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 2 — SETUP (Stage 2)                                                 -->
+<!-- ====================================================================== -->
+<section id="tab-setup" class="tab-panel">
+  <h2><span class="panel-num">2</span>Setup</h2>
+  <p class="lede">First-time setup, file layout, browser requirements, GitHub Pages vs <code>file://</code>, and the JSON-in JSON-out workflow that runs every meeting.</p>
+
+  <h3>What you need</h3>
+  <ul>
+    <li>A modern Chromium browser (Edge, Chrome, Brave). Tested on Edge 120+.</li>
+    <li>A single fleet JSON per client: <code>[ClientCode]_fleet.json</code>. Lives on disk; never goes to a server.</li>
+    <li>Optional: a GitHub Pages deploy of the suite for cross-machine access. Code is public; data stays local.</li>
+  </ul>
+
+  <h3>File layout on disk</h3>
+<pre>4 - Build Output/
+├── Lens v4.0.html              ← host app (Mission Control)
+├── Cadence v18.html            ← standalone scheduler
+├── Deploy v8.6.html            ← standalone execution
+├── Intake v8.html              ← data ingestion
+├── FleetConfig v0.1.html       ← fleet/model/unit editor
+├── migrate.html                ← V4 Flat → V5 migrator
+├── numacore_lib.js             ← shared library (esc, parseDate, makeComponentId, V5 validator)
+└── tools/
+    ├── index.html              ← Pages landing
+    ├── cadence.html            ← iframe target
+    ├── deploy.html             ← iframe target
+    ├── intake.html             ← Pages link
+    └── fleetconfig.html        ← Pages link</pre>
+
+  <h3>file:// vs GitHub Pages — both first-class</h3>
+  <p>The suite must work identically from a local file system AND from a hosted GitHub Pages deploy. Two contexts, one codebase.</p>
+  <table>
+    <thead><tr><th>Concern</th><th><code>file://</code></th><th>GitHub Pages (https)</th></tr></thead>
+    <tbody>
+      <tr><td>Iframe URL resolver</td><td>Same-folder relative paths</td><td>Needs <code>http(s)://</code> protocol check (FIX-1)</td></tr>
+      <tr><td>postMessage origin</td><td><code>'*'</code> acceptable (single-user)</td><td>Same — single-user context</td></tr>
+      <tr><td>Save to file</td><td>Browser download API</td><td>Same — never writes to server</td></tr>
+      <tr><td>JSON load</td><td>File picker</td><td>File picker — never fetched from server</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Allowed external dependencies</h3>
+  <p>Two CDN libraries only:</p>
+  <ul>
+    <li><b>SheetJS 0.18.5</b> — Excel read/write (Cadence export, Intake ingestion)</li>
+    <li><b>pdf.js 3.11.174</b> — PDF text extraction (Intake CONMON FluidLife reader)</li>
+  </ul>
+  <div class="callout warn">
+    <div class="callout-title">No new dependencies</div>
+    <p>jQuery, lodash, React, Vue — hard no. Keeps the suite single-file, offline-capable, and audit-friendly.</p>
+  </div>
+
+  <h3>JSON-in JSON-out workflow</h3>
+  <ol>
+    <li>Open <code>Lens v4.0.html</code> in a browser.</li>
+    <li>Click <b>Load Fleet</b> → pick <code>[ClientCode]_fleet.json</code>.</li>
+    <li>Work across Pulse / Vitals / Horizon / Cadence / Deploy panels. Cadence and Deploy autosave their slices into <code>lensRawData</code> via postMessage.</li>
+    <li>Click <b>Save Final</b> at meeting end → browser download writes the updated JSON. Replace the file on disk.</li>
+  </ol>
+
+  <h3>Standalone tool use</h3>
+  <p>Any of the four tools (Cadence, Deploy, Intake, FleetConfig) opens directly from disk and works without Lens. Detection is automatic: <code>window.parent === window</code> means standalone, otherwise embedded.</p>
+
+  <div class="callout tip">
+    <div class="callout-title">Backup discipline</div>
+    <p>Save final fleet JSON files to OneDrive (or equivalent) at meeting end. The JSON IS the session record — losing it means re-entering whatever was changed during the meeting.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 3 — LENS (Stage 2)                                                  -->
+<!-- ====================================================================== -->
+<section id="tab-lens" class="tab-panel">
+  <h2><span class="panel-num">3</span>Lens <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— the Mission Control host</span></h2>
+  <p class="lede">The shell that hosts the five panels and routes JSON between them. Loads Cadence and Deploy as iframes; renders Pulse, Vitals, and Horizon natively. Owns file I/O and the Config / Capability Gating layer.</p>
+
+  <h3>Mission Control architecture in one paragraph</h3>
+  <p>One JSON loaded at meeting start (Lens reads it). Children (Cadence, Deploy iframes) receive their copy via <code>load-fleet</code> postMessage on tab switch. Each child autosaves locally, then broadcasts a <code>fleet-updated</code> message containing its current snapshot. Lens swaps the snapshot into <code>lensRawData</code> and re-broadcasts to siblings via <code>refresh-fleet</code>. At meeting end, <b>Save Final</b> writes the consolidated JSON to disk via download.</p>
+
+  <h3>Slice ownership — the canonical table</h3>
+  <p>Each tool owns specific slices and never writes outside its lane. Round-trip preservation depends on this contract.</p>
+  <table>
+    <thead><tr><th>Tool</th><th>Owns (writes)</th><th>Reads</th></tr></thead>
+    <tbody>
+      <tr><td><b>Lens</b></td><td><code>ui_settings</code></td><td>Everything (canonical store)</td></tr>
+      <tr><td><b>Cadence</b></td><td><code>workingData.{projects, componentDateOverrides, decisionLog, projConfig, visibleMonths, granularity, abScopeState, deColOrder}</code></td><td><code>masterData.*</code>, <code>components[]</code>, <code>componentHistory[]</code></td></tr>
+      <tr><td><b>Deploy</b></td><td><code>workingData.{projectDetails, checklistItems, actionItems, projectNotes}</code></td><td><code>workingData.projects[]</code> (from Cadence), <code>masterData.*</code></td></tr>
+      <tr><td><b>Intake</b></td><td><code>components[]</code>, <code>componentHistory[]</code>, <code>oil_samples[]</code>, <code>meta.{unmatched_conmon[], unclassified_test_names[]}</code></td><td>Source files (XLSX/PDF), existing JSON for UPDATE merges</td></tr>
+      <tr><td><b>FleetConfig</b></td><td><code>masterData.{fleets[], units[], utilizationProfiles[], unitActivitySchedule[]}</code></td><td><code>readings[]</code> (for "Suggest from readings")</td></tr>
+    </tbody>
+  </table>
+
+  <h3>postMessage bridge</h3>
+  <table>
+    <thead><tr><th>Direction</th><th>Message</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td>Child → Lens</td><td><code>tool-ready</code></td><td>iframe loaded and ready to receive JSON</td></tr>
+      <tr><td>Lens → Child</td><td><code>load-fleet</code></td><td>Tab activated; pushes initial snapshot</td></tr>
+      <tr><td>Child → Lens</td><td><code>fleet-updated</code></td><td>Autosave fired in child; child sends fresh snapshot</td></tr>
+      <tr><td>Lens → Child</td><td><code>refresh-fleet</code></td><td>Sibling edit happened; pushes refreshed snapshot</td></tr>
+      <tr><td>Child → Lens</td><td><code>request-save</code></td><td>User clicked Save in child; Lens triggers download</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Origin filter: <code>'*'</code>. Acceptable for single-user file:// or single-origin GitHub Pages context.</p>
+
+  <h3>Embed-aware nav (FIX-2)</h3>
+  <p>When the active tab is an iframe-embedded child (Cadence, Deploy):</p>
+  <ul>
+    <li>Left fleet-filter column hides — belongs to the host, not the child.</li>
+    <li>Header <b>Load File</b> / <b>Save File</b> buttons hide — Lens manages I/O; child requests via <code>request-save</code>.</li>
+    <li>Strip nav stays visible — that's how you switch back. Switching to a native panel (Pulse/Vitals/Horizon) restores the host chrome.</li>
+  </ul>
+
+  <h3>Save / Load workflow</h3>
+  <ol>
+    <li><b>Load Fleet</b> button → file picker → JSON parsed into <code>lensRawData</code>.</li>
+    <li>Tab switch → if target is an iframe, push current <code>lensRawData</code> via <code>load-fleet</code>.</li>
+    <li>Child autosaves → broadcasts <code>fleet-updated</code> → Lens swaps into <code>lensRawData</code> → re-broadcasts to siblings.</li>
+    <li><b>Save Final</b> → browser download writes <code>[ClientCode]_fleet.json</code> with timestamp suffix.</li>
+  </ol>
+
+  <h3>Config + Capability Gating (CAPS)</h3>
+  <p>Settings panel covers host-level config: terminology (<code>termLabel</code>: "Project" / "Shutdown" / "Outage"), theme, currency. The CAPS object exposes nine capabilities computed from the loaded JSON's contents:</p>
+  <ul>
+    <li>SMU · Utilization · Benchmarks · MaterialMaster · IW39 · TLMaterials · ComponentPockets · PartsLibrary · ConMon</li>
+  </ul>
+  <p>Each capability is "available" or "missing"; <code>requiresCaps()</code> drives the locked-but-visible UI pattern. Example: ConMon corner badges render "NR" until <code>oil_samples[]</code> arrives, then auto-light without a code change. Inspect via <code>window.CAPS</code> in DevTools.</p>
+
+  <div class="callout">
+    <div class="callout-title">CAPS is feature gating, not security</div>
+    <p>All nine capabilities are visible in the UI; missing ones are greyed with a tooltip explaining what data is needed. This is not access control — never describe it as one.</p>
+  </div>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming next</div>
+    <p>Cross-reload state persistence (<code>_restoreState()</code>) is wired but unloaded — autosave to localStorage works, restore on reload doesn't. Pre-existing CPT behaviour, tracked separately.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 4 — PULSE (Stage 2)                                                 -->
+<!-- ====================================================================== -->
+<section id="tab-pulse" class="tab-panel">
+  <h2><span class="panel-num">4</span>Pulse</h2>
+  <p class="lede">The fleet-health summary. Loads first when you open Lens; tells you what's overdue, what's near-due, and what's missing reference data — at a glance.</p>
+
+  <h3>Layout</h3>
+  <p>Two columns: <b>Action Summary</b> (left) and <b>High Risk Items</b> (right).</p>
+
+  <h3>Action Summary widgets</h3>
+  <table>
+    <thead><tr><th>Widget</th><th>Counts</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Overdue Components</td><td>Components past their predicted changeout date</td><td><code>components[]</code> with <code>changeout_date &lt; today</code></td></tr>
+      <tr><td>Near-Due (30 days)</td><td>Components with changeout in next 30 days</td><td><code>components[]</code> filtered by date window</td></tr>
+      <tr><td>No Benchmark Recorded</td><td>Components missing <code>benchmark_hours</code></td><td><code>components[]</code> with null benchmark</td></tr>
+      <tr><td>Active Projects</td><td>Projects in flight per <code>workingData.projects[]</code></td><td>Cadence-owned slice</td></tr>
+    </tbody>
+  </table>
+
+  <h3>High Risk Items table</h3>
+  <p>Rows ranked by status band (Red → Orange → Amber → Green). Columns: <b>Component</b>, <b>Unit</b>, <b>Fleet/Model</b>, <b>Life Used</b>, <b>Predicted Changeout</b>, <b>Status</b>.</p>
+
+  <h3>Attention rules — what surfaces here</h3>
+  <p>A component appears in the High Risk table if any of these fire:</p>
+  <ul>
+    <li>Status band = Red (over benchmark) or Orange (approaching)</li>
+    <li>ConMon Pulse rule: any <code>oil_samples[]</code> entry with <code>sample_rank &gt; 9.0</code> OR both <code>wear</code> and <code>water</code> flagged in <code>concern_categories</code></li>
+    <li>Project is active and the underlying component override conflicts with the Cadence schedule</li>
+  </ul>
+
+  <h3>Status band colours</h3>
+  <table>
+    <thead><tr><th>Band</th><th>Meaning</th><th>Threshold (% benchmark hours)</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge done">Green</span></td><td>Healthy</td><td>&lt; 80%</td></tr>
+      <tr><td><span class="badge wip">Amber</span></td><td>Approaching</td><td>80–100%</td></tr>
+      <tr><td><span class="badge warn">Orange</span></td><td>Near or over benchmark</td><td>≥ 100%</td></tr>
+      <tr><td><span class="badge crit">Red</span></td><td>Over by &gt; 10%</td><td>≥ 110%</td></tr>
+      <tr><td><span class="badge todo">Grey</span></td><td>No benchmark — cannot grade</td><td>n/a</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <div class="callout-title">Pulse vs Vitals split</div>
+    <p>Pulse = "what needs attention right now". Vitals = "drill into a specific unit / component to investigate why". Pulse is the dashboard, Vitals is the diagnostic.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 5 — VITALS (Stage 2)                                                -->
+<!-- ====================================================================== -->
+<section id="tab-vitals" class="tab-panel">
+  <h2><span class="panel-num">5</span>Vitals</h2>
+  <p class="lede">Component health drill-down. Two sub-tabs: <b>Fleet Overview</b> (orbit FLEET → MODEL → UNIT navigation with hero view) and <b>Heat Map</b> (matrix of components × units, two display modes).</p>
+
+  <h3>Fleet Overview — orbit navigation</h3>
+  <p>Three-level drill: FLEET (top ring) → MODEL (mid ring) → UNIT (inner ring). Click an outer node to spiral inward; crumb rail at the top tracks where you are. At UNIT level the right pane fills with the unit hero view.</p>
+
+  <h3>Hero view per unit</h3>
+  <ul>
+    <li>Tinted machine image at centre (FLEET_IMAGE map below)</li>
+    <li>Single-component cards arranged around the image (engine, transmission, final drives, hydraulic pump, etc.)</li>
+    <li>Grouped panels on the right (cylinders, undercarriage, etc.) — collapsed by default, expand on click</li>
+    <li>Two badge layers per card: project flag (component scheduled in a Cadence project) and ConMon corner badge (sample severity)</li>
+  </ul>
+
+  <h3>FLEET_IMAGE map</h3>
+  <table>
+    <thead><tr><th>Equipment class</th><th>Image file</th></tr></thead>
+    <tbody>
+      <tr><td>Rigid haul truck</td><td><code>haul-truck-rigid.png</code></td></tr>
+      <tr><td>Articulated haul truck</td><td><code>haul-truck-adt.png</code></td></tr>
+      <tr><td>Track dozer</td><td><code>dozer.png</code></td></tr>
+      <tr><td>Wheel loader (utility)</td><td><code>loader-utility.png</code></td></tr>
+      <tr><td>Wheel loader (standard)</td><td><code>loader-wheel.png</code></td></tr>
+      <tr><td>Excavator (standard)</td><td><code>excavator-standard.png</code></td></tr>
+      <tr><td>Excavator (large)</td><td><code>excavator-large.png</code></td></tr>
+      <tr><td>Surface drill (small / large)</td><td><code>drill-surface-small.png</code> / <code>drill-surface-large.png</code></td></tr>
+      <tr><td>Underground gear, crushers, screeners, stackers</td><td>Fallback: v3.1 circle orb</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Heat Map sub-tab</h3>
+  <p>Matrix view: rows = components, columns = units, cells coloured by health.</p>
+
+  <h4>Mode A — % Benchmark <span class="badge done">Shipped</span></h4>
+  <p>Cell colour = component health relative to <code>benchmark_hours</code>. Same band logic as <a href="#" data-jump="pulse">Pulse</a>. Default mode.</p>
+
+  <h4>Mode B — ConMon severity <span class="badge wip">Coming Soon</span></h4>
+  <p>Cell colour = <code>condition_band</code> from latest <code>oil_samples[]</code> record per component. Filter chips: Water / Wear / Contaminant / Viscosity / Additive. Detail panel with severity trend graph.</p>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming in Chunk 10</div>
+    <p>Mode B currently renders as a placeholder. Full ConMon heatmap with filter chips + trend graph is the Chunk 10 deliverable.</p>
+  </div>
+
+  <h3>No-data rules</h3>
+  <ul>
+    <li>No benchmark recorded → grey card + warning triangle (NOT red)</li>
+    <li>Under threshold → green</li>
+    <li>Approaching → amber</li>
+    <li>At or over → red</li>
+    <li>ConMon stale: if <code>today − sample_date &gt; stale_threshold_days</code>, diagonal-stripe fade overlay applied to the corner badge</li>
+  </ul>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 6 — HORIZON (Stage 2)                                               -->
+<!-- ====================================================================== -->
+<section id="tab-horizon" class="tab-panel">
+  <h2><span class="panel-num">6</span>Horizon</h2>
+  <p class="lede">Long-range capital planning view. Today (v4-alpha): per-unit lifecycle bar + EOL hours. Chunk 10 brings the full capital-spend forecast chart.</p>
+
+  <div class="callout coming">
+    <div class="callout-title">v4-alpha placeholder</div>
+    <p>The Horizon panel currently ships as a scaffold only — header bar + a per-unit lifecycle grid. The capital-plan chart that integrates <code>componentHistory[]</code>, <code>costs[]</code>, and <code>fleetPlan[]</code> with projected dates from Cadence is the Chunk 10 deliverable.</p>
+  </div>
+
+  <h3>What's shipped today</h3>
+  <p>Three columns per unit: <b>Unit</b>, <b>Lifecycle Bar (5-Year)</b>, <b>EOL Remaining</b>.</p>
+
+  <h3>Lifecycle calculation</h3>
+  <p>The lifecycle bar shows current SMU as a percentage of expected life. The denominator is computed in this priority order:</p>
+  <ol>
+    <li><code>masterData.units[].expected_life_hours</code> if FleetConfig has set it</li>
+    <li>Otherwise, <code>util_rate × 365 × 5</code> as a 5-year fallback</li>
+  </ol>
+<pre>lifecycle_pct = clamp(0..1, smu / horizonHrs)
+EOL_hrs       = max(0, horizonHrs − smu)</pre>
+  <p>Unknown horizon (no <code>expected_life_hours</code>, no <code>util_rate</code>) renders as <b>—</b> with a hint to set <code>expected_life_hours</code> in FleetConfig.</p>
+
+  <div class="callout">
+    <div class="callout-title">FIX-3 root cause</div>
+    <p>Earlier versions used different denominators for the lifecycle bar (<code>util_rate × 365 × 5</code>) and the EOL hours estimate (<code>expected_life_hours</code> only). Result: BD306 showing 52% bar but 0 hrs EOL. FIX-3 unified both onto the same priority order above.</p>
+  </div>
+
+  <h3>What Chunk 10 brings</h3>
+  <ul>
+    <li>Capital plan stacked bar chart per fiscal year</li>
+    <li>Mine-plan input → fleet hours distribution</li>
+    <li>Component-replacement spend forecast aggregated from <code>componentHistory[]</code>, <code>costs[]</code>, projected dates from <code>workingData.projects[]</code></li>
+    <li>Drill-down into specific units / components from chart segments</li>
+  </ul>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 7 — CADENCE                                                         -->
+<!-- ====================================================================== -->
+<section id="tab-cadence" class="tab-panel">
+  <h2><span class="panel-num">7</span>Cadence <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— the PCR scheduler</span></h2>
+  <p class="lede">The biggest panel. Builds the rolling component-replacement schedule, runs the Project Optimiser, lays out resource loading, and exports to Excel. Standalone <code>Cadence v18.html</code> and embedded inside Lens via <code>tools/cadence.html</code> share the same code path — embed mode activates when <code>window.parent !== window</code>.</p>
+
+  <h3>What you use it for</h3>
+  <ul>
+    <li>Drag-to-reschedule individual component changeouts on a Gantt timeline.</li>
+    <li>Cluster nearby changeouts into PCR projects (the "should we bundle these?" question).</li>
+    <li>See what each project costs against budget and resource headroom over time.</li>
+    <li>Auto-build a starting schedule from due-date forecasts when a fleet is new.</li>
+    <li>Export the whole schedule to Excel for distribution.</li>
+  </ul>
+
+  <h3>Sub-tabs</h3>
+  <ul class="subtab-list">
+    <li><span class="nm">Schedule</span><span class="desc">The Gantt. Default view. Drag a project bar to move it; drag a diamond to reschedule a single changeout. Granularity toggle (week / month / quarter) and visible-months range live here.</span></li>
+    <li><span class="nm">Project Optimiser</span><span class="desc">Cluster rules and merge suggestions. Adjust the proximity window (days), see which changeouts collapse into bundled projects, accept or reject each cluster.</span></li>
+    <li><span class="nm">Resource Loading</span><span class="desc">Cost / labour / equipment loading by month. Confirms whether the current schedule fits within budget and crew availability headroom before locking it in.</span></li>
+    <li><span class="nm">Project List</span><span class="desc">Tabular browser of every project with status filters. Click a row → jumps to that project in Schedule view. Excel export lives here.</span></li>
+    <li><span class="nm">Auto-Build</span><span class="desc">Generate a starting schedule from forecast due-dates for a fresh fleet. Two nested sub-tabs: <i>Details</i> (date window, fleet/model scope) and <i>Components</i> (which component categories to include).</span></li>
+    <li><span class="nm">Data Editor</span><span class="desc">Direct row-level edits to the underlying components / project data. Type-validated cells. Useful when SAP imports drop a field that needs manual correction.</span></li>
+    <li><span class="nm">Config</span><span class="desc">Two sub-tabs: <i>Settings</i> (terminology, currency, granularity defaults) and <i>Usage Report</i> (lightweight in-tool analytics — what's clicked most, last-saved-at, etc.).</span></li>
+  </ul>
+
+  <h3>Slice ownership — what Cadence writes</h3>
+  <p>Cadence owns these JSON slices. It reads everything else but never modifies them; that's how Mission Control's round-trip preservation works.</p>
+  <div class="slice-grid">
+    <div class="k">Projects</div>            <div class="v">workingData.projects[]</div>
+    <div class="k">Date overrides</div>      <div class="v">workingData.componentDateOverrides{}</div>
+    <div class="k">Decision log</div>        <div class="v">workingData.decisionLog[]</div>
+    <div class="k">Project config</div>     <div class="v">workingData.projConfig{}</div>
+    <div class="k">Visible months</div>      <div class="v">workingData.visibleMonths{}</div>
+    <div class="k">Granularity</div>         <div class="v">workingData.granularity</div>
+    <div class="k">Auto-Build state</div>   <div class="v">workingData.abScopeState{}</div>
+    <div class="k">DE column order</div>    <div class="v">workingData.deColOrder[]</div>
+  </div>
+
+  <h3>Drag-to-reschedule — quick reference</h3>
+  <table>
+    <thead><tr><th>What you grab</th><th>What happens</th><th>Where it persists</th></tr></thead>
+    <tbody>
+      <tr><td>Project bar (the rectangle)</td><td>Moves the entire project (every component in it shifts together).</td><td>workingData.projects[].plannedDate</td></tr>
+      <tr><td>Component diamond (inside the bar)</td><td>Moves just that one changeout. Creates an explicit override.</td><td>workingData.componentDateOverrides[componentId]</td></tr>
+      <tr><td>Project bar edge</td><td>Resizes duration (start or end).</td><td>workingData.projects[].duration</td></tr>
+      <tr><td>Diamond out of any bar</td><td>Detaches the changeout from its project — becomes orphan.</td><td>Project membership cleared on that override entry</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Hold Shift while dragging to snap to week boundaries. Hold Alt to ignore the project bar (drag a single diamond out of a tightly packed cluster).</p>
+
+  <h3>Auto-Build workflow (TL;DR)</h3>
+  <ol>
+    <li><b>Details</b> sub-tab: pick a date window and fleet/model scope.</li>
+    <li><b>Components</b> sub-tab: tick which component categories to include (engines, transmissions, undercarriage, etc.).</li>
+    <li>Click <b>Build</b>. Cadence forecasts due-dates from <code>install_hours</code> + <code>util_rate</code> + <code>benchmark_hours</code> and creates draft project clusters.</li>
+    <li>Review in Schedule view. Drag-to-adjust as needed. Nothing is locked until you save.</li>
+  </ol>
+
+  <h3>Excel export</h3>
+  <p>Project List sub-tab → <b>Export to Excel</b>. Produces a multi-sheet workbook: <i>Projects</i>, <i>Components</i>, <i>Decision Log</i>, <i>Resource Loading</i>. SheetJS (xlsx 0.18.5) handles the build — same library used elsewhere in the suite.</p>
+
+  <h3>Embedded vs standalone</h3>
+  <p>Cadence detects embed context with <code>window.parent !== window</code>. When embedded:</p>
+  <ul>
+    <li>The file-load UI in the header is hidden (Lens handles file I/O).</li>
+    <li>JSON arrives via a <code>load-fleet</code> postMessage from Lens on tab switch.</li>
+    <li>Autosave broadcasts a <code>fleet-updated</code> message back to Lens after every change.</li>
+    <li>Saving is rerouted: clicking Save sends <code>request-save</code> to Lens, which writes the file.</li>
+  </ul>
+  <p>Standalone behaviour is identical except the file-load UI is visible and Save writes directly via the browser download API.</p>
+
+  <div class="callout">
+    <div class="callout-title">Hybrid envelope readiness — FIX-1 / FIX-4 pattern</div>
+    <p>Cadence v18 reads JSON via per-key fallback (V5 envelope first, then V4 Flat) at every key — <code>projects</code>, <code>decisionLog</code> / <code>decisions</code>, <code>componentDateOverrides</code> / <code>componentDates</code>, etc. This handles hybrid files where Deploy v8 has stamped an empty <code>workingData</code> stub onto a V4 Flat file. If you see "0 projects" on a file you know has projects, it's almost certainly this — see the <a href="#" data-jump="troubleshoot">Troubleshooting</a> tab.</p>
+  </div>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming next</div>
+    <p>Resource Loading view will gain crew-availability constraints (currently shows utilisation only). No timeline yet — operator-driven.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 8 — DEPLOY (Stage 2)                                                -->
+<!-- ====================================================================== -->
+<section id="tab-deploy" class="tab-panel">
+  <h2><span class="panel-num">8</span>Deploy <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— project / shutdown / outage execution</span></h2>
+  <p class="lede">Execution layer for confirmed Cadence projects. Tracks gates, materials, work orders, actions, and notes per project. Hosted by Lens via iframe; runs standalone too.</p>
+
+  <h3>Sub-tabs</h3>
+  <ul class="subtab-list">
+    <li><span class="nm">Overview</span><span class="desc">Summary Gantt + project list. Landing view toggle (Gantt ↔ List). Status filters: All / Active / Pending. Default view.</span></li>
+    <li><span class="nm">Gantt</span><span class="desc">Full per-project Gantt with milestone markers. Drag to adjust dates.</span></li>
+    <li><span class="nm">Gates</span><span class="desc">12-gate template per project. Add / delete / reorder. Strong confirmation on deleting template gates.</span></li>
+    <li><span class="nm">Materials</span><span class="desc">SAP BOM ingestion. Filters: All / Pending / In SAP / Ordered / On Site / Not Found.</span></li>
+    <li><span class="nm">Work Orders</span><span class="desc">SAP IW39 work-order tracker. Filters by SAP status: CRTD / REL / TECO / CLSD.</span></li>
+    <li><span class="nm">Actions</span><span class="desc">Task checklist per project. ✎ button opens action in modal — dual-mode save (edit in place with <code>editedAt</code> timestamp OR create new).</span></li>
+    <li><span class="nm">Notes</span><span class="desc">Free-text notes per project. Inline textarea edit. Edited notes get <code>(edited)</code> tag with timestamp.</span></li>
+  </ul>
+
+  <h3>Slice ownership</h3>
+  <div class="slice-grid">
+    <div class="k">Project details</div>     <div class="v">workingData.projectDetails{}</div>
+    <div class="k">Checklist items</div>     <div class="v">workingData.checklistItems[]</div>
+    <div class="k">Action items</div>        <div class="v">workingData.actionItems[]</div>
+    <div class="k">Project notes</div>       <div class="v">workingData.projectNotes[]</div>
+  </div>
+  <p class="note">Deploy reads <code>workingData.projects[]</code> (Cadence-owned) to know what projects exist. Never modifies it.</p>
+
+  <h3>Terminology config</h3>
+  <p>The label for "project" is configurable: <b>Project</b> / <b>Shutdown</b> / <b>Outage</b>. Driven by <code>termLabel</code> in <code>ui_settings</code> (Lens-owned). Affects every visible label and button across Deploy.</p>
+
+  <h3>Editable gates (Enhancement A)</h3>
+  <p>Each project loads a default 12-gate template. Operators can:</p>
+  <ul>
+    <li>Add a custom gate (insert at any position)</li>
+    <li>Reorder via drag</li>
+    <li>Delete custom gates with single confirmation</li>
+    <li>Delete template gates with strong confirmation</li>
+  </ul>
+
+  <h3>Embedded vs standalone</h3>
+  <p>Same pattern as Cadence — detects <code>window.parent !== window</code>. When embedded:</p>
+  <ul>
+    <li>File-load UI hidden</li>
+    <li>JSON arrives via <code>load-fleet</code> on tab switch</li>
+    <li>Autosave → <code>fleet-updated</code> back to Lens</li>
+    <li>Save reroutes to <code>request-save</code></li>
+  </ul>
+
+  <div class="callout warn">
+    <div class="callout-title">Empty workingData stub trap (FIX-4 root cause)</div>
+    <p>Deploy v8 auto-creates an empty <code>workingData</code> stub on load — even on a V4 Flat file that has its real data under <code>working</code>. This was the cause of FIX-4 in Cadence and Lens. See <a href="#" data-jump="troubleshoot">Troubleshooting</a>.</p>
+  </div>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming next</div>
+    <p>Autosave + reload persistence: localStorage write works, cross-reload restore via <code>_restoreState()</code> is unwired (pre-existing CPT behaviour). Tracked in Lens v4.0 Backlog.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 9 — INTAKE (Stage 2)                                                -->
+<!-- ====================================================================== -->
+<section id="tab-intake" class="tab-panel">
+  <h2><span class="panel-num">9</span>Intake</h2>
+  <p class="lede">Standalone data ingestion tool. NOT a Lens panel — opens in its own browser tab. Three modes: BUILD, UPDATE, CONMON.</p>
+
+  <h3>Modes</h3>
+  <table>
+    <thead><tr><th>Mode</th><th>What it does</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td><b>BUILD</b></td><td>Fresh client → new <code>[ClientCode]_fleet.json</code></td><td>Onboarding a new client. Starts from XLSX exports + reference data.</td></tr>
+      <tr><td><b>UPDATE</b></td><td>Merge new Excel data into existing JSON</td><td>Periodic refresh of SMU readings, component history, materials.</td></tr>
+      <tr><td><b>CONMON</b></td><td>Ingest FluidLife oil-analysis PDFs</td><td>After receiving a fresh batch of oil samples. Drag-and-drop or bulk-folder scanner.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>BUILD step flow</h3>
+  <ol>
+    <li><b>Source</b> — pick the source XLSX or JSON</li>
+    <li><b>Map fields</b> — column mapping with auto-suggest; persisted per client code</li>
+    <li><b>Review</b> — diff vs prior state if any; flag drops or unknowns</li>
+    <li><b>Ingest</b> — write the output JSON (V5 envelope, <code>schemaVersion: 5</code>)</li>
+  </ol>
+
+  <h3>UPDATE modes</h3>
+  <table>
+    <thead><tr><th>Sub-mode</th><th>Updates</th></tr></thead>
+    <tbody>
+      <tr><td>SMU</td><td>Latest service-meter readings per unit</td></tr>
+      <tr><td>Component</td><td>Component master data (benchmarks, util rates, etc.)</td></tr>
+      <tr><td>Full Rebuild</td><td>Reingest from latest snapshot — preserves <code>workingData</code></td></tr>
+      <tr><td>Historic Backfill</td><td>Add older history records without disturbing recent state</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Slice ownership</h3>
+  <div class="slice-grid">
+    <div class="k">Components</div>          <div class="v">components[]</div>
+    <div class="k">Component history</div>   <div class="v">componentHistory[]</div>
+    <div class="k">Oil samples</div>         <div class="v">oil_samples[]</div>
+    <div class="k">Meta diagnostics</div>    <div class="v">meta.{unmatched_conmon[], unclassified_test_names[]}</div>
+  </div>
+  <p class="note">Never touches <code>working.*</code>, <code>workingData.*</code>, or <code>ui_settings</code>. Safe to rerun.</p>
+
+  <h3>CONMON ingestion</h3>
+  <ul>
+    <li>FluidLife PDF text extraction via pdf.js</li>
+    <li>Bulk-folder scanner: drop a directory of PDFs, processes all of them</li>
+    <li>Unmatched-resolve dialog: when a sample's <code>(unit, component)</code> can't be matched, prompt to fix or skip</li>
+    <li>History trim: last 10 samples OR ≤ 365 days old, whichever is looser</li>
+  </ul>
+
+  <h3>Known issues</h3>
+  <table>
+    <thead><tr><th>Issue</th><th>Fix in Intake v8</th></tr></thead>
+    <tbody>
+      <tr><td>Lens-produced exports use sheet name "History"; legacy import searched for "historic"</td><td>Now accepts both, case-insensitive. No renaming required.</td></tr>
+      <tr><td><code>util_rate</code> only written by UPDATE path; BUILD path skips it</td><td>Brand-new clients have no <code>util_rate</code> until first UPDATE. Tracked.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <div class="callout-title">Run BUILD or UPDATE — never both at once</div>
+    <p>Intake doesn't merge BUILD output into an existing client file. If you accidentally BUILD over a JSON with <code>workingData</code>, the working state is preserved (Intake never writes those slices) but <code>components[]</code> is rewritten from scratch. Always UPDATE for incremental changes.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 10 — FLEETCONFIG (Stage 2)                                          -->
+<!-- ====================================================================== -->
+<section id="tab-fleetconfig" class="tab-panel">
+  <h2><span class="panel-num">10</span>FleetConfig</h2>
+  <p class="lede">Standalone fleet & utilization configuration tool. Two modules shipped today (M1, M4); two modules pending architecture decisions (M2, M3).</p>
+
+  <h3>Modules</h3>
+  <table>
+    <thead><tr><th>Module</th><th>Status</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><b>M1 — Fleet & Model Manager</b></td><td><span class="badge done">Shipped</span></td><td>CRUD fleets and units. Assign <code>sn_prefix</code> and <code>unit_variant_id</code> per unit.</td></tr>
+      <tr><td><b>M4 — Utilization Profile Editor</b></td><td><span class="badge done">Shipped</span></td><td>CRUD utilization profiles + monthly activity schedules. "Suggest from readings" derives 12-month per-fleet rates from <code>readings[]</code>.</td></tr>
+      <tr><td><b>M2 — Component Pocket Editor</b></td><td><span class="badge todo">Pending</span></td><td>Hierarchy resolution + diff views for <code>componentPockets[]</code>. Blocked on Q17 / Q19.</td></tr>
+      <tr><td><b>M3 — Parts Library Manager</b></td><td><span class="badge todo">Pending</span></td><td>OEM VPN cross-reference. Blocked on Q18 (OEM export format).</td></tr>
+    </tbody>
+  </table>
+
+  <h3>M1 controls</h3>
+  <ul>
+    <li><b>+ Fleet</b> — new fleet record</li>
+    <li><b>+ Unit</b> — new unit record (assign to fleet, set serial-number prefix)</li>
+    <li>Two-column grid: Fleets table (left) + Units table (right)</li>
+    <li>Pocket-status badge per unit indicates whether component pockets are configured (lights up when M2 ships)</li>
+  </ul>
+
+  <h3>M4 controls</h3>
+  <ul>
+    <li><b>+ Fleet rate</b>, <b>+ Model rate</b>, <b>+ Unit rate</b> — three levels of utilization profile</li>
+    <li><b>Suggest from readings</b> — derives util_rate per fleet/model/unit from the trailing 12 months of <code>readings[]</code></li>
+    <li>Monthly Activity Schedule editor — toggles per-month activity flags used by Cadence's forecast</li>
+  </ul>
+
+  <h3>Slice ownership</h3>
+  <div class="slice-grid">
+    <div class="k">Fleets</div>             <div class="v">masterData.fleets[]</div>
+    <div class="k">Units</div>              <div class="v">masterData.units[]</div>
+    <div class="k">Util profiles</div>      <div class="v">masterData.utilizationProfiles[]</div>
+    <div class="k">Activity schedule</div>  <div class="v">masterData.unitActivitySchedule[]</div>
+  </div>
+  <p class="note">Never writes <code>workingData</code>. Safe to run mid-session.</p>
+
+  <h3>V4 Flat bootstrap</h3>
+  <p>If a loaded JSON has no <code>masterData.fleets</code> or <code>masterData.units</code>, FleetConfig synthesises them from unique tuples in <code>components[]</code>. Lets you edit without first migrating to V5.</p>
+
+  <div class="callout coming">
+    <div class="callout-title">Pending decisions (Q17–Q19)</div>
+    <p><b>Q17</b> Should pockets be manually entered, or imported from OEM/SAP? · <b>Q18</b> What columns do MyKomatsu / CAT SIS / MySandvik exports actually produce? · <b>Q19</b> If a unit has <code>sn_prefix</code> but no matching pocket, fall back to model-level pocket or flag "unconfigured"? Operator decisions needed before M2/M3 can ship.</p>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">Chunk 13 — FleetConfig location decision</div>
+    <p>Path A: keep FleetConfig separate, add Excel template upload to it (v0.2). Path B: move M1 into Intake (more consistent with reference-data role); FleetConfig keeps M4 + future M2/M3. 30-min decision sprint scheduled.</p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 11 — MIGRATE (Stage 2)                                              -->
+<!-- ====================================================================== -->
+<section id="tab-migrate" class="tab-panel">
+  <h2><span class="panel-num">11</span>Migrate</h2>
+  <p class="lede">One-way migration from V4 Flat to V5 schema. Sandbox tool — produces a candidate V5 file and an audit. Cutover is operator-driven; no current tool actually reads V5 yet.</p>
+
+  <h3>Three-step wizard</h3>
+  <ol>
+    <li><b>Drop your fleet JSON</b> — V4 Flat file picker</li>
+    <li><b>Audit</b> — counts and issues table; severity badges (fatal / warn / info)</li>
+    <li><b>Download migrated V5 file</b> — only enabled when audit passes (no fatal issues)</li>
+  </ol>
+
+  <h3>Audit report</h3>
+  <table>
+    <thead><tr><th>Section</th><th>What it checks</th></tr></thead>
+    <tbody>
+      <tr><td>File info</td><td>Filename, size, declared schema, client code</td></tr>
+      <tr><td>Counts</td><td>Components, Component History, Projects, Component Date Overrides, Decisions, Oil Samples — before/after</td></tr>
+      <tr><td>Issues</td><td>Severity-tagged list of anything migrate had to handle (deduped components, missing FKs, etc.)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What migration changes</h3>
+  <ul>
+    <li>Auto-increment integer component IDs → deterministic strings (<code>{floc_slug}_{component_name_slug}</code>)</li>
+    <li>Flat root keys (<code>components</code>, <code>working</code>) → nested envelopes (<code>masterData</code>, <code>workingData</code>)</li>
+    <li><code>schemaVersion: 5</code> stamped (numeric)</li>
+    <li>FK-link audit: every reference resolved or flagged</li>
+  </ul>
+
+  <h3>What migration does NOT change</h3>
+  <ul>
+    <li>No data deleted. Every record carried forward.</li>
+    <li><code>workingData</code> preserved verbatim.</li>
+    <li>No tool behaviour change — V5 readers don't exist in production yet.</li>
+  </ul>
+
+  <div class="callout danger">
+    <div class="callout-title">Sandbox-only — DO NOT USE IN PRODUCTION YET</div>
+    <p>The migrator is validated end-to-end but no tool currently reads V5. If you migrate and then load the result into Lens / Cadence / Deploy, every panel will see "0 records" until V5 readers ship. Cutover timing is operator-driven; treat the V5 output as a snapshot, not a working file.</p>
+  </div>
+
+  <h3>Idempotency</h3>
+  <p>Running migrate on an already-V5 file is a no-op — the audit recognises the V5 envelope and produces an unchanged output.</p>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 12 — TROUBLESHOOTING (Stage 2)                                      -->
+<!-- ====================================================================== -->
+<section id="tab-troubleshoot" class="tab-panel">
+  <h2><span class="panel-num">12</span>Troubleshooting</h2>
+  <p class="lede">FIX-1 through FIX-4 root causes, common issues, rollback procedure. The hybrid-envelope FIX-1/FIX-4 history is non-obvious and worth knowing about — the symptom (0 projects on a file you know has projects) is misleading.</p>
+
+  <h3>FIX history</h3>
+
+  <h4>FIX-1 — Iframe URL resolver 404 on GitHub Pages</h4>
+  <p><b>Symptom:</b> Lens deployed to GitHub Pages; clicking the Cadence tab shows iframe 404.</p>
+  <p><b>Root cause:</b> <code>EMBED_TOOL_URLS</code> resolver used a pathname regex that worked on file:// but not over https.</p>
+  <p><b>Fix:</b> Switched to a protocol check — <code>window.location.protocol === 'file:'</code> branches to relative paths; otherwise uses Pages-style absolute paths. Same fix applied to the <code>openFleetConfig()</code> launcher.</p>
+
+  <h4>FIX-2 — Mission Control nesting chrome</h4>
+  <p><b>Symptom:</b> When Cadence/Deploy iframe is active, Lens's left fleet-filter column AND the header LOAD/SAVE FILE buttons are visible alongside the embedded tool's own header — duplicate, confusing.</p>
+  <p><b>Root cause:</b> Host chrome wasn't aware of embed context.</p>
+  <p><b>Fix:</b> <code>_applyEmbedChrome(tab)</code> hides LHS column + LOAD/SAVE buttons when target tab is iframe-embedded. Strip nav stays visible (it's how you switch back). Restored when switching to a native panel.</p>
+
+  <h4>FIX-3 — Horizon lifecycle / EOL reconcile</h4>
+  <p><b>Symptom:</b> Unit BD306 showed 52% lifecycle bar but 0 hrs EOL — those numbers can't both be right.</p>
+  <p><b>Root cause:</b> Lifecycle bar used <code>util_rate × 365 × 5</code> as denominator; EOL hours used <code>expected_life_hours</code> only. Two different denominators.</p>
+  <p><b>Fix:</b> Both now use <code>masterData.units[].expected_life_hours</code> if set, falling back to <code>util_rate × 365 × 5</code>. Single source of truth for both.</p>
+
+  <h4>FIX-4 — workingData short-circuit on V4 Flat hybrid files <span class="badge crit">Critical</span></h4>
+  <p><b>Symptom:</b> Open a V4 Flat file you know contains 27 projects, 1474 dates, 242 decisions. Cadence renders 0 projects, 0 dates, 0 decisions. Lens shows the same. Deploy works fine.</p>
+  <p><b>Root cause:</b> Deploy v8 auto-creates an empty <code>workingData</code> stub on load. The V4 Flat file's real data lives under <code>working</code>. Cadence's read used "first truthy wins" (<code>json.workingData || json.working || {}</code>), short-circuited on the empty stub, and never reached the populated <code>working</code> block.</p>
+  <p><b>Two fixes, deliberately different:</b></p>
+  <ul>
+    <li><b>Cadence v18 FIX-1</b> — Per-key fallback at the read site. Explicit probes for V5 envelope first, then V4, regardless of which is present. Defensive against all hybrid edge cases.</li>
+    <li><b>Lens v4.0 FIX-4</b> — Schema-anchored resolver (<code>_readWorking()</code>). Anchors on <code>masterData</code> presence to pick the right envelope; all call sites unchanged. Cleaner pattern for multi-call-site code.</li>
+  </ul>
+  <p>Both patterns resolve the symptom. Cadence's is more defensive at the read site; Lens's is cleaner at the architecture level.</p>
+
+  <h3>Common issues — quick reference</h3>
+  <table>
+    <thead><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>0 projects / 0 dates on a file you know has them</td><td>FIX-4 hybrid envelope (Deploy stamp on V4 Flat)</td><td>Confirm Cadence is v18+ and Lens is v4.0+. Older builds had this bug.</td></tr>
+      <tr><td>Iframe blank page on Pages deploy</td><td>FIX-1 protocol resolver</td><td>Confirm Lens is v4.0+ with the protocol-check resolver.</td></tr>
+      <tr><td>Lifecycle bar % and EOL hours don't agree</td><td>FIX-3 denominator mismatch</td><td>Confirm Lens is v4.0+ post-FIX-3.</td></tr>
+      <tr><td>ConMon corner badges all read "NR"</td><td><code>oil_samples[]</code> empty in JSON</td><td>Run Intake CONMON mode against the latest FluidLife batch.</td></tr>
+      <tr><td>util_rate missing on a brand-new client</td><td>BUILD path skips util_rate</td><td>Run an UPDATE pass after BUILD; util_rate gets written.</td></tr>
+      <tr><td>"History" sheet not found on import</td><td>Legacy Intake searched for "historic"</td><td>Confirm Intake v8+; case-insensitive sheet-name match.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Rollback via archive snapshots</h3>
+  <p>Every released version has a <code>[BASE - pre-fix]</code> snapshot in <code>4 - Build Output/archive/&lt;Tool&gt;/&lt;version&gt;/</code>. To roll back:</p>
+  <ol>
+    <li>Locate the snapshot in <code>archive/&lt;Tool&gt;/&lt;version&gt;/&lt;Tool&gt; &lt;version&gt; [BASE - pre-fix].html</code></li>
+    <li>Copy it over the current <code>4 - Build Output/&lt;Tool&gt; &lt;version&gt;.html</code></li>
+    <li>If the tool is also published as <code>tools/&lt;name&gt;.html</code>, replace that too</li>
+    <li>Reload Lens — the rolled-back version takes effect immediately</li>
+  </ol>
+  <p>Mid-version hotfixes preserve their pre-FIX snapshot in the same folder, e.g. <code>Lens v4.0 [pre-FIX-4-workingdata-shortcircuit].html</code>. Use the most specific snapshot that pre-dates whatever you want to undo.</p>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 13 — ROADMAP (Stage 2)                                              -->
+<!-- ====================================================================== -->
+<section id="tab-roadmap" class="tab-panel">
+  <h2><span class="panel-num">13</span>Roadmap &amp; Pending</h2>
+  <p class="lede">Aggregated Coming-Soon items, deferred features, and unresolved architectural decisions. Always cross-checked against the suite Record of Change.</p>
+
+  <h3>Coming Soon — by chunk</h3>
+
+  <h4>Chunk 10 — ConMon + Capital Plan</h4>
+  <ul>
+    <li>Vitals Mode B (ConMon severity) full implementation — filter chips, trend graph, detail panel</li>
+    <li>Horizon capital plan chart — stacked bar by fiscal year, drill-down from segment, mine-plan input</li>
+    <li>V4 Flat decommission readiness check (no V4-only readers remaining)</li>
+  </ul>
+
+  <h4>Chunk 11 — Filename convention</h4>
+  <ul>
+    <li>Standardise <code>[ClientCode]_fleet_YYYY-MM-DD_HH-MM.json</code> naming on Save Final</li>
+    <li>Detect collisions on load; warn before overwrite</li>
+  </ul>
+
+  <h4>Chunk 12 — Currency and timezone config</h4>
+  <ul>
+    <li>Currency selector (currently AUD-only)</li>
+    <li>Timezone awareness for sample dates and project dates</li>
+  </ul>
+
+  <h4>Chunk 13 — FleetConfig location decision</h4>
+  <ul>
+    <li>Path A: keep FleetConfig separate; add Excel template upload to v0.2</li>
+    <li>Path B: move M1 (fleets/units) into Intake; FleetConfig keeps M4 + future M2/M3</li>
+    <li>30-min decision sprint scheduled</li>
+  </ul>
+
+  <h4>Per-tool deferred items</h4>
+  <ul>
+    <li><b>Lens v4.0:</b> autosave + reload persistence — <code>_restoreState()</code> wired but unloaded</li>
+    <li><b>Cadence v18:</b> Resource Loading crew-availability constraints (currently shows utilisation only)</li>
+    <li><b>Deploy v8.6:</b> reload persistence — same pattern as Lens</li>
+    <li><b>Intake v8:</b> util_rate write on BUILD path (currently UPDATE-only)</li>
+    <li><b>FleetConfig v0.1:</b> M2 (Component Pocket Editor), M3 (Parts Library Manager)</li>
+  </ul>
+
+  <h3>Unresolved architectural decisions</h3>
+  <table>
+    <thead><tr><th>ID</th><th>Question</th><th>Blocks</th></tr></thead>
+    <tbody>
+      <tr><td><b>Q17</b></td><td>Pocket population workflow: manual entry in FleetConfig vs OEM/SAP import?</td><td>FleetConfig M2</td></tr>
+      <tr><td><b>Q18</b></td><td>OEM parts import format: what columns do MyKomatsu / CAT SIS / MySandvik exports produce?</td><td>FleetConfig M3</td></tr>
+      <tr><td><b>Q19</b></td><td>Pocket hierarchy fallback: <code>sn_prefix</code> set but no matching pocket — fall back to model-level pocket, or flag unconfigured?</td><td>FleetConfig M2</td></tr>
+      <tr><td><b>Q20</b></td><td>FleetConfig conflict detection: when Lens has modified a benchmark directly, should FleetConfig overwrite or merge ("last write wins" / "flag and confirm")?</td><td>FleetConfig save flow</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Out of scope (deliberately)</h3>
+  <ul>
+    <li>Multi-user concurrent editing — never. Operator + JSON file = single-user contract.</li>
+    <li>Server backend — never. Single-file HTML, no server.</li>
+    <li>Client-distributed software — never. The suite is the internal delivery engine.</li>
+    <li>Schema V5 hard-cutover — deferred. V4 Flat readers stay in place until Mode B + V5 readers are validated end-to-end.</li>
+  </ul>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 14 — GLOSSARY (Stage 2)                                             -->
+<!-- ====================================================================== -->
+<section id="tab-glossary" class="tab-panel">
+  <h2><span class="panel-num">14</span>Glossary</h2>
+  <p class="lede">Vocabulary used across the suite. Alphabetical.</p>
+
+  <dl class="glossary">
+
+    <dt>CAPS</dt>
+    <dd>The capability-gating object computed by Lens on load. Tracks 9 capabilities (SMU, Utilization, Benchmarks, MaterialMaster, IW39, TLMaterials, ComponentPockets, PartsLibrary, ConMon). <code>requiresCaps()</code> drives locked-but-visible UI. Inspect via <code>window.CAPS</code>. <b>Not</b> access control — feature availability only.</dd>
+
+    <dt>Changeout date priority</dt>
+    <dd>Override (advisor decision) &gt; System-calculated (utilization profile) &gt; ERP import date. ERP date stored as <code>changeout_date_erp</code> for reference only.</dd>
+
+    <dt>ConMon (Condition Monitoring)</dt>
+    <dd>Oil-analysis data ingested by Intake from FluidLife PDFs. Produces <code>oil_samples[]</code> records at JSON root. Each sample carries <code>sample_rank</code> (0–10), <code>condition_band</code>, <code>concern_categories</code>, <code>flagged_tests[]</code>, wear metals, narrative finding.</dd>
+
+    <dt>Component pocket</dt>
+    <dd>A configured slot on a unit where a specific component installs. Defined in <code>componentPockets[]</code> per fleet/model/variant. Drives expected component complement on a unit. Editor pending (FleetConfig M2).</dd>
+
+    <dt>FLEET_IMAGE</dt>
+    <dd>Equipment-class → image-file mapping for the Vitals hero view. Falls back to a circle orb for unmapped classes.</dd>
+
+    <dt>Hybrid envelope</dt>
+    <dd>A JSON file with both V4 keys (<code>working</code>) AND V5 keys (<code>workingData</code>) at root. Usually because Deploy v8 auto-stamped an empty <code>workingData</code> stub on a V4 Flat file. Caused FIX-1 / FIX-4. Readers must use per-key fallback or schema-anchored resolution to handle this safely.</dd>
+
+    <dt>Intake</dt>
+    <dd>Standalone data ingestion tool. Three modes: BUILD (fresh client), UPDATE (merge), CONMON (oil samples). NOT a Lens panel.</dd>
+
+    <dt>Mission Control</dt>
+    <dd>The in-meeting workflow: Lens hosts Cadence and Deploy as iframes. One JSON in at start, one JSON out at end. State sync via postMessage.</dd>
+
+    <dt>oil_samples[]</dt>
+    <dd>Root-level array of ConMon samples. Each entry keyed by (<code>unit_id</code>, <code>scope</code>, <code>target</code>) where scope is <code>component</code>, <code>system</code>, or <code>unit</code>. Severity bands: Normal [0–5], Elevated (5–8], High (8–9], Very High (9–10].</dd>
+
+    <dt>PCR (Planned Component Replacement)</dt>
+    <dd>The advisory service. Predict when major components on heavy mining equipment reach end of life, build a rolling replacement schedule, manage execution. NumaCore Lens Suite is the delivery engine.</dd>
+
+    <dt>postMessage bridge</dt>
+    <dd>The host-child message channel between Lens and embedded iframes. Five message types: <code>tool-ready</code>, <code>load-fleet</code>, <code>fleet-updated</code>, <code>refresh-fleet</code>, <code>request-save</code>.</dd>
+
+    <dt>Schema V4 Flat</dt>
+    <dd>The current production data format. Root-level <code>components[]</code>, <code>componentHistory[]</code>, <code>working.{}</code>. Auto-increment integer component IDs. Every running tool implements this. Stable.</dd>
+
+    <dt>Schema V5</dt>
+    <dd>The formal enterprise architecture target. Nested <code>masterData</code> / <code>workingData</code> / <code>appState</code>. Deterministic string component IDs (<code>{floc_slug}_{component_name_slug}</code>). New entities: <code>componentPockets[]</code>, <code>partsLibrary[]</code>. Intake produces V5; no current tool <i>reads</i> V5 yet.</dd>
+
+    <dt>Slice ownership</dt>
+    <dd>The contract that each tool only writes specific JSON slices. Round-trip preservation through Mission Control depends on this. See the canonical table on the <a href="#" data-jump="lens">Lens tab</a>.</dd>
+
+    <dt>SMU (Service / Machine Unit hours)</dt>
+    <dd>Total lifetime hours on a machine. Never resets except on capital replacement. Used to compute component accumulated hours: <code>current_unit_smu − install_hours</code>.</dd>
+
+    <dt>termLabel</dt>
+    <dd>The configurable label for "project" in Deploy: <code>"Project"</code> / <code>"Shutdown"</code> / <code>"Outage"</code>. Set in <code>ui_settings</code> (Lens-owned). Affects every Deploy label.</dd>
+
+    <dt>util_rate</dt>
+    <dd>Average hours-per-day for a fleet / model / unit. Drives changeout-date forecasts. Stored at component level (Intake writes it on UPDATE) and at fleet/model level (FleetConfig M4).</dd>
+
+  </dl>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 15 — SPIN-OFF PROMPTS (Stage 2)                                     -->
+<!-- ====================================================================== -->
+<section id="tab-prompts" class="tab-panel">
+  <h2><span class="panel-num">15</span>Spin-off Prompts</h2>
+  <p class="lede">Two ready-to-paste agent prompts that build a client-facing manual or a future-operator manual against the suite's current state. Each prompt re-reads the suite at run time, so the resulting manual is never stale.</p>
+
+  <div class="callout tip">
+    <div class="callout-title">How to use</div>
+    <p>Open a fresh agent session in this project's working directory. Click the <b>Copy</b> button on the prompt you want, paste it as your first message. The agent will read the current suite state, then build the manual. Output goes to <code>2 - Reference Docs/User Manual - Client v1.html</code> or <code>... - Operators v1.html</code>.</p>
+  </div>
+
+  <div class="prompt-block">
+    <div class="prompt-block-header">
+      <span class="title">Prompt A — Client-facing manual</span>
+      <button class="copy-btn" data-copy="prompt-a">Copy</button>
+    </div>
+<pre id="prompt-a">Build a single-file HTML CLIENT-FACING user manual for the NumaCore Lens
+Suite. The audience is a client operations / reliability manager — NOT an
+advisor / operator. Tone: capability-focused, "what this delivers for you",
+NOT "how the internals work".
+
+Working directory:
+  C:\Users\Test_Home\Documents\ClaudeCode\Projects\2026_05_06 - Tool Suite UI Consolidation\
+
+INVOKE THESE SKILLS FIRST (mandatory):
+  /product-dev   (single-file HTML iteration discipline)
+  /fleet-command (NumaCore Lens product context)
+
+THEN re-read the CURRENT suite state — DO NOT use cached knowledge:
+  1. Glob `4 - Build Output/*.html` to see what versions are current
+  2. Read each tool file's first ~100 lines for tab structure
+  3. Read every Backlog.md under `4 - Build Output/archive/&lt;Tool&gt;/&lt;latest&gt;/`
+  4. Read `2 - Reference Docs/Record of Change.html` for what shipped recently
+  5. Read `2 - Reference Docs/User Manual v1.html` (the operator manual) for
+     STRUCTURE and VISUAL STYLE — your output should match its dark theme
+     and tab layout
+
+Output:
+  Path: `2 - Reference Docs/User Manual - Client v1.html`
+  Single HTML file, dark theme, tab-based, mind-map landing.
+
+What to INCLUDE:
+  - The five panels described by capability and outcome (what they help
+    the client achieve — NOT slice ownership, NOT postMessage internals)
+  - Setup steps a client-side operator would actually do (load JSON,
+    navigate panels, save final)
+  - Glossary defining PCR / SMU / ConMon / benchmark / util_rate
+  - A "What you'll see in our advisory sessions" tab explaining the
+    Mission Control workflow at a non-technical level
+
+What to OMIT:
+  - Slice ownership tables (internal contract)
+  - postMessage bridge details
+  - Capability gating internals
+  - FIX-1 through FIX-4 history (advisor-internal incidents)
+  - V4 Flat vs V5 schema details (advisor concern)
+  - Spin-off prompts tab (this tab is operator-only)
+
+Build in stages — DO NOT one-shot. Stage 1: shell + Overview + one
+fleshed proof tab. Get operator sign-off. Stage 2: fill remaining tabs.
+Run G5 corruption-artefact gates per /product-dev v3.2 before delivery.
+Treat the manual itself as a versioned product — Backlog.md per version.</pre>
+  </div>
+
+  <div class="prompt-block">
+    <div class="prompt-block-header">
+      <span class="title">Prompt B — Future-operator manual (combined what + how)</span>
+      <button class="copy-btn" data-copy="prompt-b">Copy</button>
+    </div>
+<pre id="prompt-b">Build a single-file HTML FUTURE-OPERATOR user manual for the NumaCore Lens
+Suite. The audience is a future advisor / operator joining the practice —
+they have mining-fleet domain knowledge but no NumaCore-specific knowledge.
+Tone: combined "what + how" — explain what each panel does AND walk through
+how to operate it, including the slice-ownership contract and Mission
+Control workflow.
+
+Working directory:
+  C:\Users\Test_Home\Documents\ClaudeCode\Projects\2026_05_06 - Tool Suite UI Consolidation\
+
+INVOKE THESE SKILLS FIRST (mandatory):
+  /product-dev   (single-file HTML iteration discipline)
+  /fleet-command (NumaCore Lens product context)
+
+THEN re-read the CURRENT suite state — DO NOT use cached knowledge:
+  1. Glob `4 - Build Output/*.html` to see what versions are current
+  2. Read each tool file end-to-end (yes, all of them) for sub-tab structure
+     and any feature flags
+  3. Read every Backlog.md under `4 - Build Output/archive/&lt;Tool&gt;/&lt;latest&gt;/`
+  4. Read `2 - Reference Docs/Record of Change.html` in full — every chunk
+  5. Read `2 - Reference Docs/User Manual v1.html` (the operator memory aid)
+     for STRUCTURE and VISUAL STYLE; your output extends its content rather
+     than duplicating it
+  6. Read `_Hand-over docs/NumaCore Lens - Functional Description (Updated 2026-05-06).md`
+     for full panel functional spec
+
+Output:
+  Path: `2 - Reference Docs/User Manual - Operators v1.html`
+  Single HTML file, dark theme, tab-based, mind-map landing.
+
+What to INCLUDE (more than the operator memory aid):
+  - Full slice-ownership contract per tool
+  - Mission Control postMessage bridge with sequence diagrams
+  - Capability gating internals — when each CAP unlocks
+  - FIX-1 through FIX-4 root causes AND a "how to detect this in the field"
+    guide for each
+  - V4 Flat vs V5 schema in detail (when to migrate, when not to)
+  - Walkthrough: a typical client meeting from JSON-load to Save Final
+  - Walkthrough: onboarding a new client (BUILD mode, M1/M4 setup)
+  - Walkthrough: ingesting a fresh ConMon batch
+  - The Pillar 4 cross-client data moat — why slice ownership matters
+    long-term
+
+What to OMIT:
+  - Source code details (the manual references files, not source listings)
+  - Internal-only architecture decisions still in flight (Q17–Q20 belong
+    in Roadmap, not in operator walkthroughs)
+
+Build in stages — DO NOT one-shot. Stage 1: shell + Overview + one
+fleshed proof tab. Get operator sign-off. Stage 2: fill remaining tabs.
+Run G5 corruption-artefact gates per /product-dev v3.2 before delivery.
+Treat the manual itself as a versioned product — Backlog.md per version.</pre>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">Why prompts instead of pre-built manuals</div>
+    <p>Suite functionality grows. A client manual hand-written today goes stale by the next chunk. A prompt that re-reads current state each run produces a fresh, accurate manual on demand. The prompts above are versioned with this manual; bump them when the suite's vocabulary or scope changes meaningfully.</p>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div>NumaCore Lens Suite · User Manual v1 · Built 2026-05-08</div>
+  <div>Operator memory aid · 15 tabs · single-file HTML</div>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var tabBtns = document.querySelectorAll('#tabNav .tab-btn');
+  var sectionChips = document.querySelectorAll('#sectionNav .section-chip');
+  var panels = document.querySelectorAll('.tab-panel');
+
+  function switchTab(id){
+    panels.forEach(function(p){p.classList.toggle('active', p.id === 'tab-' + id);});
+    var activeBtn = null;
+    tabBtns.forEach(function(b){
+      var on = b.dataset.tab === id;
+      b.classList.toggle('active', on);
+      if(on) activeBtn = b;
+    });
+    if(activeBtn){
+      var section = activeBtn.dataset.section;
+      sectionChips.forEach(function(c){c.classList.toggle('active', c.dataset.section === section);});
+      // Bring active tab button into view on horizontal scroll
+      if(activeBtn.scrollIntoView) activeBtn.scrollIntoView({block:'nearest', inline:'center', behavior:'smooth'});
+    }
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+
+  // Tab clicks
+  tabBtns.forEach(function(b){
+    b.addEventListener('click', function(){ switchTab(b.dataset.tab); });
+  });
+
+  // Section chip clicks → jump to first tab in that section
+  sectionChips.forEach(function(c){
+    c.addEventListener('click', function(){
+      var firstTab = document.querySelector('#tabNav .tab-btn[data-section="' + c.dataset.section + '"]');
+      if(firstTab) switchTab(firstTab.dataset.tab);
+    });
+  });
+
+  // Mind-map node clicks
+  document.querySelectorAll('.mm-node').forEach(function(n){
+    n.addEventListener('click', function(){
+      var t = n.getAttribute('data-target');
+      if(t) switchTab(t);
+    });
+  });
+
+  // Inline jump links (anchors with data-jump)
+  document.querySelectorAll('a[data-jump]').forEach(function(a){
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      switchTab(a.getAttribute('data-jump'));
+    });
+  });
+
+  // Copy buttons (Spin-off Prompts tab)
+  document.querySelectorAll('.copy-btn[data-copy]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var target = document.getElementById(btn.dataset.copy);
+      if(!target) return;
+      var text = target.textContent;
+      var done = function(){
+        var orig = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
+      };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done).catch(function(){ fallback(text, btn, done); });
+      } else {
+        fallback(text, btn, done);
+      }
+    });
+  });
+  function fallback(text, btn, done){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); }
+    catch(e){ btn.textContent = 'Press Ctrl+C'; }
+    document.body.removeChild(ta);
+  }
+
+  // Expose for debugging
+  window.switchTab = switchTab;
+})();
+</script>
+</body>
+</html>
