@@ -274,8 +274,12 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   </div>
   <div class="hdr-right">
     <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:11px;color:var(--text3)">Client:</span>
-      <input type="text" id="clientCode" placeholder="CLIENT_CODE" style="width:130px;font-weight:700;text-transform:uppercase" oninput="saveState()">
+      <span style="font-size:11px;color:var(--text3)">Client Code:</span>
+      <input type="text" id="clientCode" placeholder="CLIENT_CODE" title="Short identifier for the client — drives the saved filename and bucket-scopes Intake's localStorage state and mapping profiles. Use a short code (e.g. ACME, BHP_MTW). All caps." style="width:130px;font-weight:700;text-transform:uppercase" oninput="saveState()">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:11px;color:var(--text3)">Client Name:</span>
+      <input type="text" id="clientName" placeholder="(optional — long name)" title="Human-readable client name written to meta.clientName in the saved JSON. Optional. Used by Lens/Cadence/Deploy displays for friendlier labels. Example: 'Acme Mining Corporation'." style="width:170px;font-size:12px" oninput="onClientNameChange()">
     </div>
     <button class="btn btn-outline btn-sm" onclick="newBuild()" title="Clear current build and start fresh — mapping profiles are kept">↺ New Build</button>
     <span id="saveIndicator" class="save-indicator">Not saved</span>
@@ -297,6 +301,63 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
   <!-- STEP 1: LOAD FILE -->
   <div id="build-step-1">
+    <!-- v8.3 Chunk 3 (Slide 8) Phase 1B — Client Settings card.
+         Captured here so they're baked into masterData.clientSettings on save.
+         Defaults pre-selected to operator location — operator can hit Next without editing. -->
+    <div class="card">
+      <div class="card-title">Client Settings <span style="color:var(--text3);font-weight:400;font-size:12px;margin-left:8px">— baked into masterData.clientSettings on save</span></div>
+      <div class="card-sub">Currency, timezone, and locale for this client. Defaults match operator location (Canada / Mountain). Set once at BUILD; edit later in FleetConfig if needed.</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px">
+        <div>
+          <label style="font-size:11px;color:var(--text2);font-weight:600;display:block;margin-bottom:4px">CURRENCY</label>
+          <select id="clientCurrency" onchange="onClientSettingChange()" style="width:100%">
+            <option value="CAD">CAD — Canadian dollar</option>
+            <option value="USD">USD — US dollar</option>
+            <option value="AUD">AUD — Australian dollar</option>
+            <option value="EUR">EUR — Euro</option>
+            <option value="GBP">GBP — Pound sterling</option>
+            <option value="JPY">JPY — Japanese yen</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);font-weight:600;display:block;margin-bottom:4px">TIMEZONE</label>
+          <select id="clientTimezone" onchange="onClientSettingChange()" style="width:100%">
+            <optgroup label="Canada">
+              <option value="America/Edmonton">Mountain (MT) — Edmonton, Calgary</option>
+              <option value="America/Vancouver">Pacific (PT) — Vancouver</option>
+              <option value="America/Winnipeg">Central (CT) — Winnipeg</option>
+              <option value="America/Toronto">Eastern (ET) — Toronto</option>
+              <option value="America/Halifax">Atlantic (AT) — Halifax</option>
+              <option value="America/St_Johns">Newfoundland (NT) — St John's</option>
+            </optgroup>
+            <optgroup label="World">
+              <option value="Etc/UTC">UTC</option>
+              <option value="America/Los_Angeles">US Pacific — Los Angeles</option>
+              <option value="America/Denver">US Mountain — Denver</option>
+              <option value="America/Chicago">US Central — Chicago</option>
+              <option value="America/New_York">US Eastern — New York</option>
+              <option value="Europe/London">London — UTC/BST</option>
+              <option value="Europe/Paris">Paris — CET/CEST</option>
+              <option value="Asia/Tokyo">Tokyo — JST</option>
+              <option value="Australia/Sydney">Sydney — AEDT/AEST</option>
+              <option value="Australia/Perth">Perth — AWST</option>
+            </optgroup>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);font-weight:600;display:block;margin-bottom:4px">LOCALE</label>
+          <select id="clientLocale" onchange="onClientSettingChange()" style="width:100%">
+            <option value="en-CA">en-CA — English (Canada)</option>
+            <option value="en-US">en-US — English (United States)</option>
+            <option value="en-AU">en-AU — English (Australia)</option>
+            <option value="en-GB">en-GB — English (UK)</option>
+            <option value="fr-CA">fr-CA — French (Canada)</option>
+            <option value="fr-FR">fr-FR — French (France)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">Step 1 — Load Source File</div>
       <div class="card-sub">Drag and drop your XLSX or CSV file, or click to browse. The tool reads the file locally — nothing is uploaded to any server.</div>
@@ -314,6 +375,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
             <option value="">— No profile —</option>
           </select>
           <button class="btn btn-outline btn-sm" onclick="deleteProfile()">Delete</button>
+          <!-- v8.3 — surface the per-client localStorage scoping so it stops being invisible -->
+          <span data-client-scope-label style="font-size:11px;color:var(--text3);margin-left:4px"></span>
         </div>
       </div>
     </div>
@@ -505,6 +568,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
           <select id="updateProfileSelect" style="width:220px" onchange="onUpdateProfileChange()">
             <option value="">— No profile —</option>
           </select>
+          <!-- v8.3 — per-client scope hint (mirrors the BUILD-mode dropdown) -->
+          <span data-client-scope-label style="font-size:11px;color:var(--text3);margin-left:6px"></span>
         </div>
       </div>
       <div class="btn-row">
@@ -662,7 +727,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.2';
+const VERSION = '8.3';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -807,6 +872,12 @@ const parseDate = (window.NumaCoreLib && NumaCoreLib.parseDate) || function(val)
 // ═══════════════════════════════════════════════════════════════
 let state = {
   clientCode: '',
+  // v8.3 — human-readable client name. Optional; populates meta.clientName in saved JSON.
+  // Different from clientCode (which is the short identifier driving filename + storage scope).
+  clientName: '',
+  // v8.3 Chunk 3 (Slide 8) Phase 1B — per-client settings captured at BUILD time.
+  // Defaults match operator location; written to masterData.clientSettings on save.
+  clientSettings: { currency: 'CAD', timezone: 'America/Edmonton', locale: 'en-CA' },
   buildStep: 1,
   updateMode: 'smu',
   // Raw loaded data
@@ -858,6 +929,8 @@ function saveState() {
   try {
     const persist = {
       clientCode: state.clientCode,
+      clientName: state.clientName,           // v8.3 — persist human-readable name across reloads
+      clientSettings: state.clientSettings,   // v8.3 — persist per-client settings across reloads
       profiles: state.profiles,
       buildStep: state.buildStep,
       updateMode: state.updateMode,
@@ -916,6 +989,53 @@ function flashSave() {
 }
 
 setInterval(saveState, 120000);
+
+// v8.3 — Update the "for client: <code>" hints next to per-client UI sections
+// (mapping-profile dropdown, etc.). Called on init and whenever the client code changes.
+// Mapping profiles, autosave buckets, and clientSettings are ALL scoped to clientCode via
+// localStorage — this helper just surfaces that scoping visually so it stops being invisible.
+function updateClientScopeLabels() {
+  const code = (state.clientCode || '').trim() || '(default)';
+  const labels = document.querySelectorAll('[data-client-scope-label]');
+  labels.forEach(el => {
+    el.innerHTML = `for client: <code>${code}</code>`;
+  });
+}
+
+// v8.3 — Client Name handler. Persists human-readable name; written to meta.clientName on save.
+function onClientNameChange() {
+  const el = document.getElementById('clientName');
+  if (!el) return;
+  state.clientName = el.value || '';
+  saveState();
+}
+
+// v8.3 Chunk 3 (Slide 8) Phase 1B — client-settings dropdown wiring.
+// Reads/writes state.clientSettings on dropdown change; populates dropdowns from state on init.
+function onClientSettingChange() {
+  const cur = document.getElementById('clientCurrency');
+  const tz  = document.getElementById('clientTimezone');
+  const loc = document.getElementById('clientLocale');
+  if (!cur || !tz || !loc) return;
+  state.clientSettings = {
+    currency: cur.value || 'CAD',
+    timezone: tz.value  || 'America/Edmonton',
+    locale:   loc.value || 'en-CA'
+  };
+  saveState();
+}
+
+function applyClientSettingsToInputs() {
+  // Run after DOM is ready AND after loadState has restored state. Idempotent — safe to call repeatedly
+  // (e.g. on mode-switch or after UPDATE-mode JSON load that inherits clientSettings from the input).
+  const s = state.clientSettings || { currency: 'CAD', timezone: 'America/Edmonton', locale: 'en-CA' };
+  const cur = document.getElementById('clientCurrency');
+  const tz  = document.getElementById('clientTimezone');
+  const loc = document.getElementById('clientLocale');
+  if (cur) cur.value = s.currency || 'CAD';
+  if (tz)  tz.value  = s.timezone || 'America/Edmonton';
+  if (loc) loc.value = s.locale   || 'en-CA';
+}
 
 // ═══════════════════════════════════════════════════════════════
 // MODE SWITCHING
@@ -1699,13 +1819,15 @@ function buildFleetJSON() {
     };
   });
 
+  // v8.3 Phase 1B — meta.currency now reads from clientSettings (was hardcoded 'AUD').
+  const cs = state.clientSettings || { currency: 'CAD', timezone: 'America/Edmonton', locale: 'en-CA' };
   return {
     meta: {
       schemaVersion:  'v18',
       clientCode:     clientCode,
-      clientName:     '',
+      clientName:     state.clientName || '',   // v8.3 — populated from new header input (was hardcoded '')
       site:           '',
-      currency:       'AUD',
+      currency:       cs.currency || 'CAD',
       createdDate:    now.toISOString().split('T')[0],
       lastSaved:      now.toISOString(),
       lastImportDate: now.toISOString().split('T')[0],
@@ -1733,19 +1855,29 @@ function buildFleetJSON() {
 function buildFleetJSONv5() {
   const clientCode = document.getElementById('clientCode').value.trim() || 'CLIENT';
   const now = new Date();
+  // v8.3 Phase 1B — pull per-client settings from state; written to both meta.currency
+  // (legacy compat) and masterData.clientSettings (canonical location per Slide 8 spec).
+  const cs = state.clientSettings || { currency: 'CAD', timezone: 'America/Edmonton', locale: 'en-CA' };
   return {
     meta: {
       schemaVersion:  5,
       clientCode:     clientCode,
-      clientName:     '',
+      clientName:     state.clientName || '',   // v8.3 — populated from new header input (was hardcoded '')
       site:           '',
-      currency:       'AUD',
+      currency:       cs.currency || 'CAD',
       createdDate:    now.toISOString().split('T')[0],
       lastSaved:      now.toISOString(),
       lastImportDate: now.toISOString().split('T')[0],
       notes:          `Initial BUILD import via NumaCore Intake v8 — ${now.toISOString().split('T')[0]}`,
     },
     masterData: {
+      // v8.3 — per-client settings (CAD/Mountain/en-CA defaults). Consumed by lib helpers
+      // getClientSettings / fmtMoney / fmtTime (v1.3.0+).
+      clientSettings: {
+        currency: cs.currency || 'CAD',
+        timezone: cs.timezone || 'America/Edmonton',
+        locale:   cs.locale   || 'en-CA'
+      },
       fleets: state.fleets.map(f => ({
         id: f.id, name: f.name, type: f.type, image: null,
       })),
@@ -1924,6 +2056,31 @@ function loadJSONFile(file) {
       // Pre-fill client code
       if (state.updateFleetJSON.meta?.clientCode) {
         document.getElementById('clientCode').value = state.updateFleetJSON.meta.clientCode;
+        state.clientCode = state.updateFleetJSON.meta.clientCode;
+        updateClientScopeLabels();
+      }
+      // v8.3 — pre-fill client name too (was hardcoded '' until Phase 1B; older files may still be empty)
+      if (state.updateFleetJSON.meta?.clientName) {
+        document.getElementById('clientName').value = state.updateFleetJSON.meta.clientName;
+        state.clientName = state.updateFleetJSON.meta.clientName;
+      }
+      // v8.3 Phase 1B — inherit clientSettings from loaded JSON when present (UPDATE mode).
+      // Precedence: masterData.clientSettings > meta.currency (legacy) > current state defaults.
+      // This prevents UPDATE-mode saves from clobbering settings that were captured at BUILD.
+      const loadedSettings = state.updateFleetJSON?.masterData?.clientSettings;
+      if (loadedSettings && (loadedSettings.currency || loadedSettings.timezone || loadedSettings.locale)) {
+        state.clientSettings = {
+          currency: loadedSettings.currency || state.clientSettings.currency || 'CAD',
+          timezone: loadedSettings.timezone || state.clientSettings.timezone || 'America/Edmonton',
+          locale:   loadedSettings.locale   || state.clientSettings.locale   || 'en-CA'
+        };
+        applyClientSettingsToInputs();
+        saveState();
+      } else if (state.updateFleetJSON?.meta?.currency) {
+        // Legacy v17 / pre-Phase-1B file — at least adopt the currency so UPDATE saves preserve it.
+        state.clientSettings = Object.assign({}, state.clientSettings, { currency: state.updateFleetJSON.meta.currency });
+        applyClientSettingsToInputs();
+        saveState();
       }
       checkUpdateReady();
     } catch(err) { alert('Error reading JSON: ' + err.message); }
@@ -3023,6 +3180,25 @@ function cancelMergeReview() {
 
 function exportUpdatedJSON() {
   if (!state.updatedFleetJSON) return;
+  // v8.3 Phase 1B — ensure masterData.clientSettings is written into UPDATE-mode exports.
+  // If the loaded fleet JSON already had clientSettings (Phase 1B-or-later source), the
+  // UPDATE merge preserved it. If it was a legacy file, inject the form values from state.
+  if (state.updatedFleetJSON.masterData && typeof state.updatedFleetJSON.masterData === 'object') {
+    const cs = state.clientSettings || { currency: 'CAD', timezone: 'America/Edmonton', locale: 'en-CA' };
+    state.updatedFleetJSON.masterData.clientSettings = {
+      currency: cs.currency || 'CAD',
+      timezone: cs.timezone || 'America/Edmonton',
+      locale:   cs.locale   || 'en-CA'
+    };
+    // Keep legacy meta.currency in sync for tools that still read it
+    if (state.updatedFleetJSON.meta) {
+      state.updatedFleetJSON.meta.currency = state.updatedFleetJSON.masterData.clientSettings.currency;
+    }
+  }
+  // v8.3 — also inject meta.clientName from the form so UPDATE-mode saves keep the long name in sync.
+  if (state.updatedFleetJSON.meta && state.clientName) {
+    state.updatedFleetJSON.meta.clientName = state.clientName;
+  }
   const clientCode = state.updatedFleetJSON.meta?.clientCode || 'CLIENT';
   // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
   let filename;
@@ -3632,7 +3808,22 @@ function init() {
   // Restore client code
   const ccEl = document.getElementById('clientCode');
   if (state.clientCode) ccEl.value = state.clientCode;
-  ccEl.addEventListener('input', () => { state.clientCode = ccEl.value; saveState(); });
+  ccEl.addEventListener('input', () => {
+    state.clientCode = ccEl.value;
+    saveState();
+    updateClientScopeLabels();   // refresh "Profiles for client: <code>" hints
+  });
+
+  // v8.3 — restore Client Name input from state
+  const cnEl = document.getElementById('clientName');
+  if (cnEl && state.clientName) cnEl.value = state.clientName;
+
+  // v8.3 Phase 1B — populate the new client-settings dropdowns from restored state
+  // (or from the default state.clientSettings initialiser if no localStorage bucket exists).
+  applyClientSettingsToInputs();
+
+  // v8.3 — show which client the mapping profiles + settings are scoped to.
+  updateClientScopeLabels();
 
   // Restore profiles in dropdowns
   populateProfileDropdown();

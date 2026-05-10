@@ -15,6 +15,10 @@
  *   showToast()   — CPT v17:2299 (extended with severity)
  *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
  *
+ * Version 1.3.0 — Chunk 3 (Slide 8) adds per-client settings helpers:
+ *   getClientSettings, getClientTZ, fmtMoney, fmtTime + DEFAULT_CURRENCY +
+ *   DEFAULT_LOCALE. Defaults are CAD / America/Edmonton / en-CA. Settings
+ *   live at masterData.clientSettings; missing fields fall through to defaults.
  * Version 1.2.0 — Chunk 11 adds save-filename helper
  *   (buildSaveFilename) for cross-tool consistency.
  * Version 1.1.0 — Chunk 2 adds V5 migration helpers
@@ -24,8 +28,10 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.2.0';
-  var DEFAULT_TZ = 'America/Edmonton';
+  var VERSION = '1.3.0';
+  var DEFAULT_TZ = 'America/Edmonton';   // Mountain Time (Canada)
+  var DEFAULT_CURRENCY = 'CAD';          // Canadian dollar — Chunk 3 (Slide 8) operator decision 2026-05-10
+  var DEFAULT_LOCALE = 'en-CA';          // Canadian English — Chunk 3 (Slide 8) operator decision 2026-05-10
 
   // ─────────────────────────────────────────────────────────────
   // HTML ESCAPE
@@ -465,15 +471,27 @@
       clientCode:    input.client_code || (input.meta && input.meta.clientCode) || 'CLIENT',
       clientName:   (input.meta && input.meta.clientName) || '',
       site:         (input.meta && input.meta.site) || '',
-      currency:     (input.meta && input.meta.currency) || 'AUD',
+      currency:     (input.meta && input.meta.currency) || DEFAULT_CURRENCY,
       lastSaved:    (input.meta && input.meta.lastSaved) || new Date().toISOString(),
       migratedAt:    new Date().toISOString(),
       migratedFrom:  input.schema_version || 'v4 FINAL'
     };
 
+    // Chunk 3 (Slide 8) — synthesise masterData.clientSettings during V4→V5 migration.
+    // Source precedence: pre-existing clientSettings block (rare in V4) > legacy meta.currency
+    // > suite defaults (CAD / America/Edmonton / en-CA). Locale and timezone are NEW (no V4
+    // analog), so they always take the default unless an explicit pre-existing block exists.
+    var inSettings = (input.meta && input.meta.clientSettings) || {};
+    var clientSettings = {
+      currency: inSettings.currency || meta.currency || DEFAULT_CURRENCY,
+      timezone: inSettings.timezone || DEFAULT_TZ,
+      locale:   inSettings.locale   || DEFAULT_LOCALE
+    };
+
     var migrated = {
       meta: meta,
       masterData: {
+        clientSettings: clientSettings,
         fleets: fleets,
         units: units,
         components: newComponents,
@@ -612,6 +630,106 @@
   }
 
   // ─────────────────────────────────────────────────────────────
+  // CLIENT SETTINGS  (Chunk 3 / Slide 8 — per-client currency + TZ + locale)
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Extract client settings from a fleet JSON with fallbacks to suite defaults.
+   * Reads masterData.clientSettings; missing fields fall back to:
+   *   currency: 'CAD'  ·  timezone: 'America/Edmonton' (Mountain)  ·  locale: 'en-CA'
+   * Safe to pass anything (null, {}, malformed) — always returns a complete settings object.
+   * Caller pattern:
+   *   var s = NumaCoreLib.getClientSettings(json);
+   *   var label = NumaCoreLib.fmtMoney(177187.88, s);  // "CA$177,187.88"
+   */
+  function getClientSettings(json) {
+    var s = (json && json.masterData && json.masterData.clientSettings) || {};
+    return {
+      currency: s.currency || DEFAULT_CURRENCY,
+      timezone: s.timezone || DEFAULT_TZ,
+      locale:   s.locale   || DEFAULT_LOCALE
+    };
+  }
+
+  /** Convenience: return just the timezone string from a fleet JSON, with default fallback. */
+  function getClientTZ(json) {
+    return getClientSettings(json).timezone;
+  }
+
+  /**
+   * Format a money amount using client settings.
+   *   settings:  { currency, timezone, locale }  (as returned by getClientSettings)
+   *              May also be null/undefined → falls back to suite defaults.
+   *   amount:    number (or numeric string). null/NaN returns ''.
+   * Example: fmtMoney(177187.88, {currency:'CAD', locale:'en-CA'}) → "CA$177,187.88"
+   * Falls back to a plain "$X.XX" string if the runtime doesn't support Intl.NumberFormat
+   * for the requested currency.
+   */
+  function fmtMoney(amount, settings) {
+    if (amount == null || amount === '' || isNaN(amount)) return '';
+    var s = settings || {};
+    var locale   = s.locale   || DEFAULT_LOCALE;
+    var currency = s.currency || DEFAULT_CURRENCY;
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: currency,
+        maximumFractionDigits: 2
+      }).format(Number(amount));
+    } catch (e) {
+      return '$' + Number(amount).toFixed(2);
+    }
+  }
+
+  /**
+   * Format a Date (or ISO string) using client settings.
+   *   settings:  { currency, timezone, locale }  (as returned by getClientSettings)
+   *              May also be null/undefined → falls back to suite defaults.
+   *   format:    'datetime' (default) | 'date' | 'time' | 'short' | 'iso'
+   *
+   * Examples (settings = {timezone:'America/Edmonton', locale:'en-CA'}):
+   *   fmtTime(new Date(), s)              → "2026-05-10, 21:30 MDT"
+   *   fmtTime(new Date(), s, 'date')      → "May 10, 2026"
+   *   fmtTime(new Date(), s, 'time')      → "21:30 MDT"
+   *   fmtTime(new Date(), s, 'short')     → "May 10, 2026, 21:30"
+   *   fmtTime(new Date(), s, 'iso')       → "2026-05-10"  (no TZ adjustment — for storage)
+   */
+  function fmtTime(date, settings, format) {
+    if (!date) return '';
+    var d = (date instanceof Date) ? date : new Date(date);
+    if (isNaN(d)) return '';
+    format = format || 'datetime';
+    if (format === 'iso') return d.toISOString().slice(0, 10);
+
+    var s = settings || {};
+    var tz     = s.timezone || DEFAULT_TZ;
+    var locale = s.locale   || DEFAULT_LOCALE;
+    var opts = { timeZone: tz };
+
+    try {
+      if (format === 'date') {
+        opts.year = 'numeric'; opts.month = 'short'; opts.day = 'numeric';
+        return d.toLocaleDateString(locale, opts);
+      }
+      if (format === 'time') {
+        opts.hour = '2-digit'; opts.minute = '2-digit'; opts.timeZoneName = 'short';
+        return d.toLocaleTimeString(locale, opts);
+      }
+      if (format === 'short') {
+        opts.year = 'numeric'; opts.month = 'short'; opts.day = 'numeric';
+        opts.hour = '2-digit'; opts.minute = '2-digit';
+        return d.toLocaleString(locale, opts);
+      }
+      // 'datetime' default — date + time + tz abbreviation
+      opts.year = 'numeric'; opts.month = '2-digit'; opts.day = '2-digit';
+      opts.hour = '2-digit'; opts.minute = '2-digit';
+      opts.timeZoneName = 'short';
+      return d.toLocaleString(locale, opts);
+    } catch (e) {
+      return d.toISOString();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // EXPORT
   // ─────────────────────────────────────────────────────────────
   window.NumaCoreLib = {
@@ -627,6 +745,14 @@
     migrateV4FlatToV5: migrateV4FlatToV5,
     // Chunk 11 — save-filename consistency
     buildSaveFilename: buildSaveFilename,
+    // Chunk 3 (Slide 8) — per-client settings (CAD / Mountain / en-CA defaults)
+    getClientSettings: getClientSettings,
+    getClientTZ: getClientTZ,
+    fmtMoney: fmtMoney,
+    fmtTime: fmtTime,
+    DEFAULT_CURRENCY: DEFAULT_CURRENCY,
+    DEFAULT_TZ: DEFAULT_TZ,
+    DEFAULT_LOCALE: DEFAULT_LOCALE,
     VERSION: VERSION
   };
 })();
