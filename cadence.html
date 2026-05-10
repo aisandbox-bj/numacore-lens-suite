@@ -1224,7 +1224,11 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 (function() {
   const maxRef = DATA.reduce((mx, r) => (r.last_read && r.last_read > mx ? r.last_read : mx), '');
   const el = document.querySelector('.subtitle');
-  if (el && maxRef) el.textContent = 'Eff. Change-out Date \u00a0|\u00a0 ' + maxRef;
+  // FIX-4-comprehensive (2026-05-10) \u2014 operator-renamed label. The value is
+  // the most recent SMU read date in the fleet (i.e. the as-of date for all
+  // change-out predictions). Was "Eff. Change-out Date | YYYY-MM-DD" which
+  // sounded like a change-out date itself; renamed to clarify intent.
+  if (el && maxRef) el.textContent = 'Predictions As-Of: ' + maxRef;
 })();
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2282,6 +2286,7 @@ function addDrag(el, r, wrap, cy, uKey) {
                 rec.changeout_date = linkedProj.start_date;
                 el.style.left = dateToX(linkedProj.start_date)+'px';
                 renderConnectors();
+                _scheduleSave();   // FIX-4 (2026-05-10) — persist snap-back too
             }}
           ]
         );
@@ -2290,6 +2295,7 @@ function addDrag(el, r, wrap, cy, uKey) {
         rec.changeout_date = linkedProj.start_date;
         el.style.left = dateToX(linkedProj.start_date)+'px';
         renderConnectors();
+        _scheduleSave();   // FIX-4 (2026-05-10) — persist within-project auto-snap
       }
       return;
     }
@@ -2313,6 +2319,7 @@ function finalizeDrag(rec, newDate, el, wrap, cy) {
   const tr = document.querySelector(`[data-key="c:${rec.id}"]`);
   if (tr) changed ? tr.classList.add('changed') : tr.classList.remove('changed');
   renderConnectors();
+  _scheduleSave();   // FIX-4 (2026-05-10) — persist drag to localStorage. Was missing in CPT v17 → v18.1; autosave restore wired in v18.1 FIX-3a couldn't restore drags because the WRITE side was never firing on drag commits.
 }
 
 // ─── CONTEXT MENU ────────────────────────────────────────────────
@@ -3954,6 +3961,7 @@ document.getElementById('applyFilter').onclick = () => {
   document.getElementById('monthDetailPanel').classList.add('hidden');
   render();
   if (document.getElementById('resourcePanel').classList.contains('active')) renderResourcePanel();
+  _scheduleSave();   // FIX-4-comprehensive (2026-05-10) — persist visibleMonths change to localStorage
 };
 document.getElementById('resetFilter').onclick = () => {
   toggleAll('.flt-fleet',true); toggleAll('.flt-cat',true);
@@ -5017,6 +5025,7 @@ document.getElementById('granMonth').onclick = () => {
   document.getElementById('granMonth').classList.add('active');
   document.getElementById('granWeeks').classList.remove('active');
   rerenderActiveTab();
+  _scheduleSave();   // FIX-4-comprehensive (2026-05-10) — persist granularity to localStorage
 };
 document.getElementById('granWeeks').onclick = () => {
   if (state.granularity === 'week') return;
@@ -5024,6 +5033,7 @@ document.getElementById('granWeeks').onclick = () => {
   document.getElementById('granWeeks').classList.add('active');
   document.getElementById('granMonth').classList.remove('active');
   rerenderActiveTab();
+  _scheduleSave();   // FIX-4-comprehensive (2026-05-10) — persist granularity to localStorage
 };
 
 // ─── SELECTION BADGE ──────────────────────────────────────────────
@@ -6223,7 +6233,7 @@ function _initFromJSON(json) {
   document.getElementById('noDataState').classList.add('hidden');
   const maxRef2 = DATA.reduce((mx, r) => (r.last_read && r.last_read > mx ? r.last_read : mx), '');
   const subEl = document.getElementById('hdrSubtitle');
-  if (subEl) subEl.textContent = 'Eff. Change-out Date \u00a0|\u00a0 ' + (maxRef2 || '—');
+  if (subEl) subEl.textContent = 'Predictions As-Of: ' + (maxRef2 || '—');
   applyTermLabel();
   render();
 
