@@ -638,6 +638,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div id="conmonPreviewTable"></div>
     <div class="btn-row" style="margin-top:14px">
       <button class="btn btn-gold" id="conmonCommitBtn" onclick="commitConmonSamples()">⬇ Commit &amp; Download Updated Fleet JSON</button>
+      <button class="btn btn-outline btn-sm" onclick="clearConmonQueue()">✕ Clear queue (keep fleet)</button>
       <button class="btn btn-outline btn-sm" onclick="clearConmon()">↺ Clear / Start Over</button>
     </div>
   </div>
@@ -661,7 +662,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.1';
+const VERSION = '8.2';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -3825,16 +3826,35 @@ async function loadConmonPdfs(files) {
     }
   }
   prog.textContent = `Parsed ${parsed.length}/${files.length}${errors.length ? ' — ' + errors.length + ' failed' : ''}`;
-  // De-duplicate by sample_num (FluidLife Sample # — unique per report).
-  // Fallback key includes location so LH and RH final drives remain separate records.
-  // OIL and OPC files for the same component share the same sample_num — prefer OIL (has rank+trends).
+  // v8.2 Bug B fix: APPEND to existing queue (was REPLACE).
+  // De-duplicate by sample_num (FluidLife Sample # — unique per report). Fallback key
+  // includes location so LH and RH final drives remain separate records. OIL/OPC files
+  // for the same sample_num share dedup — prefer OIL (has rank+trends).
+  // Seed `seen` from the existing queue so dropping the same batch twice doesn't inflate;
+  // and dropping a DIFFERENT batch on top of an existing queue accumulates (bug B fix).
+  const keyOf = (p) => p.sample_num || `${p.unit_id}|${p.component_name_pdf}|${p.location}|${p.sample_date}`;
   const seen = {};
+  (state.conmonSamples || []).forEach(p => { seen[keyOf(p)] = p; });
+  const priorCount = Object.keys(seen).length;
+  let dupesSkipped = 0;
   parsed.forEach(p => {
-    const k = p.sample_num || `${p.unit_id}|${p.component_name_pdf}|${p.location}|${p.sample_date}`;
-    if (seen[k] && p.is_opc && !seen[k].is_opc) return;  // keep oil record over OPC
+    const k = keyOf(p);
+    if (seen[k]) {
+      // OIL beats OPC for same sample_num. Otherwise duplicate against existing queue entry.
+      if (p.is_opc && !seen[k].is_opc) { dupesSkipped++; return; }
+      if (!p.is_opc && seen[k].is_opc) { seen[k] = p; return; } // upgrade OPC → OIL
+      dupesSkipped++;
+      return;
+    }
     seen[k] = p;
   });
   state.conmonSamples = Object.values(seen);
+  const newCount = state.conmonSamples.length;
+  const addedThisDrop = newCount - priorCount;
+  // v8.2 Bug A UX fix: surface dedup outcome in the progress line so operator can see what happened.
+  prog.textContent = `${newCount} queued · +${addedThisDrop} from this drop`
+    + (dupesSkipped > 0 ? ` · ${dupesSkipped} duplicate${dupesSkipped===1?'':'s'} skipped` : '')
+    + (errors.length ? ` · ${errors.length} parse error${errors.length===1?'':'s'}` : '');
   renderConmonPreview();
 }
 
@@ -4012,7 +4032,28 @@ function commitConmonSamples() {
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
-  alert(`✓ Committed ${newRecords.length} sample(s) to conditionMonitoring. Total after trim: ${trimmed.length}.`);
+  // v8.2 Bug A UX fix: distinguish new-to-fleet vs updated-existing in the commit alert.
+  // Previously said "Committed N samples" without telling operator whether those N were
+  // additions or replacements of existing same-sample_id entries.
+  const existingIds = new Set(existing.map(r => r && r.sample_id).filter(Boolean));
+  const newToFleet = newRecords.filter(r => !existingIds.has(r.sample_id)).length;
+  const updatedExisting = newRecords.length - newToFleet;
+  const parts = [];
+  if (newToFleet > 0)      parts.push(`${newToFleet} new`);
+  if (updatedExisting > 0) parts.push(`${updatedExisting} updated existing entr${updatedExisting===1?'y':'ies'}`);
+  const breakdown = parts.length ? ` — ${parts.join(', ')}` : '';
+  alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).`);
+}
+
+// v8.2 Bug B fix companion: clears just the parsed-samples queue without dropping the
+// loaded fleet JSON, so operator can deliberately start the PDF batch over without
+// re-dropping the fleet. The full-reset `clearConmon()` below is still wired to
+// "Clear / Start Over".
+function clearConmonQueue() {
+  state.conmonSamples = [];
+  state.conmonUnmatched = [];
+  document.getElementById('conmonParseProgress').textContent = '';
+  document.getElementById('conmonPreviewCard').style.display = 'none';
 }
 
 function clearConmon() {
