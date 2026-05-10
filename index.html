@@ -2068,7 +2068,27 @@ function _readWorking(j) {
   const hasV5Master = !!(j.masterData && typeof j.masterData === 'object');
   return (hasV5Master ? j.workingData : j.working) || {};
 }
-function _readConMon(j)     { return (j && j.masterData && j.masterData.conditionMonitoring) || (j && j.conditionMonitoring) || (j && j.oil_samples) || []; }
+// FIX-1 (2026-05-10) — non-empty fallback. Same root cause class as Cadence FIX-1
+// and Lens FIX-4 (2026-05-07): `||` chain short-circuits on truthy-but-empty
+// arrays. The migrator (numacore_lib.js v1.1.0+ migrateV4FlatToV5) creates an
+// empty `masterData.conditionMonitoring: []` stub on every V5 file. Intake's
+// commitConmonSamples writes ConMon to root `conditionMonitoring`, NOT to
+// masterData. Result: V5-migrated files end up with `masterData.conditionMonitoring
+// = []` AND `conditionMonitoring = [...N records]` at root. The previous read
+// returned the empty stub and never fell through to the populated root array.
+// Operator's CLIENT_fleet_v5_with_conmon (2).json had 335 ConMon records at
+// root that Lens silently saw as zero. Fix: explicit non-empty checks at each
+// fallback level.
+function _readConMon(j) {
+  if (!j) return [];
+  const v5 = j.masterData && j.masterData.conditionMonitoring;
+  if (Array.isArray(v5) && v5.length > 0) return v5;
+  const root = j.conditionMonitoring;
+  if (Array.isArray(root) && root.length > 0) return root;
+  const v4 = j.oil_samples;
+  if (Array.isArray(v4) && v4.length > 0) return v4;
+  return [];
+}
 
 // ── CAPABILITY GATING (Chunk 5, ADR — Capability Gating Framework) ────────
 // CAPS is computed once on JSON load. Each cap is a boolean; UI sections

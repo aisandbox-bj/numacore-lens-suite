@@ -3947,8 +3947,12 @@ function commitConmonSamples() {
   // Shape each sample record for output.
   // sample_id includes location so LH and RH final drives are distinct keys.
   const newRecords = state.conmonSamples.map(s => ({
-    sample_id:    s.sample_num || `${s.unit_id}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`,
-    unit_id:      (s.unit_id || '').toLowerCase(),
+    sample_id:    s.sample_num || `${(s.unit_id || '').toUpperCase()}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`,
+    // FIX-1 (2026-05-10) — operator rule: Sort Field (machine ID) must always be CAPS.
+    // Was `.toLowerCase()` — caused 0/15 strict-match join in Lens against
+    // masterData.units[].id (which is uppercase). Synthetic sample_id fallback
+    // also uppercased above for consistency.
+    unit_id:      (s.unit_id || '').toUpperCase(),
     scope:        s.is_coolant ? 'system' : 'component',
     target:       (s.component_name_pdf || '').toLowerCase(),
     location:     s.location || '',
