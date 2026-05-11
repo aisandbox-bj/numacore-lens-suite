@@ -1547,6 +1547,14 @@ function processMapping() {
           benchmark:            benchmark,
           last_smu:             last_smu,
           last_read:            last_date,
+          // v8.3 FIX-2 (2026-05-10) — propagate the unit-level util_rate (already converted
+          // from source fraction to hrs/day at line ~1494 via utilMap) onto each component.
+          // Without this, V5 build emitted util_rate: null per component (line ~1993 reads
+          // c.util_rate || null), even though the source XLSX had a % util column and the
+          // BUILD path correctly converted it for the unit-level utilizationProfile. Same
+          // value as in utilMap → consistent with the unit's utilizationProfile entry. V4
+          // legacy build was unaffected because it didn't write util_rate per component.
+          util_rate:            utilMap[unit_id] || null,
           estimated_smu:        estimated_smu,   // reference only — Lens recomputes at runtime
           changeout_date_erp:   changeout_date_erp,
           cost:                 cost,
