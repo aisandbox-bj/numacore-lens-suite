@@ -1289,6 +1289,30 @@ function _restoreState() {
     if (!raw) return null;
     const snap = JSON.parse(raw);
     if (!snap || !snap.v) return null;
+    // v18.3 FIX-4 (2026-05-10) — "file is newer than localStorage" auto-clear.
+    // Operator-flagged: when re-BUILDing or re-UPDATEing a fleet JSON via Intake, the new
+    // file represents a fresh starting point. Old drag overrides from a previous session
+    // should NOT be layered onto the new file — they bleed prior session work onto data
+    // that has been deliberately refreshed. Detect this via meta.lastSaved timestamp:
+    // file written AFTER localStorage was last touched → file supersedes → clear stale state.
+    // If file.lastSaved is missing (very old files), fall back to lastImportDate (date-only,
+    // less precise but workable). If both missing, can't compare — fall through to normal restore.
+    const fileSavedAt = (_meta && (_meta.lastSaved || _meta.lastImportDate)) || null;
+    if (fileSavedAt && snap.savedAt && snap.savedAt < fileSavedAt) {
+      const overrideCount = (snap.componentDates || []).length;
+      const projCount     = (snap.projects || []).length;
+      localStorage.removeItem(getSaveKey());
+      if (typeof showToast === 'function' && (overrideCount > 0 || projCount > 0)) {
+        const parts = [];
+        if (overrideCount > 0) parts.push(overrideCount + ' drag override' + (overrideCount===1?'':'s'));
+        if (projCount > 0)     parts.push(projCount + ' project' + (projCount===1?'':'s'));
+        showToast('⚠ File is newer than local autosave — cleared stale ' + parts.join(' + ') + ' (re-BUILD detected)', 5500);
+      }
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('Cadence v18.3 FIX-4 stale-state clear: file lastSaved=' + fileSavedAt + ' > snap.savedAt=' + snap.savedAt + '; cleared ' + overrideCount + ' overrides + ' + projCount + ' projects from localStorage.');
+      }
+      return null;
+    }
     // Restore component date overrides
     (snap.componentDates || []).forEach(({ id, changeout_date }) => {
       const rec = DATA.find(r => r.id === id);
