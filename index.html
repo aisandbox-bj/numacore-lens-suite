@@ -3798,7 +3798,42 @@ function buildFleetData(json) {
   const fd = {};
   // V5: components live under json.masterData.components[]; V4 Flat: under json.components[].
   // Reader is shape-agnostic via _readComponents(); writer preserves the shape that was loaded.
+
+  // v4.2 FIX-1 (2026-05-11) — V5 → V4 legacy field compat shim, mirrors Cadence v18.3 FIX-1.
+  // V5 stores: c.fleet_id (ID ref into masterData.fleets[].name) · c.unit_id · c.name
+  // V4 reads:  c.fleet (NAME)                                    · c.unit    · c.component
+  // Without this shim, V5 files render every fleet as "Unknown" (because c.fleet is undefined),
+  // every unit as "Unknown" or the model-numbered fallback, and category-grouped views as empty.
+  // Build a fleet_id → name lookup from masterData.fleets[] so the forEach below can resolve
+  // c.fleet from c.fleet_id when c.fleet is missing.
+  const _fleetNameLookup = {};
+  const _masterFleets = (json && json.masterData && Array.isArray(json.masterData.fleets)) ? json.masterData.fleets : [];
+  _masterFleets.forEach(f => {
+    if (f && f.id !== undefined && f.id !== null) _fleetNameLookup[f.id] = f.name || String(f.id);
+  });
+  const _isMissing = (v) => v == null || v === '' || v === 'undefined' || v === 'Undefined';
+
   _readComponents(json).forEach(c => {
+    // FIX-1 — resolve fleet/unit/component names from V5 fields when V4 fields are missing.
+    // Mutates c in place so all downstream reads (here AND later code paths that re-read
+    // the same component reference) see the resolved values. The original V5 keys
+    // (fleet_id, unit_id, name) remain untouched on the source object.
+    if (_isMissing(c.fleet)) {
+      if (c.fleet_id != null && _fleetNameLookup[c.fleet_id]) {
+        c.fleet = _fleetNameLookup[c.fleet_id];
+      } else if (c.fleet_id != null && String(c.fleet_id).trim() !== '') {
+        c.fleet = String(c.fleet_id);     // ID-only fallback when name not in masterData
+      } else {
+        c.fleet = 'Unassigned';            // No fleet identity at all → cleaner label than 'Unknown'
+      }
+    }
+    if (_isMissing(c.unit) && !_isMissing(c.unit_id)) {
+      c.unit = c.unit_id;
+    }
+    if (_isMissing(c.component) && !_isMissing(c.name)) {
+      c.component = c.name;
+    }
+
     const fleet = c.fleet || 'Unknown';
     const model = c.model || 'Unknown';
     const unit  = c.unit  || 'Unknown';
