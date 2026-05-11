@@ -645,7 +645,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
           <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
           <button class="tab-btn" onclick="switchTab('gantt')">Gantt</button>
           <button class="tab-btn" onclick="switchTab('gates')">Gates</button>
-          <button class="tab-btn" onclick="switchTab('materials')">Materials <span class="tab-badge dim" id="matBadge">—</span></button>
+          <button class="tab-btn" onclick="switchTab('materials')">Bill of Materials <span class="tab-badge dim" id="matBadge">—</span></button>
           <button class="tab-btn" onclick="switchTab('workorders')">Work Orders <span class="tab-badge dim" id="woBadge">—</span></button>
           <button class="tab-btn" onclick="switchTab('actions')">Actions <span class="tab-badge dim" id="actBadge">0</span></button>
           <button class="tab-btn" onclick="switchTab('notes')">Notes <span class="tab-badge dim" id="notesBadge">0</span></button>
@@ -842,6 +842,18 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
     <div class="modal-title">⚙️ Map IW39 Columns</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Match your SAP IW39 export columns to the required fields.</div>
     <div class="cm-grid" id="woMapGrid"></div>
+    <!-- v8.8 (Slide 9) — optional Sort Field filter. When set, only WO rows whose
+         FLOC / Sort Field contains the entered string are imported. Operators use
+         this to import a single unit's WOs from a big multi-unit IW39 export.
+         The input value is normalised via numacore_lib.normaliseSortField() (uppercase
+         + trim) per the suite CAPS rule. Leave blank to import all rows. -->
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px">
+      <label style="display:flex;align-items:center;gap:10px">
+        <span style="color:var(--muted);min-width:170px">Sort Field filter (optional)</span>
+        <input type="text" id="woSortFieldFilter" placeholder="e.g. BD401 — leave blank for all" style="flex:1;padding:5px 8px;border:1px solid var(--border);background:var(--bg);color:var(--txt);border-radius:4px;font-size:11px;font-family:inherit" oninput="this.value=this.value.toUpperCase()">
+      </label>
+      <div style="color:var(--faint);font-size:10px;margin-top:4px;margin-left:180px">Substring match against the FLOC / Sort Field column. Always uppercased per the suite Sort Field CAPS rule.</div>
+    </div>
     <div class="cm-hint" id="woRowCount"></div>
     <div class="m-actions">
       <button class="mbtn secondary" onclick="closeModal('modalWoMap')">Cancel</button>
@@ -944,7 +956,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.7';   // single source of truth for tool version
+const VERSION = '8.8';   // single source of truth for tool version
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -986,7 +998,12 @@ const WO_FIELDS = [
   { key:'status',       label:'System Status',     required:false },
   { key:'planned_cost', label:'Planned Cost',      required:false },
   { key:'actual_cost',  label:'Actual Cost',       required:false },
-  { key:'floc',         label:'FLOC / Search Term',required:false },
+  { key:'floc',         label:'FLOC / Sort Field', required:false },
+  // v8.8 (Slide 9) — SAP Material No. column on IW39 import enables BOM↔IW39
+  // auto-link. When the IW39 export carries the SAP Material No. for each WO,
+  // we can show a "🔗 N WOs" badge on matching BOM rows + a click-to-filter
+  // shortcut. Optional column — IW39 exports without it still work.
+  { key:'sap_material', label:'SAP Material No.',  required:false },
 ];
 
 // Column auto-match aliases
@@ -1134,7 +1151,14 @@ function termLabel() {
 function termLabelPlural() { return termLabel() + 's'; }
 
 function startApp() {
-  if (!fleetData || fleetProjects.length === 0) { toast('Load a fleet JSON first', 'error'); return; }
+  // v8.8 (Slide 9) — differentiate two empty cases that v8.7 conflated under
+  // a single misleading "Load a fleet JSON first" toast:
+  //   (a) No fleet loaded at all   → "Load a fleet JSON first" (legit empty state)
+  //   (b) Fleet loaded, 0 projects → render the app with a friendly empty state
+  //       in the sidebar prompting the operator to create a project (or open
+  //       Cadence/Lens if running standalone). v8.7 would bail here, leaving
+  //       a blank panel + the wrong toast.
+  if (!fleetData) { toast('Load a fleet JSON first', 'error'); return; }
   document.getElementById('load-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   const m = fleetData.meta || {};
@@ -1149,6 +1173,19 @@ function startApp() {
   if (deploy.callHorizonMonths) setCallHorizon(deploy.callHorizonMonths);
   renderSidebar();
   setLandingView('gantt');
+  // v8.8 — surface a clear empty-state info toast for the 0-projects case so
+  // the operator sees an explanation instead of an empty UI. Defers ~600ms so
+  // it appears after any auto-restore prompts have settled.
+  if (fleetProjects.length === 0) {
+    setTimeout(function() {
+      try {
+        const _msg = _depInShell
+          ? 'Fleet loaded · no projects yet — switch to Cadence to create one'
+          : 'Fleet loaded · no projects yet — open Cadence/Lens to create a project, then re-load this fleet';
+        toast(_msg, 'info');
+      } catch(e) { console.warn('Empty-projects toast failed:', e); }
+    }, 600);
+  }
 }
 
 function applyTermLabel() {
@@ -1282,6 +1319,27 @@ function renderSidebar() {
   document.getElementById('sbCount').textContent = `(${list.length})`;
   const el = document.getElementById('sbList');
   el.innerHTML = '';
+
+  // v8.8 (Slide 9) — empty-state for "fleet loaded but no projects yet". v8.7
+  // would render an empty sidebar and leave operators wondering what to do.
+  // Now shows a friendly inline message + an actionable hint. Distinguishes
+  // "no projects at all" (fleetProjects.length === 0) from "no projects after
+  // filter" (list.length === 0 but filter is active).
+  if (fleetProjects.length === 0) {
+    el.innerHTML = `<div class="empty" style="padding:24px 16px;text-align:center;color:var(--muted);font-size:11px;line-height:1.55">
+      <div style="font-size:22px;margin-bottom:8px">📋</div>
+      <div style="color:var(--txt);font-weight:600;margin-bottom:4px">No projects yet</div>
+      <div>This fleet has no projects.</div>
+      <div style="margin-top:8px;color:var(--faint)">Create one in Cadence's Project Optimiser, then re-open this tab.</div>
+    </div>`;
+    return;
+  } else if (list.length === 0) {
+    el.innerHTML = `<div class="empty" style="padding:18px 16px;text-align:center;color:var(--muted);font-size:11px">
+      <div>No projects match the current filter.</div>
+      <div style="margin-top:6px;color:var(--faint)">Try the "All" chip or clear the search.</div>
+    </div>`;
+    return;
+  }
 
   list.forEach(p => {
     const active = isActive(p.id);
@@ -1650,14 +1708,31 @@ function renderMaterials(id) {
 
   const rowClass = (s) => ({confirmed:'row-confirmed',ordered:'row-ordered',received:'row-received',missing:'row-missing'}[s]||'');
 
+  // v8.8 (Slide 9) — BOM ↔ IW39 auto-link. Build a count map (sap_material → # of
+  // matching IW39 entries). Used below to surface a "🔗 N WOs" badge on BOM rows
+  // whose SAP Material No. has corresponding work orders. Empty / missing
+  // sap_material values are skipped. Case-insensitive trim-aware match so
+  // "1234-ABC" / "1234-abc " count as the same key.
+  const _wos = p.workOrders || [];
+  const _bomLinkCounts = {};
+  _wos.forEach(wo => {
+    const k = String(wo.sap_material || '').trim().toUpperCase();
+    if (k) _bomLinkCounts[k] = (_bomLinkCounts[k] || 0) + 1;
+  });
+
   const rows = visible.map((row, ri) => {
     const realIdx = bom.indexOf(row);
+    const _sapKey = String(row.sap_material || '').trim().toUpperCase();
+    const _linkCount = _sapKey ? (_bomLinkCounts[_sapKey] || 0) : 0;
+    const _linkBadge = _linkCount > 0
+      ? `<button class="bom-wo-link" onclick="filterWosByMaterial('${id}','${esc(_sapKey)}')" title="Filter Work Orders to this SAP Material" style="margin-left:6px;font-size:9px;padding:1px 6px;border-radius:10px;border:1px solid var(--blue);background:rgba(91,156,246,0.12);color:var(--blue);cursor:pointer;font-family:inherit">🔗 ${_linkCount} WO${_linkCount===1?'':'s'}</button>`
+      : '';
     return `
       <tr class="${rowClass(row.sapStatus)}">
         <td>${esc(row.line_no || String(realIdx+1))}</td>
         <td>${esc(row.description || '')}</td>
         <td class="mono">${esc(row.part_number || '')}</td>
-        <td class="mono">${esc(row.sap_material || '')}</td>
+        <td class="mono">${esc(row.sap_material || '')}${_linkBadge}</td>
         <td style="text-align:right">${esc(row.qty || '')}</td>
         <td style="text-align:right">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
         <td>
@@ -1738,6 +1813,26 @@ function confirmBomImport() {
 // WORK ORDERS TAB
 // ─────────────────────────────────────────────
 let _woFilter = 'all';
+// v8.8 (Slide 9) — sap_material filter for the BOM↔IW39 link click-through.
+// Empty string = no filter (default). Set by filterWosByMaterial() when an
+// operator clicks the "🔗 N WOs" badge on a BOM row. Combines with _woFilter
+// (status) at render time so both can be active simultaneously.
+let _woSapFilter = '';
+
+// v8.8 — filter the WO tab to WOs that match a given SAP material number,
+// then switch to that tab. Clears any other active sap-filter (a fresh click
+// always replaces the prior filter). Sticky-toggle: clicking the same badge
+// twice clears the filter.
+function filterWosByMaterial(id, sapKey) {
+  if (_woSapFilter === sapKey) {
+    _woSapFilter = '';
+  } else {
+    _woSapFilter = sapKey;
+  }
+  // Switch to WO tab and re-render (switchTab handles the actual tab-DOM toggle)
+  try { switchTab('wo'); } catch(_) { /* fallback: just re-render */ }
+  renderWorkOrders(id);
+}
 
 function renderWorkOrders(id) {
   const p  = pd(id);
@@ -1816,11 +1911,20 @@ function renderWorkOrders(id) {
       <button class="tab-filter ${_woFilter==='CRTD' ?'active':''}" onclick="setWoFilter('CRTD','${id}')">CRTD (${crtdCount})</button>
       <button class="tab-filter ${_woFilter==='REL'  ?'active':''}" onclick="setWoFilter('REL','${id}')">REL (${relCount})</button>
       <button class="tab-filter ${_woFilter==='TECO' ?'active':''}" onclick="setWoFilter('TECO','${id}')">TECO/CLSD (${tecoCount})</button>
+      ${_woSapFilter ? `<button class="tab-filter active" style="background:rgba(91,156,246,0.15);border-color:var(--blue);color:var(--blue)" onclick="filterWosByMaterial('${id}','${esc(_woSapFilter)}')" title="Click to clear">🔗 SAP Material: ${esc(_woSapFilter)} ✕</button>` : ''}
     </div>`;
 
-  const visible = _woFilter === 'all' ? wos
+  // v8.8 (Slide 9) — apply both filters in sequence. _woFilter is the status
+  // chip; _woSapFilter (set by filterWosByMaterial() when an operator clicks
+  // a BOM "🔗 N WOs" badge) narrows to one SAP Material No. Either can be
+  // active independently. Case-insensitive trim-aware compare matches the
+  // BOM-side keying.
+  let visible = _woFilter === 'all' ? wos
     : _woFilter === 'TECO' ? wos.filter(w => ['TECO','CLSD'].includes((w.status||'').toUpperCase().trim()))
     : wos.filter(w => (w.status||'').toUpperCase().trim() === _woFilter);
+  if (_woSapFilter) {
+    visible = visible.filter(w => String(w.sap_material||'').trim().toUpperCase() === _woSapFilter);
+  }
 
   const rows = visible.map((wo, ri) => {
     const planned = parseFloat(wo.planned_cost)||0;
@@ -1892,15 +1996,41 @@ function confirmWoImport() {
   });
   if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
 
+  // v8.8 (Slide 9) — read the optional Sort Field filter. Normalise via the lib
+  // helper for the CAPS rule; fall back to inline toUpperCase if lib not loaded.
+  // Empty string = no filter (all rows pass).
+  const _rawSortFilter = String(document.getElementById('woSortFieldFilter')?.value || '').trim();
+  const _sortFilter    = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
+                          ? window.NumaCoreLib.normaliseSortField(_rawSortFilter)
+                          : _rawSortFilter.toUpperCase();
+
+  // Total rows BEFORE Sort Field filter — used in the result toast so the
+  // operator can see how many were skipped by their filter.
+  let _totalBeforeFilter = 0;
+
   const wos = _woRaw.map(row => {
     const item = { notes:'' };
     WO_FIELDS.forEach(f => { if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? ''); });
     return item;
-  }).filter(i => i.wo_number);
+  }).filter(i => {
+    if (!i.wo_number) return false;
+    _totalBeforeFilter++;
+    // No filter set → keep all (CAPS-only check; empty string never matches anything anyway)
+    if (!_sortFilter) return true;
+    // Substring match on the normalised FLOC / Sort Field column
+    const flocNorm = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
+                      ? window.NumaCoreLib.normaliseSortField(i.floc || '')
+                      : String(i.floc || '').toUpperCase();
+    return flocNorm.indexOf(_sortFilter) !== -1;
+  });
 
   deploy.projects[selProjId].workOrders = wos;
   closeModal('modalWoMap');
-  toast(`Imported ${wos.length} work orders`, 'success');
+  const _skipped = _totalBeforeFilter - wos.length;
+  const _msg = _sortFilter
+    ? `Imported ${wos.length} of ${_totalBeforeFilter} work orders (Sort Field filter "${_sortFilter}" — ${_skipped} skipped)`
+    : `Imported ${wos.length} work orders`;
+  toast(_msg, 'success');
   renderWorkOrders(selProjId);
   _markUnsaved();
 }
@@ -1924,17 +2054,93 @@ function buildMapper(type) {
     ).join('');
     return `<div class="cm-field">
       <span class="cm-lbl">${esc(f.label)}${f.required?' *':''}</span>
-      <select class="cm-sel" id="${prefix}_${f.key}">${opts}</select>
+      <select class="cm-sel" id="${prefix}_${f.key}" onchange="renderMapperPreview('${type}')">${opts}</select>
     </div>`;
   }).join('');
 
   document.getElementById(cntId).textContent = `${raw.length} data rows detected in this file`;
+  // v8.8 (Slide 9) — preview-first column mapper. Render the first 5 data rows
+  // with the current mapping applied below the dropdowns. Live-updates whenever
+  // an operator changes a column dropdown so they can spot a wrong mapping
+  // BEFORE committing the import.
+  renderMapperPreview(type);
   openModal(modalId);
 }
 
 function autoMatch(header, fieldKey) {
   const h = header.toLowerCase();
   return (ALIASES[fieldKey] || [fieldKey]).some(alias => h.includes(alias));
+}
+
+// v8.8 (Slide 9) — preview the first 5 data rows with the current mapping
+// applied. Wired to every column-dropdown's onchange so the preview stays
+// live. Injects a table into a #<prefix>Preview container that's created on
+// first call (idempotent).
+function renderMapperPreview(type) {
+  const fields  = type === 'bom' ? BOM_FIELDS : WO_FIELDS;
+  const hdrs    = type === 'bom' ? _bomHdrs   : _woHdrs;
+  const raw     = type === 'bom' ? _bomRaw    : _woRaw;
+  const prefix  = type === 'bom' ? 'bm'       : 'wm';
+  const gridId  = type === 'bom' ? 'bomMapGrid'  : 'woMapGrid';
+  const cntId   = type === 'bom' ? 'bomRowCount' : 'woRowCount';
+  const previewId = type + 'MapPreview';
+
+  // Read the current mapping from the dropdowns
+  const mapping = {};
+  fields.forEach(f => {
+    const s = document.getElementById(prefix + '_' + f.key);
+    if (s && s.value !== '(skip)') mapping[f.key] = hdrs.indexOf(s.value);
+  });
+
+  // Build the preview rows (up to 5)
+  const previewRows = raw.slice(0, 5);
+
+  const ths = fields.map(f => {
+    const mapped = mapping[f.key] !== undefined;
+    return `<th style="padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);color:${mapped?'var(--blue)':'var(--faint)'};font-size:10px;font-weight:600;white-space:nowrap">
+      ${esc(f.label)}${f.required?' <span style="color:var(--red)">*</span>':''}
+    </th>`;
+  }).join('');
+
+  const trs = previewRows.map((row, ri) => {
+    const tds = fields.map(f => {
+      if (mapping[f.key] === undefined) return `<td style="padding:4px 8px;color:var(--faint);font-size:10px;border-bottom:1px solid var(--border)">—</td>`;
+      const val = row[mapping[f.key]] ?? '';
+      return `<td style="padding:4px 8px;color:var(--txt);font-size:11px;border-bottom:1px solid var(--border);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(String(val))}">${esc(String(val))}</td>`;
+    }).join('');
+    return `<tr>${tds}</tr>`;
+  }).join('');
+
+  const moreRowsNote = raw.length > 5 ? `<div style="font-size:10px;color:var(--faint);padding:6px 0 0">+ ${raw.length - 5} more row${raw.length - 5 === 1 ? '' : 's'} (showing first 5)</div>` : '';
+
+  const previewHtml = `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px">
+        <span style="font-weight:600;color:var(--txt)">👁 Preview</span>
+        <span>— first 5 rows with the mapping above. Change a dropdown to update.</span>
+      </div>
+      <div style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>${ths}</tr></thead>
+          <tbody>${trs || `<tr><td colspan="${fields.length}" style="padding:10px;color:var(--faint);font-size:11px;text-align:center">No data rows in file</td></tr>`}</tbody>
+        </table>
+      </div>
+      ${moreRowsNote}
+    </div>`;
+
+  let previewEl = document.getElementById(previewId);
+  if (!previewEl) {
+    previewEl = document.createElement('div');
+    previewEl.id = previewId;
+    // Insert just after the count hint
+    const cntEl = document.getElementById(cntId);
+    if (cntEl && cntEl.parentNode) {
+      cntEl.parentNode.insertBefore(previewEl, cntEl.nextSibling);
+    } else {
+      document.getElementById(gridId).parentNode.appendChild(previewEl);
+    }
+  }
+  previewEl.innerHTML = previewHtml;
 }
 
 // ─────────────────────────────────────────────
