@@ -6175,6 +6175,7 @@ function _initFromJSON(json) {
   const _isMissing = (v) => v == null || v === '' || v === 'undefined' || v === 'Undefined';
   let _fleetResolved = 0, _fleetUnassigned = 0;
   let _unitResolved = 0, _componentResolved = 0;
+  let _changeoutDateMirrored = 0, _originalDateMirrored = 0;
   DATA.forEach(r => {
     // FLEET — resolve from fleet_id via masterData.fleets[] lookup
     if (_isMissing(r.fleet)) {
@@ -6201,9 +6202,25 @@ function _initFromJSON(json) {
       r.component = r.name;
       _componentResolved++;
     }
+    // DATES — V5 stores only r.changeout_date_erp (the ERP-predicted source date). V4 Flat
+    // also writes r.changeout_date (current scheduled — drives the solid diamond position)
+    // and r.original_date (the immutable ERP date — drives the shadow diamond and today-clamp).
+    // Without this mirror, V5 components with no recompute (missing benchmark/util_rate/last_read)
+    // would have undefined changeout_date AND original_date → today-clamp returns early (it
+    // requires original_date set) → no diamond renders at all. The recompute pass below will
+    // overwrite both for components with sufficient data; this shim provides a sensible default
+    // for components where the recompute can't fire.
+    if (_isMissing(r.changeout_date) && !_isMissing(r.changeout_date_erp)) {
+      r.changeout_date = r.changeout_date_erp;
+      _changeoutDateMirrored++;
+    }
+    if (_isMissing(r.original_date) && !_isMissing(r.changeout_date_erp)) {
+      r.original_date = r.changeout_date_erp;
+      _originalDateMirrored++;
+    }
   });
-  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved > 0)) {
-    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name.`);
+  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved + _changeoutDateMirrored + _originalDateMirrored > 0)) {
+    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name; changeout_date ${_changeoutDateMirrored} mirrored from changeout_date_erp; original_date ${_originalDateMirrored} mirrored from changeout_date_erp.`);
   }
 
   // Recompute timeline start from actual loaded data (initial cache ran before DATA was populated,
