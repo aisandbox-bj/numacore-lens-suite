@@ -6032,6 +6032,59 @@ document.getElementById('abCollapseAll').addEventListener('click', () => {
 let _meta = {};        // populated from JSON file meta section
 let _originalJSON = null;  // full JSON as loaded — preserved so export can merge, not replace
 
+// v18.2 (Slide 7) — Recompute theoretical changeout dates from current SMU + benchmark + util_rate.
+// Called from _initFromJSON after componentDateOverrides applied. Rules locked by operator 2026-05-10:
+//   • Shadow diamond (r.original_date) ALWAYS recomputes — no exceptions.
+//   • Solid diamond (r.changeout_date) recomputes ONLY if the component is neither manually
+//     overridden (componentDateOverrides) nor linked to a project. Project anchor wins for
+//     linked components; manual drag wins for overridden ones.
+//   • Theoretical-in-past dates clamp to TODAY via the existing today-clamp pass that runs
+//     immediately after this function — no per-component clamp needed here.
+// Formula (from r.benchmark hours of life, r.util_rate hrs/day usage, r.install_hours and
+// r.last_smu cumulative-hours boundaries, r.last_read reference date):
+//     hoursRemaining = benchmark - (last_smu - install_hours)
+//     daysRemaining  = hoursRemaining / util_rate
+//     newTheoretical = last_read + daysRemaining days   (fallback ref: TODAY if last_read absent)
+// Components missing benchmark/util_rate/last_read are skipped — their original_date stays as-is.
+function _recomputeTheoreticalDates(overrideIds, linkedIds) {
+  const _todayMs = Date.now();
+  let shadowUpdates = 0, solidUpdates = 0, skipped = 0;
+  DATA.forEach(r => {
+    const benchmark = Number(r.benchmark || 0);
+    const utilRate  = Number(r.util_rate || 0);
+    if (benchmark <= 0 || utilRate <= 0) { skipped++; return; }
+    const lastSmu    = Number(r.last_smu || 0);
+    const installHrs = Number(r.install_hours || 0);
+    const hoursUsed = lastSmu - installHrs;
+    const hoursRemaining = benchmark - hoursUsed;
+    const daysRemaining = hoursRemaining / utilRate;
+    // Reference date: r.last_read (when last_smu was captured). Fall back to TODAY if absent or unparseable.
+    let refMs = _todayMs;
+    if (r.last_read) {
+      const t = new Date(r.last_read).getTime();
+      if (!isNaN(t)) refMs = t;
+    }
+    const newTheoreticalMs = refMs + daysRemaining * 86400000;
+    if (isNaN(newTheoreticalMs)) { skipped++; return; }
+    const newTheoretical = new Date(newTheoreticalMs).toISOString().split('T')[0];
+
+    // Shadow always recomputes — this is the immutable-source semantic change vs v18.1
+    // (in v18.1, original_date was set at Intake build and never modified).
+    r.original_date = newTheoretical;
+    shadowUpdates++;
+
+    // Solid recomputes only if NOT manually overridden AND NOT linked to a project.
+    // Today-clamp pass that follows handles past-dates automatically.
+    if (overrideIds.has(r.id) || linkedIds.has(r.id)) return;
+    r.changeout_date = newTheoretical;
+    solidUpdates++;
+  });
+  if (typeof console !== 'undefined' && console.log) {
+    console.log(`Cadence v18.2 theoretical recompute: ${shadowUpdates} shadows, ${solidUpdates} solids updated; ${skipped} skipped (missing benchmark/util_rate)`);
+  }
+  return { shadowUpdates, solidUpdates, skipped };
+}
+
 function _initFromJSON(json) {
   _originalJSON = json;  // stash full original for round-trip preservation
   // Clear legacy unscoped key so previous client's shadow state can't bleed in
@@ -6166,6 +6219,22 @@ function _initFromJSON(json) {
     const rec = DATA.find(r => r.id === oid);
     if (rec) rec.changeout_date = o.changeout_date;
   });
+
+  // ── v18.2 (Slide 7): recompute theoretical changeout dates ──────────
+  // Runs AFTER override-apply (so override IDs are known) and BEFORE today-clamp
+  // (so the clamp pass that follows handles past-date snapping for our new dates).
+  // Shadow (original_date) always recomputes; solid (changeout_date) recomputes only
+  // for components NEITHER overridden NOR project-linked. See function comment for
+  // formula and edge-case handling.
+  const _overrideIds = new Set(
+    _dateOverrides
+      .map(o => (o.id !== undefined) ? o.id : o.component_id)
+      .filter(x => x !== undefined)
+  );
+  const _linkedIds = new Set(
+    (state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : [])
+  );
+  _recomputeTheoreticalDates(_overrideIds, _linkedIds);
 
   // ── Effective changeout date clamp ────────────────────────────────
   // original_date is the immutable source date and must never be modified.
