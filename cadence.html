@@ -76,6 +76,7 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .unit-smu-tag{color:#484f58;font-size:9px;font-weight:500;margin-left:5px;letter-spacing:.2px}
 .smu-warn-badge{color:#f59e0b;font-size:10px;margin-left:4px;cursor:default}
 .bench-warn-badge{color:#f97316;font-size:10px;margin-left:4px;cursor:default}
+.util-warn-badge{color:#60a5fa;font-size:10px;margin-left:4px;cursor:default}
 #detailToggleBtn{padding:3px 7px;font-size:10px;background:#21262d;border:1px solid #30363d;color:#8b949e;cursor:pointer;border-radius:4px;transition:all .1s;white-space:nowrap}
 #detailToggleBtn:hover{background:#30363d;color:#c9d1d9}
 #detailToggleBtn.active{background:#1f4b8c;color:#7dd3fc;border-color:#388bfd}
@@ -1818,6 +1819,14 @@ function renderTree() {
     // Orange badge distinguishes it from the amber SMU anomaly badge above.
     if (row.type === 'component' && rec && !rec.benchmark) {
       labelInner += ` <span class="bench-warn-badge" title="No benchmark recorded \u2014 changeout date may be unreliable. Add a benchmark (hrs) in the Data Editor.">\u26a0</span>`;
+    }
+    // v18.3 FIX-1 (operator-revised 2026-05-10) \u2014 inferred util_rate warning.
+    // When util_rate was missing on the source data and we inferred it from the unit-peer
+    // median (other components on the same machine that had explicit util_rate), flag the
+    // component so the operator knows the prediction is approximate. They can replace with
+    // an explicit util_rate via Data Editor for precision.
+    if (row.type === 'component' && rec && rec._util_rate_inferred) {
+      labelInner += ` <span class="util-warn-badge" title="util_rate inferred from peer components on this unit \u2014 set an explicit util_rate (hrs/day) in the Data Editor for a precise prediction.">\u24d8</span>`;
     }
     if (row.type === 'unit') {
       const unitRecs = state.data.filter(d => d.unit === row.unit);
@@ -6176,7 +6185,6 @@ function _initFromJSON(json) {
   let _fleetResolved = 0, _fleetUnassigned = 0;
   let _unitResolved = 0, _componentResolved = 0;
   let _changeoutDateMirrored = 0, _originalDateMirrored = 0;
-  let _utilRateDerived = 0;
   DATA.forEach(r => {
     // FLEET — resolve from fleet_id via masterData.fleets[] lookup
     if (_isMissing(r.fleet)) {
@@ -6219,66 +6227,55 @@ function _initFromJSON(json) {
       r.original_date = r.changeout_date_erp;
       _originalDateMirrored++;
     }
-    // UTIL_RATE per-component derivation (v18.3 FIX-1 expansion) — V5 may emit util_rate
-    // as null if the operator's XLSX didn't have a hrs/day column mapped during Intake BUILD.
-    // Without util_rate, BOTH the theoretical-date recompute (below) AND the multi-cycle
-    // Projections feature (line ~2008) silently skip the component. Derive util_rate
-    // empirically from operational history when explicit value is missing:
-    //     daysElapsed  = days from r.install_date to r.last_read
-    //     hoursUsed    = r.last_smu - r.install_hours
-    //     util_rate    ≈ hoursUsed / daysElapsed
-    // Only fires when all four source fields are present and produce a positive rate.
-    const _utilRateRaw = Number(r.util_rate || 0);
-    if (_utilRateRaw <= 0) {
-      const hu = Number(r.last_smu || 0) - Number(r.install_hours || 0);
-      if (hu > 0 && r.install_date && r.last_read) {
-        const t0 = new Date(r.install_date).getTime();
-        const t1 = new Date(r.last_read).getTime();
-        if (!isNaN(t0) && !isNaN(t1)) {
-          const days = (t1 - t0) / 86400000;
-          if (days > 0) {
-            r.util_rate = hu / days;
-            _utilRateDerived++;
-          }
-        }
-      }
-    }
+    // (util_rate is intentionally NOT derived from install_date / calendar elapsed time —
+    // operator-corrected 2026-05-10: "we do not work on Elapsed / used DAYS, only HRS".
+    // util_rate is a measured / set value (hrs/day). If missing, the component is undateable
+    // — same severity as missing benchmark. Unit-scoped median fallback applied below as the
+    // ONLY acceptable inference path; flagged with r._util_rate_inferred = true so the UI can
+    // surface a warning.)
   });
 
-  // UTIL_RATE fleet-median fallback (v18.3 FIX-1 final pass) — for components where per-component
-  // derivation failed (missing install_date, etc.), apply the median util_rate of OTHER components
-  // in the same fleet that DO have a valid util_rate. Reasonable for mining fleets where units
-  // in the same fleet operate on similar shifts. Only fires when at least 3 fleet siblings have
-  // util_rate set (avoids false confidence on tiny data). Logged separately so operator knows
-  // which components got fleet-median fallback (less precise than per-component derivation).
-  const _fleetRates = {};
+  // UTIL_RATE unit-median fallback (v18.3 FIX-1 — operator-revised 2026-05-10).
+  // Operator-correction: "agree with median for OTHER COMPONENTS ON A MACHINE [unit] but
+  // still a warning (inferred)". Original fleet-median was too coarse — units in the same
+  // fleet may operate on different shifts. Unit-scoped median is the right granularity:
+  // components on BD203 (a specific dozer) share the same daily operating hours regardless
+  // of category, so a peer component's util_rate is a reasonable estimate for a sibling
+  // missing its own value.
+  // Rules:
+  //   • Only apply when at least 2 sibling components on the same unit have explicit util_rate
+  //   • Mark r._util_rate_inferred = true so downstream UI (component label / tooltip) can warn
+  //   • Operator-set util_rate ALWAYS wins (these are not touched)
+  //   • Components on units where NO siblings have util_rate remain undateable — no false data
+  const _unitRates = {};
   DATA.forEach(r => {
     const ur = Number(r.util_rate || 0);
-    if (ur > 0 && r.fleet) {
-      if (!_fleetRates[r.fleet]) _fleetRates[r.fleet] = [];
-      _fleetRates[r.fleet].push(ur);
+    if (ur > 0 && r.unit && !r._util_rate_inferred) {  // explicit (non-inferred) values only
+      if (!_unitRates[r.unit]) _unitRates[r.unit] = [];
+      _unitRates[r.unit].push(ur);
     }
   });
-  const _fleetMedians = {};
-  Object.keys(_fleetRates).forEach(fleet => {
-    const rates = _fleetRates[fleet];
-    if (rates.length >= 3) {
+  const _unitMedians = {};
+  Object.keys(_unitRates).forEach(unit => {
+    const rates = _unitRates[unit];
+    if (rates.length >= 2) {
       const sorted = rates.slice().sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
-      _fleetMedians[fleet] = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+      _unitMedians[unit] = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
     }
   });
-  let _utilRateFleetMedian = 0;
+  let _utilRateInferred = 0;
   DATA.forEach(r => {
     const ur = Number(r.util_rate || 0);
-    if (ur <= 0 && r.fleet && _fleetMedians[r.fleet] != null) {
-      r.util_rate = _fleetMedians[r.fleet];
-      _utilRateFleetMedian++;
+    if (ur <= 0 && r.unit && _unitMedians[r.unit] != null) {
+      r.util_rate = _unitMedians[r.unit];
+      r._util_rate_inferred = true;     // FLAG — downstream UI surfaces a warning
+      _utilRateInferred++;
     }
   });
 
-  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved + _changeoutDateMirrored + _originalDateMirrored + _utilRateDerived + _utilRateFleetMedian > 0)) {
-    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name; changeout_date ${_changeoutDateMirrored} mirrored from changeout_date_erp; original_date ${_originalDateMirrored} mirrored from changeout_date_erp; util_rate ${_utilRateDerived} derived per-component + ${_utilRateFleetMedian} from fleet median.`);
+  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved + _changeoutDateMirrored + _originalDateMirrored + _utilRateInferred > 0)) {
+    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name; changeout_date ${_changeoutDateMirrored} mirrored from changeout_date_erp; original_date ${_originalDateMirrored} mirrored from changeout_date_erp; util_rate ${_utilRateInferred} inferred from unit-peer median (marked _util_rate_inferred).`);
   }
 
   // Projections-readiness diagnostic — counts components that WOULD render projection diamonds
@@ -6286,20 +6283,28 @@ function _initFromJSON(json) {
   // expects to see hollow forecast diamonds but doesn't. Exposed on window so operator can re-run
   // anytime in DevTools: _diagnoseProjections() in the console.
   window._diagnoseProjections = function () {
-    let renderable = 0, missBenchmark = 0, missUtilRate = 0, missChangeoutDate = 0;
+    let renderable = 0, renderableExplicit = 0, renderableInferred = 0;
+    let missBenchmark = 0, missUtilRate = 0, missChangeoutDate = 0;
     const missSamples = [];
+    const inferredSamples = [];
     DATA.forEach(r => {
       if (!(Number(r.benchmark) > 0)) { missBenchmark++; if (missSamples.length < 10) missSamples.push({ id: r.id, unit: r.unit, component: r.component, reason: 'no benchmark' }); return; }
-      if (!(Number(r.util_rate) > 0)) { missUtilRate++; if (missSamples.length < 10) missSamples.push({ id: r.id, unit: r.unit, component: r.component, reason: 'no util_rate', fleet: r.fleet, install_date: r.install_date || '(missing)', last_read: r.last_read || '(missing)' }); return; }
+      if (!(Number(r.util_rate) > 0)) { missUtilRate++; if (missSamples.length < 10) missSamples.push({ id: r.id, unit: r.unit, component: r.component, reason: 'no util_rate', fleet: r.fleet, install_hours: r.install_hours, last_smu: r.last_smu, last_read: r.last_read || '(missing)' }); return; }
       if (!r.changeout_date) { missChangeoutDate++; if (missSamples.length < 10) missSamples.push({ id: r.id, unit: r.unit, component: r.component, reason: 'no changeout_date' }); return; }
       renderable++;
+      if (r._util_rate_inferred) { renderableInferred++; if (inferredSamples.length < 10) inferredSamples.push({ id: r.id, unit: r.unit, component: r.component, util_rate: r.util_rate }); }
+      else                       { renderableExplicit++; }
     });
-    console.log(`Projections diagnostic: ${renderable} components renderable; skipped: ${missBenchmark} no benchmark, ${missUtilRate} no util_rate, ${missChangeoutDate} no changeout_date.`);
+    console.log(`Projections diagnostic: ${renderable} components renderable (${renderableExplicit} with explicit util_rate, ${renderableInferred} with inferred unit-peer util_rate); skipped: ${missBenchmark} no benchmark, ${missUtilRate} no util_rate, ${missChangeoutDate} no changeout_date.`);
     if (missSamples.length) {
-      console.log('Sample skip reasons (first 10):');
+      console.log('Sample skip reasons (first 10) — these components need explicit util_rate via Data Editor:');
       console.table(missSamples);
     }
-    return { renderable, missBenchmark, missUtilRate, missChangeoutDate, samples: missSamples };
+    if (inferredSamples.length) {
+      console.log('Sample inferred util_rates (first 10) — these components got peer-median estimates; replace via Data Editor for precision:');
+      console.table(inferredSamples);
+    }
+    return { renderable, renderableExplicit, renderableInferred, missBenchmark, missUtilRate, missChangeoutDate, samples: missSamples, inferredSamples: inferredSamples };
   };
 
   // Recompute timeline start from actual loaded data (initial cache ran before DATA was populated,
