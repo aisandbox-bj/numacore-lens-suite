@@ -740,7 +740,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.3';
+const VERSION = '8.4';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -815,7 +815,14 @@ const AUTO_MAP_RULES = [
   [/exchange\s*part/i,                                           'hist_exchange_part'],
 ];
 
-// Category auto-detection from component name
+// v8.4 (Chunk 5 / Slide 6) — category auto-detection delegated to
+// numacore_lib v1.4.0+. The lib owns the canonical vocabulary
+// (engine, drivetrain, geared_drives, drill_rotary, hydraulics, cylinders,
+// undercarriage, attachments, misc), the synonym table (tracks → undercarriage,
+// drill_swing → drill_rotary, etc.), and the keyword-inference fallback that
+// produces a category from a component name. Local COMP_CATEGORIES table
+// retained verbatim as a fallback for the unusual case where the lib fails
+// to load (file:// dev / unusual deploy contexts).
 const COMP_CATEGORIES = {
   engine:       ['engine', 'turbo', 'radiator', 'cooler', 'fuel pump', 'starting motor', 'motor engine', 'emissions'],
   drivetrain:   ['transmission', 'torque', 'differential', 'drive shaft', 'drop box', 'gear box', 'gearbox', 'bevel', 'transfer', 'wheel', 'brake', 'axle'],
@@ -828,6 +835,12 @@ const COMP_CATEGORIES = {
 };
 
 function categorizeComponent(name) {
+  // Delegate to the lib's canonicalCategory() — passes no raw category so
+  // the lib runs keyword inference from name and falls back to 'misc'.
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.canonicalCategory === 'function') {
+    return window.NumaCoreLib.canonicalCategory(null, name);
+  }
+  // Local fallback (lib not loaded)
   const lower = (name || '').toLowerCase();
   for (const [cat, keywords] of Object.entries(COMP_CATEGORIES)) {
     if (keywords.some(kw => lower.includes(kw))) return cat;
@@ -1444,7 +1457,15 @@ function processMapping() {
   const utilMap = {};       // unit_id → util rate
 
   dataRows.forEach(row => {
-    const unit_id  = String(getVal(row, 'unit_id') || '').trim();
+    // v8.4 (Chunk 5 / Slide 6) — Sort Field CAPS rule routed through
+    // NumaCoreLib.normaliseSortField() at the BUILD-mode read boundary.
+    // Was `.trim()` only — XLSX data with mixed case (e.g. "ex401") would
+    // flow downstream as-is and risk case-sensitive mismatches against
+    // already-uppercased Cadence/Lens reads. Local fallback retained.
+    const _rawUnitId = String(getVal(row, 'unit_id') || '').trim();
+    const unit_id    = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
+                         ? window.NumaCoreLib.normaliseSortField(_rawUnitId)
+                         : _rawUnitId.toUpperCase();
     if (!unit_id) return;
 
     const fleet_type  = String(getVal(row, 'fleet_type') || 'UNKNOWN').trim();
@@ -2078,6 +2099,29 @@ function setExportPreview(format) {
 function exportJSON(format) {
   const json = (format === 'v5') ? buildFleetJSONv5() : buildFleetJSON();
   const clientCode = json.meta.clientCode || 'CLIENT';
+  // v8.4 (Chunk 5 / Slide 6) — pre-export category audit. Count components
+  // whose category is OUTSIDE the canonical set (incl. unmatched -> 'misc').
+  // If any unrecognised values are about to be written, surface a quiet
+  // info toast so the operator can review in Step 3 before committing.
+  // This is a no-op for fresh builds (categorizeComponent always returns
+  // canonical), but catches manual edits or external/import sources that
+  // injected non-canonical values into state.components.
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.canonicalCategory === 'function') {
+    const _components = (json.masterData && json.masterData.components) || json.components || [];
+    const _unknown = [];
+    _components.forEach(c => {
+      const raw = c.category;
+      const canon = window.NumaCoreLib.canonicalCategory(raw, c.name || c.component);
+      if (raw && String(raw) !== canon) _unknown.push({ raw: String(raw), canonical: canon, name: c.name || c.component });
+    });
+    if (_unknown.length > 0) {
+      const _uniqueRaw = [...new Set(_unknown.map(u => u.raw))].sort();
+      console.table(_unknown.slice(0, 25));
+      try {
+        window.NumaCoreLib.showToast(`${_unknown.length} components had non-canonical categories (${_uniqueRaw.slice(0, 4).join(', ')}${_uniqueRaw.length > 4 ? '…' : ''}) — see console table`, 'info', 4000);
+      } catch(e) { console.warn('Pre-export category audit toast failed:', e); }
+    }
+  }
   // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
   // Suffix encodes the format so a v5 export and a v17/v4-flat export of the
   // same client/timestamp don't collide on disk. Falls back to legacy
@@ -4282,12 +4326,12 @@ function commitConmonSamples() {
   // Shape each sample record for output.
   // sample_id includes location so LH and RH final drives are distinct keys.
   const newRecords = state.conmonSamples.map(s => ({
-    sample_id:    s.sample_num || `${(s.unit_id || '').toUpperCase()}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`,
-    // FIX-1 (2026-05-10) — operator rule: Sort Field (machine ID) must always be CAPS.
-    // Was `.toLowerCase()` — caused 0/15 strict-match join in Lens against
-    // masterData.units[].id (which is uppercase). Synthetic sample_id fallback
-    // also uppercased above for consistency.
-    unit_id:      (s.unit_id || '').toUpperCase(),
+    // v8.4 (Chunk 5 / Slide 6) — Sort Field CAPS rule routed through
+    // NumaCoreLib.normaliseSortField() so the cross-tool helper owns the
+    // transformation. Same effect as the v8.1 FIX-1 inline `.toUpperCase()`;
+    // local fallback retained for resilience if the lib fails to load.
+    sample_id:    s.sample_num || `${(window.NumaCoreLib && window.NumaCoreLib.normaliseSortField) ? window.NumaCoreLib.normaliseSortField(s.unit_id) : (s.unit_id || '').toUpperCase()}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`,
+    unit_id:      (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField) ? window.NumaCoreLib.normaliseSortField(s.unit_id) : (s.unit_id || '').toUpperCase(),
     scope:        s.is_coolant ? 'system' : 'component',
     target:       (s.component_name_pdf || '').toLowerCase(),
     location:     s.location || '',

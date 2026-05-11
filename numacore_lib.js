@@ -15,6 +15,15 @@
  *   showToast()   — CPT v17:2299 (extended with severity)
  *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
  *
+ * Version 1.4.0 — Chunk 5 (Slide 6) adds cross-tool category vocabulary
+ *   unification + cross-tool Sort Field CAPS rule:
+ *     canonicalCategory, categoryLabel, categoryColor, CATEGORY_SYNONYMS,
+ *     normaliseSortField.
+ *   Canonical set: engine, drivetrain, geared_drives, drill_rotary,
+ *   hydraulics, cylinders, undercarriage, attachments, misc.
+ *   Legacy aliases tracks→undercarriage and drill_swing→drill_rotary are
+ *   normalised at read time so cross-tool data stays consistent regardless
+ *   of which tool wrote it.
  * Version 1.3.0 — Chunk 3 (Slide 8) adds per-client settings helpers:
  *   getClientSettings, getClientTZ, fmtMoney, fmtTime + DEFAULT_CURRENCY +
  *   DEFAULT_LOCALE. Defaults are CAD / America/Edmonton / en-CA. Settings
@@ -28,7 +37,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.3.0';
+  var VERSION = '1.4.0';
   var DEFAULT_TZ = 'America/Edmonton';   // Mountain Time (Canada)
   var DEFAULT_CURRENCY = 'CAD';          // Canadian dollar — Chunk 3 (Slide 8) operator decision 2026-05-10
   var DEFAULT_LOCALE = 'en-CA';          // Canadian English — Chunk 3 (Slide 8) operator decision 2026-05-10
@@ -729,6 +738,201 @@
     }
   }
 
+  // ═════════════════════════════════════════════════════════════
+  // CATEGORY VOCABULARY  (Chunk 5 / Slide 6 — single source of truth)
+  // ═════════════════════════════════════════════════════════════
+  //
+  // Canonical set (9 keys). Matches Intake's source-of-truth vocabulary so
+  // freshly-built fleets land on canonical keys without translation. Legacy
+  // values from older Cadence builds (tracks, drill_swing) are normalised at
+  // read time via CATEGORY_SYNONYMS.
+  //
+  //   engine          drivetrain      geared_drives
+  //   drill_rotary    hydraulics      cylinders
+  //   undercarriage   attachments     misc
+  //
+  // Operator-locked vocabulary winner (2026-05-10): undercarriage (NOT tracks).
+  // drill_rotary chosen to match Intake's existing keyword group.
+
+  var CATEGORY_CANONICAL = {
+    engine: true, drivetrain: true, geared_drives: true,
+    drill_rotary: true, hydraulics: true, cylinders: true,
+    undercarriage: true, attachments: true, misc: true
+  };
+
+  // Legacy / alternative spellings → canonical key.
+  // Lookup is case-insensitive; non-alphanumerics are normalised to '_'.
+  var CATEGORY_SYNONYMS = {
+    // legacy Cadence COLORS/LABELS keys
+    tracks: 'undercarriage',
+    track: 'undercarriage',
+    drill_swing: 'drill_rotary',
+    drill: 'drill_rotary',
+    rotary: 'drill_rotary',
+    swing: 'drill_rotary',
+    // common operator phrasings (matches Lens' free-text categories)
+    miscellaneous: 'misc',
+    other: 'misc',
+    // explicit canonical aliases (defensive — same in, same out)
+    engine: 'engine',
+    drivetrain: 'drivetrain',
+    geared_drives: 'geared_drives',
+    final_drive: 'geared_drives',
+    final_drives: 'geared_drives',
+    drill_rotary: 'drill_rotary',
+    hydraulics: 'hydraulics',
+    hydraulic: 'hydraulics',
+    cylinders: 'cylinders',
+    cylinder: 'cylinders',
+    undercarriage: 'undercarriage',
+    attachments: 'attachments',
+    attachment: 'attachments',
+    misc: 'misc'
+  };
+
+  // Keyword inference fallback when rawCategory is missing/unknown.
+  // Ordered: first match wins. Mirrors Intake's COMP_CATEGORIES intent so a
+  // component name like "Engine Cooler" canonicalises to 'engine' even with
+  // no upstream category value.
+  var CATEGORY_KEYWORDS = [
+    { cat: 'engine',        kws: ['engine', 'turbo', 'radiator', 'cooler', 'fuel pump', 'starting motor', 'motor engine', 'emissions'] },
+    { cat: 'drivetrain',    kws: ['transmission', 'torque', 'differential', 'drive shaft', 'drop box', 'gear box', 'gearbox', 'bevel', 'transfer', 'wheel', 'brake', 'axle'] },
+    { cat: 'geared_drives', kws: ['final drive', 'swing drive', 'pump drive'] },
+    { cat: 'drill_rotary',  kws: ['drill', 'rotary', 'drifter', 'rock drill', 'feed', 'boom sbr', 'precussion'] },
+    { cat: 'hydraulics',    kws: ['pump', 'motor', 'hydraulic', 'swing motor', 'travel motor', 'track motor', 'pilot'] },
+    { cat: 'cylinders',     kws: ['cylinder', 'cyl '] },
+    { cat: 'undercarriage', kws: ['track', 'idler', 'roller', 'sprocket', 'undercarriage', 'adjuster', 'tensioner'] },
+    { cat: 'attachments',   kws: ['bucket', 'blade', 'ripper', 'edge', 'cutting edge', 'wear'] }
+  ];
+
+  var CATEGORY_LABELS = {
+    engine:         'Engine / Cooling',
+    drivetrain:     'Drivetrain',
+    geared_drives:  'Geared Drives / Final Drive',
+    drill_rotary:   'Drill / Rotary / Swing',
+    hydraulics:     'Hydraulic Pumps',
+    cylinders:      'Cylinders / Suspension',
+    undercarriage:  'Undercarriage',
+    attachments:    'Attachments / Blades',
+    misc:           'Miscellaneous'
+  };
+
+  // Cadence-derived palette (preserves visual continuity from v18.3 onward).
+  var CATEGORY_COLORS = {
+    engine:         '#F87171',
+    drivetrain:     '#FB923C',
+    geared_drives:  '#FBBF24',
+    drill_rotary:   '#22D3EE',
+    hydraulics:     '#60A5FA',
+    cylinders:      '#A78BFA',
+    undercarriage:  '#34D399',
+    attachments:    '#F472B6',
+    misc:           '#94A3B8'
+  };
+
+  function _normCatKey(s) {
+    return String(s == null ? '' : s)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '');
+  }
+
+  /**
+   * Resolve any incoming category value to a canonical key.
+   *
+   *   rawCategory:   the .category field from a component record (or null/undefined)
+   *   componentName: the component name (used for keyword inference if rawCategory
+   *                  is blank or doesn't resolve)
+   *   opts.synonyms: optional extra synonym map (e.g. from clientSettings.categorySynonyms)
+   *                  merged ON TOP of the suite synonym table for per-client overrides.
+   *
+   * Returns one of the 9 canonical keys; never returns null or empty string.
+   *
+   * Examples:
+   *   canonicalCategory('tracks')                 → 'undercarriage'
+   *   canonicalCategory('Tracks / Running Gear')  → 'undercarriage' (matches 'tracks')
+   *   canonicalCategory(null, 'Front Track Frame') → 'undercarriage' (keyword inference)
+   *   canonicalCategory('something weird')        → 'misc'
+   *   canonicalCategory('')                       → 'misc'
+   */
+  function canonicalCategory(rawCategory, componentName, opts) {
+    var key = _normCatKey(rawCategory);
+    var extraSyns = (opts && opts.synonyms) || null;
+
+    // 1. Direct canonical match
+    if (key && CATEGORY_CANONICAL[key]) return key;
+
+    // 2. Synonym (client-override beats suite default)
+    if (key) {
+      if (extraSyns && extraSyns[key] && CATEGORY_CANONICAL[extraSyns[key]]) return extraSyns[key];
+      if (CATEGORY_SYNONYMS[key])                                            return CATEGORY_SYNONYMS[key];
+    }
+
+    // 3. Try the human-readable label as a synonym lookup (e.g. "Tracks / Running Gear"
+    //    → split on non-alpha, scan tokens for synonym matches).
+    if (key) {
+      var tokens = key.split('_').filter(Boolean);
+      for (var i = 0; i < tokens.length; i++) {
+        var t = tokens[i];
+        if (CATEGORY_CANONICAL[t]) return t;
+        if (CATEGORY_SYNONYMS[t])  return CATEGORY_SYNONYMS[t];
+      }
+    }
+
+    // 4. Keyword inference from component name
+    var nameLower = String(componentName == null ? '' : componentName).toLowerCase();
+    if (nameLower) {
+      for (var j = 0; j < CATEGORY_KEYWORDS.length; j++) {
+        var entry = CATEGORY_KEYWORDS[j];
+        for (var k = 0; k < entry.kws.length; k++) {
+          if (nameLower.indexOf(entry.kws[k]) !== -1) return entry.cat;
+        }
+      }
+    }
+
+    // 5. Default
+    return 'misc';
+  }
+
+  /** Human-readable label for a canonical category key (e.g. 'undercarriage' → 'Undercarriage'). */
+  function categoryLabel(canonicalKey) {
+    var key = _normCatKey(canonicalKey);
+    if (CATEGORY_LABELS[key]) return CATEGORY_LABELS[key];
+    // Defensive: if caller passes a raw legacy value, canonicalise first.
+    var c = canonicalCategory(canonicalKey, null);
+    return CATEGORY_LABELS[c] || CATEGORY_LABELS.misc;
+  }
+
+  /** Colour token for a canonical category key. Returns the misc colour for unknown keys. */
+  function categoryColor(canonicalKey) {
+    var key = _normCatKey(canonicalKey);
+    if (CATEGORY_COLORS[key]) return CATEGORY_COLORS[key];
+    var c = canonicalCategory(canonicalKey, null);
+    return CATEGORY_COLORS[c] || CATEGORY_COLORS.misc;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SORT FIELD NORMALISATION  (Chunk 5 / Slide 6 — cross-tool CAPS rule)
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Normalise a Sort Field / machine ID to the operator's "always CAPS" rule.
+   * Trims whitespace; uppercases ASCII letters; preserves digits, dashes,
+   * underscores, and dots. Safe on null/undefined (returns '').
+   *
+   * Examples:
+   *   normaliseSortField('ex401')      → 'EX401'
+   *   normaliseSortField('  bd-203 ')  → 'BD-203'
+   *   normaliseSortField(null)         → ''
+   *
+   * Use at WRITE boundaries (ConMon import, Excel ingest, manual edits) so the
+   * suite's downstream readers all see a consistent CAPS-only value.
+   */
+  function normaliseSortField(rawId) {
+    if (rawId == null) return '';
+    return String(rawId).trim().toUpperCase();
+  }
+
   // ─────────────────────────────────────────────────────────────
   // EXPORT
   // ─────────────────────────────────────────────────────────────
@@ -753,6 +957,14 @@
     DEFAULT_CURRENCY: DEFAULT_CURRENCY,
     DEFAULT_TZ: DEFAULT_TZ,
     DEFAULT_LOCALE: DEFAULT_LOCALE,
+    // Chunk 5 (Slide 6) — cross-tool category vocabulary + Sort Field CAPS rule
+    canonicalCategory: canonicalCategory,
+    categoryLabel: categoryLabel,
+    categoryColor: categoryColor,
+    CATEGORY_SYNONYMS: CATEGORY_SYNONYMS,
+    CATEGORY_LABELS: CATEGORY_LABELS,
+    CATEGORY_COLORS: CATEGORY_COLORS,
+    normaliseSortField: normaliseSortField,
     VERSION: VERSION
   };
 })();

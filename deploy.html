@@ -944,7 +944,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.6';   // single source of truth for tool version
+const VERSION = '8.7';   // single source of truth for tool version
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -2483,9 +2483,16 @@ function renderProjOverview(id) {
     const schedCo  = (c.changeout_date || c.scheduledChangeout) ? fmtDate(c.changeout_date || c.scheduledChangeout) : '—';
     const costStr  = cost > 0 ? '$' + cost.toLocaleString() : '—';
 
+    // v8.7 (Chunk 5 / Slide 6 audit) — category display routed through
+    // NumaCoreLib.categoryLabel() so Deploy renders the suite-consistent
+    // human label (e.g. "Undercarriage" for raw 'undercarriage'/'tracks').
+    // Falls back to the raw value if the lib isn't loaded.
+    const _catDisplay = (window.NumaCoreLib && typeof window.NumaCoreLib.categoryLabel === 'function' && c.category)
+      ? window.NumaCoreLib.categoryLabel(c.category)
+      : (c.category || '—');
     return `<tr>
       <td>${esc(c.component || c.name || '—')}</td>
-      <td>${esc(c.category || '—')}</td>
+      <td>${esc(_catDisplay)}</td>
       <td>${instDate}</td>
       <td style="text-align:right">${instSmu > 0 ? instSmu.toLocaleString() : '—'}</td>
       <td style="text-align:right">${currSmuHtml}</td>

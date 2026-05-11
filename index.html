@@ -2046,7 +2046,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.1';
+const VERSION = '4.2';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -3818,7 +3818,14 @@ function buildFleetData(json) {
       original_date:        c.original_date,
       last_smu:             c.last_smu,
       last_read:            c.last_read,
-      category:             c.category,
+      // v4.2 (Chunk 5 / Slide 6) — canonicalise category via numacore_lib v1.4.0+.
+      // Legacy values (tracks → undercarriage, drill_swing → drill_rotary, free-text
+      // "Undercarriage" / "Miscellaneous" from operator-categorised data) all resolve
+      // to canonical keys here so cross-tool screens (Vitals heatmap, Pulse stats)
+      // group components consistently with Cadence and Intake.
+      category:             (window.NumaCoreLib && window.NumaCoreLib.canonicalCategory)
+                              ? window.NumaCoreLib.canonicalCategory(c.category, c.component || c.name)
+                              : (c.category || 'misc'),
       cost:                 c.cost,
       part_number:          c.part_number,
       mm_number:            c.mm_number,
@@ -4196,9 +4203,15 @@ function _scGetFleetCompsByCategory(fleet) {
   Object.keys(cats).sort().forEach(function(cat) { result[cat] = Object.keys(cats[cat]).sort(); });
   return result;
 }
-// v3.8 cat-patch — human-readable label for raw category keys (e.g. geared_drives → Geared Drives)
+// v4.2 (Chunk 5 / Slide 6) — human-readable label for canonical category keys.
+// Prefers numacore_lib v1.4.0+ categoryLabel() (suite-consistent richer phrasing
+// like "Geared Drives / Final Drive"); falls back to the v3.8 cat-patch
+// title-case transform if the lib isn't available.
 function _catLabel(cat) {
-  return cat.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.categoryLabel === 'function') {
+    return window.NumaCoreLib.categoryLabel(cat);
+  }
+  return (cat || '').replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
 }
 function _scMakeCb(checked, indeterminate, onChange) {
   var cb = document.createElement('input');

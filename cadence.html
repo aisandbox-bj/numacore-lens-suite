@@ -1205,19 +1205,17 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 <script>
 let DATA = [];  // populated from JSON data file
 let HIST = [];  // componentHistory[] — loaded from JSON via _initFromJSON; populated by Import History from Excel
-const COLORS = {"engine":"#F87171","drivetrain":"#FB923C","geared_drives":"#FBBF24","hydraulics":"#60A5FA","cylinders":"#A78BFA","tracks":"#34D399","drill_swing":"#22D3EE","attachments":"#F472B6","misc":"#94A3B8"};
-const LABELS = {"engine":"Engine / Cooling","drivetrain":"Drivetrain","geared_drives":"Geared Drives / Final Drive","hydraulics":"Hydraulic Pumps","cylinders":"Cylinders / Suspension","tracks":"Tracks / Running Gear","drill_swing":"Drill / Swing / Rotary","attachments":"Attachments / Blades","misc":"Miscellaneous"};
-// FIX-2 (2026-05-10) — misc-fallback safety patch. Components with categories
-// outside the COLORS allowlist (e.g. 'Undercarriage' from Lens-categorised data)
-// were being silently dropped at filter-check sites. This helper makes them
-// fall back to 'misc' for filter purposes ONLY — r.category itself is never
-// mutated, so the original value is preserved on round-trip save. Coordinated
-// vocabulary unification (lib v1.3.0 + Cadence v18.2 + Lens v4.2 + Intake v8.2
-// + Deploy v8.7) is the proper fix; this patch keeps operator's components
-// visible in the meantime.
-function _categoryForFilter(rawCat) {
-  return COLORS[rawCat] ? rawCat : 'misc';
-}
+// v18.4 (Chunk 5 / Slide 6) — vocabulary unified across the suite. Canonical
+// keys come from numacore_lib.js v1.4.0+ via canonicalCategory(). Legacy
+// values (tracks, drill_swing, Title-cased "Undercarriage" from operator
+// data) are normalised at _initFromJSON time so downstream code can use
+// these dictionaries directly without any per-site fallback wrap.
+//
+// COLORS and LABELS are sourced from the lib so future palette/label tweaks
+// land in one place and all suite tools stay in sync. Local fallback retained
+// in case the lib fails to load (file:// dev / unusual deploy contexts).
+const COLORS = (window.NumaCoreLib && window.NumaCoreLib.CATEGORY_COLORS) || {"engine":"#F87171","drivetrain":"#FB923C","geared_drives":"#FBBF24","drill_rotary":"#22D3EE","hydraulics":"#60A5FA","cylinders":"#A78BFA","undercarriage":"#34D399","attachments":"#F472B6","misc":"#94A3B8"};
+const LABELS = (window.NumaCoreLib && window.NumaCoreLib.CATEGORY_LABELS) || {"engine":"Engine / Cooling","drivetrain":"Drivetrain","geared_drives":"Geared Drives / Final Drive","drill_rotary":"Drill / Rotary / Swing","hydraulics":"Hydraulic Pumps","cylinders":"Cylinders / Suspension","undercarriage":"Undercarriage","attachments":"Attachments / Blades","misc":"Miscellaneous"};
 const TODAY  = new Date();   // live system clock — advances each day
 const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7 MDT / UTC-6 MST)
 
@@ -1239,7 +1237,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18';               // single source of truth for version-scoped keys
+const VERSION  = '18.4';             // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1723,7 +1721,7 @@ function todayX() {
 function buildHierarchy() {
   const h = {};
   state.data.forEach(r => {
-    if (!state.filterCats.has(_categoryForFilter(r.category))) return;   // FIX-2: misc-fallback safety
+    if (!state.filterCats.has(r.category)) return;
     if (state.filterFleets.size && !state.filterFleets.has(r.fleet)) return;
     if (!h[r.fleet]) h[r.fleet] = {};
     if (!h[r.fleet][r.model]) h[r.fleet][r.model] = {};
@@ -4023,7 +4021,7 @@ const resState = { mode: 'components', projectsWeeks: 24 };
 function getFilteredData() {
   const fleetSearch = (state.searchFilters.fleet || '').trim().toLowerCase();
   return state.data.filter(r => {
-    if (!state.filterCats.has(_categoryForFilter(r.category))) return false;   // FIX-2: misc-fallback safety
+    if (!state.filterCats.has(r.category)) return false;
     if (state.filterFleets.size && !state.filterFleets.has(r.fleet)) return false;
     if (fleetSearch && !r.fleet.toLowerCase().includes(fleetSearch)) return false;
     return true;
@@ -4776,7 +4774,7 @@ function showPeriodDetail(hitArea, clientX, clientY) {
   const monthRecs = state.data.filter(r => {
     const d = new Date(r.changeout_date + 'T00:00:00');
     if (d < p.start || d >= p.end) return false;
-    if (!state.filterCats.has(_categoryForFilter(r.category))) return false;   // FIX-2: misc-fallback safety
+    if (!state.filterCats.has(r.category)) return false;
     if (state.filterFleets.size && !state.filterFleets.has(r.fleet)) return false;
     return true;
   });
@@ -4814,7 +4812,7 @@ function showMonthDetail(hitArea, clientX, clientY) {
   const monthRecs = state.data.filter(r => {
     const d = new Date(r.changeout_date + 'T00:00:00');
     if (d.getFullYear() !== m.year || d.getMonth() !== m.month) return false;
-    if (!state.filterCats.has(_categoryForFilter(r.category))) return false;   // FIX-2: misc-fallback safety
+    if (!state.filterCats.has(r.category)) return false;
     if (state.filterFleets.size && !state.filterFleets.has(r.fleet)) return false;
     return true;
   });
@@ -5367,9 +5365,11 @@ function _abRunClustering() {
   _ab.undercarriageCondBased = undercarriageCondBased;
 
   // Helper: is this component condition-based for this run?
+  // v18.4 — category compared against canonical 'undercarriage' (was 'tracks').
+  // Post-_initFromJSON, every r.category is guaranteed canonical via canonicalCategory().
   const isCondBased = r =>
     (cylindersCondBased     && r.category === 'cylinders') ||
-    (undercarriageCondBased && r.category === 'tracks');
+    (undercarriageCondBased && r.category === 'undercarriage');
 
   // All units currently linked to existing projects (for conflict detection)
   const linkedIds     = new Set(state.projects.flatMap(p => p.linkedIds));
@@ -5748,14 +5748,15 @@ function renderAutoBuildPreview() {
     const chipsWrap = document.createElement('div');
     chipsWrap.style.marginTop = '6px';
 
+    // v18.4 — category compared against canonical 'undercarriage' (was 'tracks').
     const usageComps = cluster.components.filter(c =>
       !(_ab.cylindersCondBased     && c.category === 'cylinders') &&
-      !(_ab.undercarriageCondBased && c.category === 'tracks')
+      !(_ab.undercarriageCondBased && c.category === 'undercarriage')
     );
-    const cylComps   = _ab.cylindersCondBased     ? cluster.components.filter(c => c.category === 'cylinders') : [];
-    const trackComps = _ab.undercarriageCondBased ? cluster.components.filter(c => c.category === 'tracks')    : [];
+    const cylComps   = _ab.cylindersCondBased     ? cluster.components.filter(c => c.category === 'cylinders')     : [];
+    const trackComps = _ab.undercarriageCondBased ? cluster.components.filter(c => c.category === 'undercarriage') : [];
     const otherCondComps = cluster.components.filter(c =>
-      c.category !== 'cylinders' && c.category !== 'tracks' &&
+      c.category !== 'cylinders' && c.category !== 'undercarriage' &&
       (_ab.cylindersCondBased || _ab.undercarriageCondBased) &&
       cluster.excludedComps && cluster.excludedComps.has(c.id)
     );
@@ -6257,6 +6258,24 @@ function _initFromJSON(json) {
     // — same severity as missing benchmark. Unit-scoped median fallback applied below as the
     // ONLY acceptable inference path; flagged with r._util_rate_inferred = true so the UI can
     // surface a warning.)
+
+    // v18.4 (Chunk 5 / Slide 6) — CATEGORY CANONICALIZATION. Every r.category is
+    // normalised to the canonical vocabulary (engine, drivetrain, geared_drives,
+    // drill_rotary, hydraulics, cylinders, undercarriage, attachments, misc).
+    // Legacy values (tracks → undercarriage, drill_swing → drill_rotary,
+    // Title-cased "Undercarriage" from operator-categorised data) all resolve
+    // here. Downstream code (filter sites, COLORS / LABELS lookups, AutoBuild
+    // condition-based logic) treats r.category as canonical from this point on.
+    // r._origCategory preserves the raw incoming value so the diagnostic toast
+    // can show operators what their data originally said for any unrecognised
+    // entries that fell through to 'misc'. Falls back to keyword inference
+    // from r.component / r.name if the raw category is unknown; defaults to 'misc'.
+    r._origCategory = r.category;
+    if (window.NumaCoreLib && typeof window.NumaCoreLib.canonicalCategory === 'function') {
+      r.category = window.NumaCoreLib.canonicalCategory(r.category, r.component || r.name);
+    } else if (!r.category) {
+      r.category = 'misc';   // local fallback when lib not loaded
+    }
   });
 
   // UTIL_RATE unit-median fallback (v18.3 FIX-1 — operator-revised 2026-05-10).
@@ -6561,18 +6580,21 @@ function _initFromJSON(json) {
   const client = _meta.clientName || _meta.clientCode || 'fleet data';
   showToast(`Loaded ${DATA.length} components from ${client}`);
 
-  // FIX-2 (2026-05-10) — surface misc-fallback rescue. Count components whose
-  // category isn't in the COLORS allowlist; they'll render under Misc thanks to
-  // _categoryForFilter at the four filter-check sites. Previously these were
-  // silently dropped from tree/schedule/optimiser/resource view. Coordinated
-  // vocabulary unification will eliminate the rescue need entirely.
-  const _miscRescued = DATA.filter(r => r.category && !COLORS[r.category]);
-  if (_miscRescued.length > 0) {
-    const _uniqueCats = [...new Set(_miscRescued.map(r => r.category))].sort();
+  // v18.4 (Chunk 5 / Slide 6) — FIX-2 misc-fallback rescue REMOVED. Categories
+  // are now canonicalised at the DATA.forEach pass above (via
+  // NumaCoreLib.canonicalCategory). Any component whose raw category was
+  // outside the canonical set is now mapped to a canonical key — no silent
+  // drop, no misc-rescue band-aid required. Counts the post-canonicalization
+  // fall-throughs to 'misc' from non-blank inputs and surfaces a quiet
+  // diagnostic toast — non-blocking, gives the operator confidence that the
+  // synonym map covered their data.
+  const _normalised = DATA.filter(r => r.category === 'misc' && r._origCategory && r._origCategory.toLowerCase() !== 'misc');
+  if (_normalised.length > 0) {
     setTimeout(() => {
       try {
-        showToast(`⚠ ${_miscRescued.length} components have non-standard categories (${_uniqueCats.join(', ')}) — shown under Misc`);
-      } catch(e) { console.warn('Misc-rescue toast failed:', e); }
+        const _origs = [...new Set(_normalised.map(r => r._origCategory))].sort();
+        showToast(`${_normalised.length} components had unrecognised categories (${_origs.slice(0, 4).join(', ')}${_origs.length > 4 ? '…' : ''}) — mapped to Misc`, 'info');
+      } catch(e) { console.warn('Category-normalisation toast failed:', e); }
     }, 800);
   }
 }
