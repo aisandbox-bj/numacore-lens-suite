@@ -421,11 +421,24 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <div class="card-title">Step 3 — Field Mapping</div>
       <div class="card-sub">Map each source column to a Schema v5 field. Auto-suggested mappings are shown in green. Set any column you don't need to "Ignore".</div>
 
+      <!-- v8.3 FIX-2 — full profile management at step 3 (was Save-only). Shows currently
+           loaded profile, lets operator switch / delete / save from this step without going
+           back to step 1. Per-client scope hint mirrors step 1. -->
       <div class="profile-bar">
-        <label>Save as profile:</label>
-        <input type="text" id="profileNameInput" placeholder="e.g. CLIENT_A — Predictions Sheet" style="width:280px">
-        <button class="btn btn-outline btn-sm" onclick="saveProfile()">Save Profile</button>
-        <div id="profileSaveMsg" style="font-size:11px;color:var(--green);display:none">✓ Saved</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--text2);font-weight:600">Loaded profile:</span>
+          <select id="profileSelectStep3" onchange="onProfileChangeStep3()" style="width:260px">
+            <option value="">— No profile (manual mapping) —</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="deleteProfileStep3()" title="Delete the selected profile from this client's bucket. The current mapping in the table is unaffected — you can save it again under a different name.">🗑 Delete</button>
+          <span data-client-scope-label style="font-size:11px;color:var(--text3)"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
+          <label>Save as profile:</label>
+          <input type="text" id="profileNameInput" placeholder="(name — type the currently-loaded name to overwrite, or a new name to save as new)" style="width:340px">
+          <button class="btn btn-outline btn-sm" onclick="saveProfile()">Save Profile</button>
+          <div id="profileSaveMsg" style="font-size:11px;color:var(--green);display:none">✓ Saved</div>
+        </div>
       </div>
 
       <div class="review-wrap" style="max-height: 50vh">
@@ -888,6 +901,10 @@ let state = {
   // Mapping
   mapping: {},           // colIndex → v5 field
   profiles: {},          // profileName → mapping object
+  // v8.3 FIX-2 — name of the currently-loaded profile, or '' for manual/unsaved mapping.
+  // Surfaced in step 1 + step 3 UI; prevents accidental save-as-new-profile when the
+  // operator already has a profile loaded and just wants to overwrite it.
+  activeProfile: '',
   // Generated entities
   fleets: [],
   units: [],
@@ -932,6 +949,7 @@ function saveState() {
       clientName: state.clientName,           // v8.3 — persist human-readable name across reloads
       clientSettings: state.clientSettings,   // v8.3 — persist per-client settings across reloads
       profiles: state.profiles,
+      activeProfile: state.activeProfile,    // v8.3 FIX-2 — persist which profile is currently loaded
       buildStep: state.buildStep,
       updateMode: state.updateMode,
       mapping: state.mapping,
@@ -1294,10 +1312,16 @@ function onMappingChange(colIdx, value) {
 function saveProfile() {
   const name = document.getElementById('profileNameInput').value.trim();
   if (!name) { alert('Enter a profile name'); return; }
+  const overwriting = !!state.profiles[name];
+  if (overwriting && !confirm(`Profile "${name}" already exists for this client. Overwrite?`)) return;
   state.profiles[name] = { ...state.mapping };
+  // v8.3 FIX-2 — saved profile becomes the active one; both dropdowns + input sync to reflect.
+  state.activeProfile = name;
   populateProfileDropdown();
+  syncActiveProfileToUI();
+  document.getElementById('profileSaveMsg').textContent = overwriting ? `✓ Overwrote "${name}"` : `✓ Saved "${name}"`;
   document.getElementById('profileSaveMsg').style.display = 'inline';
-  setTimeout(() => document.getElementById('profileSaveMsg').style.display = 'none', 2000);
+  setTimeout(() => document.getElementById('profileSaveMsg').style.display = 'none', 2200);
   saveState();
 }
 
@@ -1305,7 +1329,30 @@ function onProfileChange() {
   const sel = document.getElementById('profileSelect');
   if (sel.value && state.profiles[sel.value]) {
     state.mapping = { ...state.profiles[sel.value] };
+    state.activeProfile = sel.value;       // v8.3 FIX-2
+    syncActiveProfileToUI();
     renderMappingTable();
+    saveState();
+  } else {
+    state.activeProfile = '';
+    syncActiveProfileToUI();
+    saveState();
+  }
+}
+
+// v8.3 FIX-2 — step 3 has its own dropdown so operator can switch profile without going
+// back to step 1. Mirrors onProfileChange + syncs the step 1 dropdown so they stay in sync.
+function onProfileChangeStep3() {
+  const sel = document.getElementById('profileSelectStep3');
+  if (sel.value && state.profiles[sel.value]) {
+    state.mapping = { ...state.profiles[sel.value] };
+    state.activeProfile = sel.value;
+    syncActiveProfileToUI();
+    renderMappingTable();
+    saveState();
+  } else {
+    state.activeProfile = '';
+    syncActiveProfileToUI();
     saveState();
   }
 }
@@ -1313,21 +1360,51 @@ function onProfileChange() {
 function deleteProfile() {
   const sel = document.getElementById('profileSelect');
   if (!sel.value) return;
-  if (!confirm(`Delete profile "${sel.value}"?`)) return;
+  if (!confirm(`Delete profile "${sel.value}" for client "${state.clientCode || 'default'}"?`)) return;
+  const wasActive = state.activeProfile === sel.value;
   delete state.profiles[sel.value];
+  if (wasActive) state.activeProfile = '';   // v8.3 FIX-2 — clear active if we just deleted it
   populateProfileDropdown();
+  syncActiveProfileToUI();
+  saveState();
+}
+
+// v8.3 FIX-2 — step 3 delete wrapper (operates on step 3 dropdown selection).
+function deleteProfileStep3() {
+  const sel = document.getElementById('profileSelectStep3');
+  if (!sel.value) { alert('Pick a profile to delete from the dropdown first.'); return; }
+  if (!confirm(`Delete profile "${sel.value}" for client "${state.clientCode || 'default'}"?`)) return;
+  const wasActive = state.activeProfile === sel.value;
+  delete state.profiles[sel.value];
+  if (wasActive) state.activeProfile = '';
+  populateProfileDropdown();
+  syncActiveProfileToUI();
   saveState();
 }
 
 function populateProfileDropdown() {
-  const selectors = ['profileSelect', 'updateProfileSelect'];
+  // v8.3 FIX-2 — added 'profileSelectStep3' so step-3 dropdown stays in sync with step-1.
+  const selectors = ['profileSelect', 'profileSelectStep3', 'updateProfileSelect'];
   selectors.forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const names = Object.keys(state.profiles);
-    sel.innerHTML = '<option value="">— No profile —</option>' +
+    sel.innerHTML = '<option value="">— No profile (manual mapping) —</option>' +
       names.map(n => `<option value="${n}">${n}</option>`).join('');
   });
+}
+
+// v8.3 FIX-2 — single source of truth for "what's the active profile" UI sync.
+// Updates all profile dropdowns to .value = state.activeProfile, and pre-fills the
+// Save Profile input with the active name so the default save action overwrites.
+function syncActiveProfileToUI() {
+  const v = state.activeProfile || '';
+  ['profileSelect', 'profileSelectStep3', 'updateProfileSelect'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) sel.value = v;
+  });
+  const input = document.getElementById('profileNameInput');
+  if (input) input.value = v;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1592,7 +1669,6 @@ function renderUnitsTable() {
       <th>Unit ID</th><th>FLOC (ERP Key)</th><th>Fleet</th><th>Model</th><th>Status</th><th>Exp. Life Hrs</th>
     </tr></thead>
     <tbody>${state.units.map(u => `<tr>
-  if (state.reviewTab === 'history')     renderHistorySubTab();
       <td style="font-weight:600;color:#fff">${u.id}</td>
       <td><input type="text" value="${(state.unitEdits[u.id]?.floc) || u.floc}" onchange="editUnit('${u.id}','floc',this.value)" style="width:110px"></td>
       <td><span class="badge badge-blue">${u.fleet_id}</span></td>
@@ -3824,6 +3900,10 @@ function init() {
 
   // v8.3 — show which client the mapping profiles + settings are scoped to.
   updateClientScopeLabels();
+
+  // v8.3 FIX-2 — restore active-profile visual state (dropdowns + save-input pre-fill).
+  // Must run AFTER populateProfileDropdown so the <option> exists before we select it.
+  syncActiveProfileToUI();
 
   // Restore profiles in dropdowns
   populateProfileDropdown();
