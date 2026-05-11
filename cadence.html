@@ -6176,6 +6176,7 @@ function _initFromJSON(json) {
   let _fleetResolved = 0, _fleetUnassigned = 0;
   let _unitResolved = 0, _componentResolved = 0;
   let _changeoutDateMirrored = 0, _originalDateMirrored = 0;
+  let _utilRateDerived = 0;
   DATA.forEach(r => {
     // FLEET — resolve from fleet_id via masterData.fleets[] lookup
     if (_isMissing(r.fleet)) {
@@ -6218,9 +6219,35 @@ function _initFromJSON(json) {
       r.original_date = r.changeout_date_erp;
       _originalDateMirrored++;
     }
+    // UTIL_RATE derivation (v18.3 FIX-1 expansion) — V5 may emit util_rate as null if the
+    // operator's XLSX didn't have a hrs/day column mapped during Intake BUILD. Without
+    // util_rate, BOTH the theoretical-date recompute (below) AND the multi-cycle Projections
+    // feature (line ~2008) silently skip the component. Derive util_rate empirically from
+    // operational history when explicit value is missing:
+    //     daysElapsed  = days from r.install_date to r.last_read
+    //     hoursUsed    = r.last_smu - r.install_hours
+    //     util_rate    ≈ hoursUsed / daysElapsed
+    // Only fires when all four source fields are present and produce a positive rate.
+    // Components where the data is too sparse to derive keep util_rate at null → recompute
+    // + projections still skip them (no false projections from nothing).
+    const _utilRateRaw = Number(r.util_rate || 0);
+    if (_utilRateRaw <= 0) {
+      const hu = Number(r.last_smu || 0) - Number(r.install_hours || 0);
+      if (hu > 0 && r.install_date && r.last_read) {
+        const t0 = new Date(r.install_date).getTime();
+        const t1 = new Date(r.last_read).getTime();
+        if (!isNaN(t0) && !isNaN(t1)) {
+          const days = (t1 - t0) / 86400000;
+          if (days > 0) {
+            r.util_rate = hu / days;
+            _utilRateDerived++;
+          }
+        }
+      }
+    }
   });
-  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved + _changeoutDateMirrored + _originalDateMirrored > 0)) {
-    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name; changeout_date ${_changeoutDateMirrored} mirrored from changeout_date_erp; original_date ${_originalDateMirrored} mirrored from changeout_date_erp.`);
+  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved + _changeoutDateMirrored + _originalDateMirrored + _utilRateDerived > 0)) {
+    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name; changeout_date ${_changeoutDateMirrored} mirrored from changeout_date_erp; original_date ${_originalDateMirrored} mirrored from changeout_date_erp; util_rate ${_utilRateDerived} derived from (last_smu − install_hours) / (last_read − install_date).`);
   }
 
   // Recompute timeline start from actual loaded data (initial cache ran before DATA was populated,
