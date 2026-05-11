@@ -6033,22 +6033,31 @@ let _meta = {};        // populated from JSON file meta section
 let _originalJSON = null;  // full JSON as loaded — preserved so export can merge, not replace
 
 // v18.2 (Slide 7) — Recompute theoretical changeout dates from current SMU + benchmark + util_rate.
-// Called from _initFromJSON after componentDateOverrides applied. Rules locked by operator 2026-05-10:
+// v18.3 — adds ERP-vs-theoretical delta detection (Cadence-side Option B per operator decision 2026-05-10).
+// Called from _initFromJSON after componentDateOverrides applied. Rules locked by operator:
 //   • Shadow diamond (r.original_date) ALWAYS recomputes — no exceptions.
 //   • Solid diamond (r.changeout_date) recomputes ONLY if the component is neither manually
 //     overridden (componentDateOverrides) nor linked to a project. Project anchor wins for
 //     linked components; manual drag wins for overridden ones.
 //   • Theoretical-in-past dates clamp to TODAY via the existing today-clamp pass that runs
 //     immediately after this function — no per-component clamp needed here.
+//   • Delta detection (v18.3): for each component with a stored ERP-predicted changeout date
+//     (r.changeout_date_erp), compute |theoretical − ERP|. Components with delta > threshold
+//     (default 60 days) are flagged for operator visibility — this surfaces both calculation-
+//     methodology differences AND stale overrides where a project-deleted component's solid
+//     stayed at the old ERP date.
 // Formula (from r.benchmark hours of life, r.util_rate hrs/day usage, r.install_hours and
 // r.last_smu cumulative-hours boundaries, r.last_read reference date):
 //     hoursRemaining = benchmark - (last_smu - install_hours)
 //     daysRemaining  = hoursRemaining / util_rate
 //     newTheoretical = last_read + daysRemaining days   (fallback ref: TODAY if last_read absent)
 // Components missing benchmark/util_rate/last_read are skipped — their original_date stays as-is.
+const _DELTA_THRESHOLD_DAYS = 60;
 function _recomputeTheoreticalDates(overrideIds, linkedIds) {
   const _todayMs = Date.now();
   let shadowUpdates = 0, solidUpdates = 0, skipped = 0;
+  let overrideSkipped = 0, linkedSkipped = 0;
+  const deltaFlagged = [];   // { id, unit, component, deltaDays, erpDate, theoreticalDate, isOverridden, isLinked }
   DATA.forEach(r => {
     const benchmark = Number(r.benchmark || 0);
     const utilRate  = Number(r.util_rate || 0);
@@ -6073,16 +6082,61 @@ function _recomputeTheoreticalDates(overrideIds, linkedIds) {
     r.original_date = newTheoretical;
     shadowUpdates++;
 
+    // v18.3 — Delta detection vs ERP-predicted changeout date (preserved from Intake build).
+    // Surfaces both calculation-methodology differences AND stale overrides where a project-
+    // deleted component's solid stayed at the old ERP date despite theoretical having moved.
+    if (r.changeout_date_erp) {
+      const erpMs = new Date(r.changeout_date_erp).getTime();
+      if (!isNaN(erpMs)) {
+        const deltaDays = Math.abs(newTheoreticalMs - erpMs) / 86400000;
+        if (deltaDays > _DELTA_THRESHOLD_DAYS) {
+          deltaFlagged.push({
+            id: r.id,
+            unit: r.unit,
+            component: r.component || r.name || '',
+            deltaDays: Math.round(deltaDays),
+            erpDate: r.changeout_date_erp,
+            theoreticalDate: newTheoretical,
+            isOverridden: overrideIds.has(r.id),
+            isLinked: linkedIds.has(r.id)
+          });
+        }
+      }
+    }
+
     // Solid recomputes only if NOT manually overridden AND NOT linked to a project.
-    // Today-clamp pass that follows handles past-dates automatically.
-    if (overrideIds.has(r.id) || linkedIds.has(r.id)) return;
+    // v18.3 — tally per-skip-reason for operator diagnostics.
+    if (overrideIds.has(r.id)) { overrideSkipped++; return; }
+    if (linkedIds.has(r.id))   { linkedSkipped++; return; }
     r.changeout_date = newTheoretical;
     solidUpdates++;
   });
+
+  // v18.3 — stash on state for later UI consumption (filter chip, list view if added later).
+  state.deltaFlagged = deltaFlagged;
+  state.recomputeStats = {
+    total: DATA.length,
+    shadowUpdates: shadowUpdates,
+    solidUpdates: solidUpdates,
+    overrideSkipped: overrideSkipped,
+    linkedSkipped: linkedSkipped,
+    skipped: skipped,
+    deltaFlaggedCount: deltaFlagged.length,
+    threshold: _DELTA_THRESHOLD_DAYS
+  };
+
   if (typeof console !== 'undefined' && console.log) {
-    console.log(`Cadence v18.2 theoretical recompute: ${shadowUpdates} shadows, ${solidUpdates} solids updated; ${skipped} skipped (missing benchmark/util_rate)`);
+    console.log(`Cadence v18.3 recompute: ${shadowUpdates} shadows updated; ${solidUpdates} solids updated; ${overrideSkipped} solids skipped (manual override); ${linkedSkipped} solids skipped (project-linked); ${skipped} components skipped (missing benchmark/util_rate). ${deltaFlagged.length} components flagged with delta > ${_DELTA_THRESHOLD_DAYS}d vs ERP-predicted.`);
+    if (deltaFlagged.length > 0) {
+      // Show top 25 by deltaDays in console (full list lives in state.deltaFlagged)
+      const sample = deltaFlagged.slice().sort((a,b) => b.deltaDays - a.deltaDays).slice(0, 25);
+      console.log('Delta-flagged components (top 25 by deltaDays):');
+      console.table(sample);
+      if (deltaFlagged.length > 25) console.log(`...and ${deltaFlagged.length - 25} more. Full list at state.deltaFlagged.`);
+    }
   }
-  return { shadowUpdates, solidUpdates, skipped };
+
+  return state.recomputeStats;
 }
 
 function _initFromJSON(json) {
@@ -6100,6 +6154,39 @@ function _initFromJSON(json) {
     replacement_strategy: '',
     ...r
   }));
+
+  // v18.3 FIX-1 (bundled pre-push) — V5 fleet-name resolver.
+  // Cadence's hierarchy builder (buildHierarchy at line ~1698) and the FLEET_COLORS palette
+  // pass below both group by r.fleet (the denormalized name field from V4 Flat). Intake's V5
+  // build writes only r.fleet_id (an ID reference) onto each component — fleet names live in
+  // masterData.fleets[]. Without resolution, V5-built files render an "undefined" fleet group
+  // containing every component with a missing/unresolved name. This pass denormalizes the name
+  // onto each DATA record so existing downstream code works unchanged.
+  // Also treats the literal string 'undefined' as missing — defensive against round-trip-saved
+  // files that captured the bug's output and now have "undefined" as a real value.
+  const _fleetNameLookup = {};
+  const _masterFleets = (json.masterData && Array.isArray(json.masterData.fleets)) ? json.masterData.fleets : [];
+  _masterFleets.forEach(f => {
+    if (f && f.id !== undefined && f.id !== null) _fleetNameLookup[f.id] = f.name || String(f.id);
+  });
+  const _isMissingFleet = (v) => !v || v === 'undefined' || v === 'Undefined';
+  let _fleetResolvedCount = 0, _fleetUnassignedCount = 0;
+  DATA.forEach(r => {
+    if (!_isMissingFleet(r.fleet)) return;
+    if (r.fleet_id != null && _fleetNameLookup[r.fleet_id]) {
+      r.fleet = _fleetNameLookup[r.fleet_id];
+      _fleetResolvedCount++;
+    } else if (r.fleet_id != null && String(r.fleet_id).trim() !== '') {
+      r.fleet = String(r.fleet_id);     // ID-only fallback if name not found in masterData
+      _fleetResolvedCount++;
+    } else {
+      r.fleet = 'Unassigned';            // No fleet identity at all → cleaner label than 'undefined'
+      _fleetUnassignedCount++;
+    }
+  });
+  if (typeof console !== 'undefined' && console.log && (_fleetResolvedCount + _fleetUnassignedCount > 0)) {
+    console.log(`Cadence v18.3 FIX-1 fleet-name resolver: ${_fleetResolvedCount} resolved via masterData.fleets, ${_fleetUnassignedCount} marked 'Unassigned' (no fleet identity).`);
+  }
 
   // Recompute timeline start from actual loaded data (initial cache ran before DATA was populated,
   // so it defaulted to TODAY — without this, overdue components fall outside the window).
@@ -6235,6 +6322,28 @@ function _initFromJSON(json) {
     (state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : [])
   );
   _recomputeTheoreticalDates(_overrideIds, _linkedIds);
+
+  // v18.3 — Surface the recompute outcome as a load-time toast. Helps the operator
+  // notice when a large number of components have a delta vs ERP, AND see at a glance
+  // how many solids were skipped due to overrides or project links (which explains why
+  // shadow ≠ solid for a given component). Deferred slightly so it appears AFTER the
+  // main "loaded from JSON" toast that other code paths show.
+  setTimeout(function() {
+    if (!state.recomputeStats || typeof showToast !== 'function') return;
+    const s = state.recomputeStats;
+    if (s.deltaFlaggedCount > 0) {
+      const reasons = [];
+      const flaggedOverridden = (state.deltaFlagged || []).filter(d => d.isOverridden).length;
+      const flaggedLinked     = (state.deltaFlagged || []).filter(d => d.isLinked).length;
+      const flaggedClean      = s.deltaFlaggedCount - flaggedOverridden - flaggedLinked;
+      if (flaggedClean > 0)      reasons.push(flaggedClean + ' clean');
+      if (flaggedOverridden > 0) reasons.push(flaggedOverridden + ' overridden');
+      if (flaggedLinked > 0)     reasons.push(flaggedLinked + ' project-linked');
+      showToast('⚠ ' + s.deltaFlaggedCount + ' component' + (s.deltaFlaggedCount===1?'':'s') + ' have >' + s.threshold + 'd delta vs ERP: ' + reasons.join(', ') + ' (see DevTools console for list)', 5200);
+    } else if (s.total > 0) {
+      showToast('✓ Recompute clean — ' + s.shadowUpdates + ' shadow' + (s.shadowUpdates===1?'':'s') + ' updated, no >' + s.threshold + 'd ERP deltas', 3500);
+    }
+  }, 900);
 
   // ── Effective changeout date clamp ────────────────────────────────
   // original_date is the immutable source date and must never be modified.
