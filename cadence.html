@@ -6155,37 +6155,55 @@ function _initFromJSON(json) {
     ...r
   }));
 
-  // v18.3 FIX-1 (bundled pre-push) — V5 fleet-name resolver.
-  // Cadence's hierarchy builder (buildHierarchy at line ~1698) and the FLEET_COLORS palette
-  // pass below both group by r.fleet (the denormalized name field from V4 Flat). Intake's V5
-  // build writes only r.fleet_id (an ID reference) onto each component — fleet names live in
-  // masterData.fleets[]. Without resolution, V5-built files render an "undefined" fleet group
-  // containing every component with a missing/unresolved name. This pass denormalizes the name
-  // onto each DATA record so existing downstream code works unchanged.
-  // Also treats the literal string 'undefined' as missing — defensive against round-trip-saved
-  // files that captured the bug's output and now have "undefined" as a real value.
+  // v18.3 FIX-1 (bundled pre-push, expanded post-QA) — V5 → V4 legacy field compat shim.
+  // Cadence's downstream code (buildHierarchy at line ~1698, FLEET_COLORS palette pass below,
+  // tooltip rendering, render loop) reads V4 Flat field names — r.fleet (NAME), r.unit (ID),
+  // r.component (NAME). Intake's V5 build stores these under DIFFERENT keys:
+  //   V5 r.fleet_id (ID ref → masterData.fleets[].name)  ↔  V4 r.fleet (NAME)
+  //   V5 r.unit_id (string)                              ↔  V4 r.unit (string)
+  //   V5 r.name (string)                                 ↔  V4 r.component (string)
+  // Without this shim, V5-built files render the entire hierarchy with "undefined" labels at
+  // every level below model. This pass mirrors V5 values onto the V4 field names so existing
+  // downstream code works unchanged.
+  // Treats the literal string 'undefined' as missing too — defensive against round-trip-saved
+  // bug-files that captured prior buggy output as real values.
   const _fleetNameLookup = {};
   const _masterFleets = (json.masterData && Array.isArray(json.masterData.fleets)) ? json.masterData.fleets : [];
   _masterFleets.forEach(f => {
     if (f && f.id !== undefined && f.id !== null) _fleetNameLookup[f.id] = f.name || String(f.id);
   });
-  const _isMissingFleet = (v) => !v || v === 'undefined' || v === 'Undefined';
-  let _fleetResolvedCount = 0, _fleetUnassignedCount = 0;
+  const _isMissing = (v) => v == null || v === '' || v === 'undefined' || v === 'Undefined';
+  let _fleetResolved = 0, _fleetUnassigned = 0;
+  let _unitResolved = 0, _componentResolved = 0;
   DATA.forEach(r => {
-    if (!_isMissingFleet(r.fleet)) return;
-    if (r.fleet_id != null && _fleetNameLookup[r.fleet_id]) {
-      r.fleet = _fleetNameLookup[r.fleet_id];
-      _fleetResolvedCount++;
-    } else if (r.fleet_id != null && String(r.fleet_id).trim() !== '') {
-      r.fleet = String(r.fleet_id);     // ID-only fallback if name not found in masterData
-      _fleetResolvedCount++;
-    } else {
-      r.fleet = 'Unassigned';            // No fleet identity at all → cleaner label than 'undefined'
-      _fleetUnassignedCount++;
+    // FLEET — resolve from fleet_id via masterData.fleets[] lookup
+    if (_isMissing(r.fleet)) {
+      if (r.fleet_id != null && _fleetNameLookup[r.fleet_id]) {
+        r.fleet = _fleetNameLookup[r.fleet_id];
+        _fleetResolved++;
+      } else if (r.fleet_id != null && String(r.fleet_id).trim() !== '') {
+        r.fleet = String(r.fleet_id);     // ID-only fallback if name not in masterData
+        _fleetResolved++;
+      } else {
+        r.fleet = 'Unassigned';            // No fleet identity at all → cleaner label than 'undefined'
+        _fleetUnassigned++;
+      }
+    }
+    // UNIT — V4 uses r.unit for what V5 calls r.unit_id (both are the unit code string,
+    // e.g. "BD203"; there's no separate display name for units)
+    if (_isMissing(r.unit) && !_isMissing(r.unit_id)) {
+      r.unit = r.unit_id;
+      _unitResolved++;
+    }
+    // COMPONENT — V4 uses r.component for what V5 calls r.name (the component display name,
+    // e.g. "Engine", "Final Drive Rear Left")
+    if (_isMissing(r.component) && !_isMissing(r.name)) {
+      r.component = r.name;
+      _componentResolved++;
     }
   });
-  if (typeof console !== 'undefined' && console.log && (_fleetResolvedCount + _fleetUnassignedCount > 0)) {
-    console.log(`Cadence v18.3 FIX-1 fleet-name resolver: ${_fleetResolvedCount} resolved via masterData.fleets, ${_fleetUnassignedCount} marked 'Unassigned' (no fleet identity).`);
+  if (typeof console !== 'undefined' && console.log && (_fleetResolved + _fleetUnassigned + _unitResolved + _componentResolved > 0)) {
+    console.log(`Cadence v18.3 FIX-1 V5→V4 compat shim: fleet ${_fleetResolved} resolved + ${_fleetUnassigned} marked 'Unassigned'; unit ${_unitResolved} mirrored from unit_id; component ${_componentResolved} mirrored from name.`);
   }
 
   // Recompute timeline start from actual loaded data (initial cache ran before DATA was populated,
