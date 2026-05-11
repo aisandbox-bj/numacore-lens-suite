@@ -6830,6 +6830,10 @@ const DE_COLS = [
   { key:'replacement_strategy', label:'Strategy', type:'select', opts:['usage_based','condition_based'], w:130 },
   { key:'cost',             label:'Cost ($)',        type:'number', w:90  },
   { key:'benchmark',        label:'Benchmark',       type:'number', w:88  },
+  // v18.3 FIX-3 (2026-05-10) — Util % column. Operator-facing percentage view of util_rate.
+  // util_rate stored internally as hrs/day; displayed and edited as % (75% ↔ 18 hrs/day).
+  // Special render/edit logic in renderDataEditor (search for 'util_pct').
+  { key:'util_pct',         label:'Util %',          type:'number', w:78  },
   { key:'_pct',             label:'% of Bench',      type:'number', w:88,  ro:true },
   { key:'part_number',      label:'Part #',          type:'text',   w:110 },
   { key:'mm_number',        label:'MM#',             type:'text',   w:80  },
@@ -6865,9 +6869,15 @@ function _deFiltered() {
   Object.entries(_deColFSel).forEach(([k, vals]) => {
     if (!vals || vals.size === 0) return;
     r = r.filter(x => {
-      const cellVal = k === '_pct'
-        ? (x.benchmark ? String(Math.round(((x.last_smu||0) - (x.install_hours||0)) / x.benchmark * 100)) : '')
-        : String(x[k] != null ? x[k] : '');
+      let cellVal;
+      if (k === '_pct') {
+        cellVal = x.benchmark ? String(Math.round(((x.last_smu||0) - (x.install_hours||0)) / x.benchmark * 100)) : '';
+      } else if (k === 'util_pct') {
+        // v18.3 FIX-3 — Util % column filter: match on the percentage form (util_rate / 24 × 100)
+        cellVal = (x.util_rate > 0) ? String(Math.round(Number(x.util_rate) / 24 * 100)) : '';
+      } else {
+        cellVal = String(x[k] != null ? x[k] : '');
+      }
       return vals.has(cellVal);
     });
   });
@@ -6906,7 +6916,15 @@ function renderDataEditor() {
     const pct = r.benchmark ? Math.round(((r.last_smu||0) - (r.install_hours||0)) / r.benchmark * 100) : '';
     const computed = { _pct: pct };
     const cells = activeCols.map(c => {
-      const raw     = c.key.startsWith('_') ? computed[c.key] : r[c.key];
+      // v18.3 FIX-3 — Util % column: display util_rate (hrs/day) as a percentage (× 100 / 24).
+      // e.g. util_rate 18 → "75". Empty if util_rate is missing/zero. Edit handler below
+      // converts back: typed value × 24 / 100 = new util_rate.
+      let raw;
+      if (c.key === 'util_pct') {
+        raw = (r.util_rate > 0) ? Math.round(Number(r.util_rate) / 24 * 100) : '';
+      } else {
+        raw = c.key.startsWith('_') ? computed[c.key] : r[c.key];
+      }
       const v       = (raw != null) ? String(raw) : '';
       const escaped = esc(v);
       if (c.ro) return `<td class="de-cell-ro" title="${c.label}: ${escaped}">${escaped}</td>`;
@@ -7056,15 +7074,35 @@ function renderDataEditor() {
       if (typ === 'number') { const n = parseFloat(val); val = isNaN(n) ? 0 : n; }
       const dr = DATA.find(r => r.id === id);
       const sr = state.data.find(r => r.id === id);
-      if (dr) dr[key] = val;
-      if (sr) sr[key] = val;
+      // v18.3 FIX-3 — Util % column: convert entered percentage to util_rate (hrs/day).
+      // Operator types "75" → store r.util_rate = 18 (75 × 24 / 100). Also clears the
+      // _util_rate_inferred flag since an explicit value supersedes any unit-peer-median
+      // inference; the ⓘ badge in the unit tree disappears on next render.
+      if (key === 'util_pct') {
+        const newRate = (Number(val) || 0) / 100 * 24;
+        if (dr) { dr.util_rate = newRate; delete dr._util_rate_inferred; }
+        if (sr) { sr.util_rate = newRate; delete sr._util_rate_inferred; }
+      } else {
+        if (dr) dr[key] = val;
+        if (sr) sr[key] = val;
+      }
       _scheduleSave();
     });
     cell.addEventListener('keydown', function(e) {
       if (e.key === 'Enter')  { e.preventDefault(); this.blur(); }
       if (e.key === 'Escape') {
         const rec = DATA.find(r => r.id === parseInt(this.dataset.id));
-        this.textContent = rec ? String(rec[this.dataset.key] != null ? rec[this.dataset.key] : '') : '';
+        const k = this.dataset.key;
+        // v18.3 FIX-3 — Escape revert: for util_pct, show the percentage form of current util_rate
+        let restored = '';
+        if (rec) {
+          if (k === 'util_pct') {
+            restored = (rec.util_rate > 0) ? String(Math.round(Number(rec.util_rate) / 24 * 100)) : '';
+          } else {
+            restored = String(rec[k] != null ? rec[k] : '');
+          }
+        }
+        this.textContent = restored;
         this.blur();
       }
     });
@@ -7126,6 +7164,10 @@ function _openColDropdown(key, btnEl) {
       return r.benchmark
         ? String(Math.round(((r.last_smu||0) - (r.install_hours||0)) / r.benchmark * 100))
         : '';
+    }
+    // v18.3 FIX-3 — Util % column: show percentage form, not raw util_rate
+    if (key === 'util_pct') {
+      return (r.util_rate > 0) ? String(Math.round(Number(r.util_rate) / 24 * 100)) : '';
     }
     return String(r[key] != null ? r[key] : '');
   });
