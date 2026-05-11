@@ -2693,10 +2693,46 @@ function runFullUpdate() {
       });
     }
 
-    // Utilization sync (v17 util is per-component; v5 is in utilizationProfiles)
+    // Utilization sync — v17/V4 AND V5 (v8.3 FIX-3 2026-05-10).
+    // Pre-FIX-3 this was gated on `isV17`, leaving V5 files completely unsynced — operator's
+    // quarterly / shift-change util_rate updates never reached the JSON. Now both schemas
+    // update per-component util_rate; V5 additionally syncs the unit's utilizationProfiles
+    // entry (the canonical V5 location for unit-level utilization data; matches BUILD path
+    // at line ~1571 shape: { fleet_id, unit_floc, rate, rate_unit }).
     if (unitData && unitData.utilRate) {
       const hrsPerDay = Math.round(unitData.utilRate * 24 * 100) / 100;
-      if (isV17 && c.util_rate !== hrsPerDay) { c.util_rate = hrsPerDay; fieldUpdates++; }
+      if (c.util_rate !== hrsPerDay) { c.util_rate = hrsPerDay; fieldUpdates++; }
+      // V5: also sync the unit-level utilizationProfiles entry (canonical V5 slice).
+      if (!isV17 && fleetJSON.masterData) {
+        const ups = fleetJSON.masterData.utilizationProfiles = fleetJSON.masterData.utilizationProfiles || [];
+        const unitKey = c.unit_id || c.unit || '';
+        const existing = ups.find(p => (p.unit_id === unitKey) || (p.unit_floc === unitKey));
+        if (existing) {
+          // Match the BUILD-path shape (rate + rate_unit) when updating an existing entry.
+          // Some legacy V5 files may have used a hrs_per_day field instead; update both for safety.
+          const oldRate = existing.rate != null ? existing.rate : existing.hrs_per_day;
+          if (oldRate !== hrsPerDay) {
+            existing.rate = hrsPerDay;
+            existing.rate_unit = 'hrs_per_day';
+            if (existing.hrs_per_day != null) existing.hrs_per_day = hrsPerDay;  // legacy field, kept in sync
+            existing.notes = `Updated via Intake v8.3 UPDATE — source value × 24 converted to hrs/day`;
+            fieldUpdates++;
+          }
+        } else {
+          // No existing entry for this unit — create one matching BUILD-path shape.
+          const fleetId = c.fleet_id || c.fleet || null;
+          ups.push({
+            id:        ups.length + 1,
+            fleet_id:  fleetId,
+            unit_floc: c.unit_floc || unitKey,
+            unit_id:   unitKey,
+            rate:      hrsPerDay,
+            rate_unit: 'hrs_per_day',
+            notes:     `Created via Intake v8.3 UPDATE — source value × 24 converted to hrs/day`,
+          });
+          fieldUpdates++;
+        }
+      }
     }
 
     // Up/Down sync → status
