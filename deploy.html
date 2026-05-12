@@ -728,12 +728,12 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 </div><!-- /app -->
 
 <!-- Hidden file inputs -->
-<input type="file" id="bomIn"     accept=".xlsx,.xls,.csv" style="display:none" onchange="handleBomFile(event)">
-<input type="file" id="woIn"      accept=".xlsx,.xls,.csv" style="display:none" onchange="handleWoFile(event)">
+<input type="file" id="bomIn"     accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleBomFile(event)">
+<input type="file" id="woIn"      accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleWoFile(event)">
 <!-- v8.9 — Component Snapshot (per-project) + fleet-wide Inventory Master + fleet-wide IW39 inputs -->
-<input type="file" id="snapshotIn"   accept=".xlsx,.xls,.csv" style="display:none" onchange="handleSnapshotFile(event)">
-<input type="file" id="invMasterIn"  accept=".xlsx,.xls,.csv" style="display:none" onchange="handleInvMasterFile(event)">
-<input type="file" id="iw39FleetIn"  accept=".xlsx,.xls,.csv" style="display:none" onchange="handleIW39FleetFile(event)">
+<input type="file" id="snapshotIn"   accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleSnapshotFile(event)">
+<input type="file" id="invMasterIn"  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleInvMasterFile(event)">
+<input type="file" id="iw39FleetIn"  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleIW39FleetFile(event)">
 
 <!-- ══════════════════════════════════════════════════
      MODALS
@@ -877,6 +877,22 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
     <div class="m-actions">
       <button class="mbtn secondary" onclick="closeModal('modalWoMap')">Cancel</button>
       <button class="mbtn primary"   onclick="confirmWoImport()">Import WOs →</button>
+    </div>
+  </div>
+</div>
+
+<!-- v8.9 FIX-1 (2026-05-12) — Multi-sheet BOM picker modal.
+     Shown when the operator drops a BOM .xlsx with >1 sheet. Smart defaults
+     deselect catalog-like sheets (>1000 rows OR name matches catalog keywords).
+     Each row in the picker shows sheet name + first 4 column headers + row count.
+     Selected sheets are concatenated; rows carry _sourceSheet for component hint. -->
+<div class="modal-ov" id="modalBomSheetPicker">
+  <div class="modal" style="min-width:640px;max-width:780px">
+    <div class="modal-title">📑 Select BOM Sheets to Import</div>
+    <div id="bomSheetPickerBody"></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="closeModal('modalBomSheetPicker'); _bomWB=null; _bomSheetCfg=null;">Cancel</button>
+      <button class="mbtn primary"   onclick="confirmBomSheetSelection()">Next: Map Columns →</button>
     </div>
   </div>
 </div>
@@ -1071,14 +1087,17 @@ const WO_FIELDS = [
   { key:'planned_cost', label:'Planned Cost',      required:false },
   { key:'actual_cost',  label:'Actual Cost',       required:false },
   { key:'floc',         label:'FLOC / Sort Field', required:false },
-  // v8.8 (Slide 9) — SAP Material No. column on IW39 import enables BOM↔IW39
-  // auto-link. When the IW39 export carries the SAP Material No. for each WO,
-  // we can show a "🔗 N WOs" badge on matching BOM rows + a click-to-filter
-  // shortcut. Optional column — IW39 exports without it still work.
-  { key:'sap_material', label:'SAP Material No.',  required:false },
   // v8.9 — Order Type column (e.g. YBA2 for planned maintenance). Filter at
-  // render time when surfacing matching WOs on BOM rows. Optional.
+  // render time when surfacing WOs for a unit. Optional.
   { key:'order_type',   label:'Order Type (YBA2 etc)', required:false },
+  // v8.9 FIX-1 (2026-05-12) — sap_material REMOVED from WO_FIELDS. Operator
+  // confirmed 2026-05-12: "the IW39 report does not include materials".
+  // The v8.8 BOM↔IW39 material-match badge was always going to return zero
+  // because the operator's IW39 exports don't carry the SAP Material No.
+  // column. WO filtering now is purely by unit Sort Field (FLOC) + the
+  // optional YBA2 order-type filter. WOs surface in the Work Orders tab
+  // (v8.9 FIX-2 wires that tab to fleet-wide IW39); not duplicated in the
+  // BOM Stock drill-down.
 ];
 
 // v8.9 — Component Snapshot per-unit cross-reference. Up to 12 VPN variants
@@ -1866,26 +1885,13 @@ function renderMaterials(id) {
 
   const rowClass = (s) => ({confirmed:'row-confirmed',ordered:'row-ordered',received:'row-received',missing:'row-missing'}[s]||'');
 
-  // v8.8 BOM ↔ IW39 link count map (per-project workOrders fallback).
-  // v8.9 — also count fleet-wide IW39 hits (filtered to this project's unit
-  // + optional YBA2 toggle). If fleet-wide is loaded, prefer those counts.
-  const _wos = p.workOrders || [];
-  const _bomLinkCounts = {};
-  _wos.forEach(wo => {
-    const k = String(wo.sap_material || '').trim().toUpperCase();
-    if (k) _bomLinkCounts[k] = (_bomLinkCounts[k] || 0) + 1;
-  });
-  const _useFleetIW39 = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
-  const _fleetUnitId = p.unit ? String(p.unit).trim().toUpperCase() : '';
-  const _fleetIW39Counts = {};
-  if (_useFleetIW39) {
-    _fleetWideIW39.forEach(wo => {
-      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return;
-      if (_fleetUnitId && !String(wo.floc || '').toUpperCase().includes(_fleetUnitId)) return;
-      const k = String(wo.sap_material || '').trim().toUpperCase();
-      if (k) _fleetIW39Counts[k] = (_fleetIW39Counts[k] || 0) + 1;
-    });
-  }
+  // v8.9 FIX-1 (2026-05-12) — BOM ↔ IW39 material-match link REMOVED.
+  // Operator-confirmed 2026-05-12: "the IW39 report does not include
+  // materials". The v8.8 sap_material join was always going to count zero
+  // because IW39 exports don't carry a SAP Material No column. The
+  // per-unit Work Orders tab (now wired to fleet-wide IW39 via FIX-2) is
+  // the canonical place to see WOs for this project. The "🔗 N WOs"
+  // per-BOM-row badge is gone.
 
   // v8.9 — Stock badge
   const _stockBadgeFor = (row, realIdx) => {
@@ -1906,20 +1912,13 @@ function renderMaterials(id) {
 
   const rows = visible.map((row, ri) => {
     const realIdx = bom.indexOf(row);
-    const _sapKey = String(row.sap_material || '').trim().toUpperCase();
-    // v8.9 — prefer fleet-wide counts when loaded; else per-project
-    const _linkCount = _sapKey
-      ? (_useFleetIW39 ? (_fleetIW39Counts[_sapKey] || 0) : (_bomLinkCounts[_sapKey] || 0))
-      : 0;
-    const _linkBadge = _linkCount > 0
-      ? `<button class="bom-wo-link" onclick="${_useFleetIW39 ? `openStockDrillDown('${id}',${realIdx})` : `filterWosByMaterial('${id}','${esc(_sapKey)}')`}" title="${_useFleetIW39 ? 'Show matching WOs in detail (fleet-wide IW39, filtered to this unit)' : 'Filter Work Orders to this SAP Material'}" style="margin-left:6px;font-size:9px;padding:1px 6px;border-radius:10px;border:1px solid var(--blue);background:rgba(91,156,246,0.12);color:var(--blue);cursor:pointer;font-family:inherit">🔗 ${_linkCount} WO${_linkCount===1?'':'s'}</button>`
-      : '';
+    // v8.9 FIX-1: link badge removed (IW39 has no material column to join on).
     return `
       <tr class="${rowClass(row.sapStatus)}">
         <td>${esc(row.line_no || String(realIdx+1))}</td>
         <td>${esc(row.description || '')}</td>
         <td class="mono">${esc(row.part_number || '')}</td>
-        <td class="mono">${esc(row.sap_material || '')}${_linkBadge}</td>
+        <td class="mono">${esc(row.sap_material || '')}</td>
         <td style="text-align:right">${esc(row.qty || '')}</td>
         <td style="text-align:right">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
         <td style="text-align:center">${_stockBadgeFor(row, realIdx)}</td>
@@ -1964,23 +1963,148 @@ function clearBom(id) {
   toast('BOM cleared');
 }
 
+// v8.9 FIX-1 (2026-05-12) — multi-sheet BOM workbooks. Operator-flagged
+// 2026-05-12: their D9T BOM (D9T-REX00527.xlsx) has 17 sheets — a "Parts"
+// master catalog (16,552 rows) plus per-component sheets (ENGINE, TORQUE,
+// TRANSMISSION, ... × 16). v8.6/v8.7/v8.8 read only SheetNames[0] (the
+// Parts catalog) which produced nonsensical auto-detected column mappings
+// AND missed all the actual BOM data. New flow: if workbook has >1 sheet,
+// show a sheet picker (smart defaults: skip the obvious catalog sheets);
+// concatenate selected sheets; each row tagged with its source sheet name
+// (becomes the implicit "component" hint for downstream stock matching).
+
+// Module-level state for the sheet picker (per-workbook lifetime)
+let _bomWB         = null;   // parsed XLSX workbook waiting for sheet selection
+let _bomSheetCfg   = null;   // map sheetName → { rowCount, headers[3], selected }
+
 function handleBomFile(e) {
   const file = e.target.files[0]; if (!file) return;
   const r = new FileReader();
   r.onload = ev => {
     try {
       const wb = XLSX.read(ev.target.result, { type:'binary' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
-      if (rows.length < 2) { toast('File appears empty','error'); return; }
-      _bomHdrs = rows[0].map(h => String(h));
-      _bomRaw  = rows.slice(1).filter(r => r.some(c => c !== ''));
-      buildMapper('bom');
+      // Single-sheet workbook → behave as before (no picker)
+      if (wb.SheetNames.length === 1) {
+        _ingestBomSheets(wb, [wb.SheetNames[0]]);
+        return;
+      }
+      // Multi-sheet → analyse + show picker
+      _bomWB = wb;
+      _bomSheetCfg = {};
+      wb.SheetNames.forEach(sheetName => {
+        try {
+          const ws = wb.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+          const dataRows = rows.slice(1).filter(r => r.some(c => c !== ''));
+          const headers  = rows.length > 0 ? rows[0].slice(0, 4).map(h => String(h || '')) : [];
+          // Smart default: deselect catalog/master/index sheets (large row count
+          // OR name matches typical catalog keywords). Select BOM-shaped sheets.
+          const lowerName = sheetName.toLowerCase();
+          const isCatalog = dataRows.length > 1000
+                          || /\b(parts?|catalog|master|index|summary|all parts?|lookup)\b/i.test(lowerName);
+          _bomSheetCfg[sheetName] = {
+            rowCount: dataRows.length,
+            headers:  headers.filter(h => h !== ''),
+            selected: !isCatalog && dataRows.length > 0,
+            isCatalog: isCatalog
+          };
+        } catch(_) {
+          _bomSheetCfg[sheetName] = { rowCount: 0, headers: [], selected: false, isCatalog: false };
+        }
+      });
+      _renderBomSheetPicker();
+      openModal('modalBomSheetPicker');
     } catch(err) { toast('Could not read file: ' + err.message, 'error'); }
   };
   r.onerror = () => toast('Could not read file', 'error');
   r.readAsBinaryString(file);
   e.target.value = '';
+}
+
+// Renders the sheet-picker modal body. Idempotent — re-call to refresh totals.
+function _renderBomSheetPicker() {
+  if (!_bomWB || !_bomSheetCfg) return;
+  const rows = _bomWB.SheetNames.map(name => {
+    const cfg = _bomSheetCfg[name];
+    const checked = cfg.selected ? 'checked' : '';
+    const tag = cfg.isCatalog ? '<span style="font-size:9px;padding:1px 6px;background:rgba(255,193,7,0.15);color:var(--gold);border-radius:8px;margin-left:8px">catalog-like</span>' : '';
+    const hdrPreview = cfg.headers.length
+      ? `<div style="font-size:10px;color:var(--faint);margin-top:2px">cols: ${cfg.headers.map(h => esc(h)).join(' · ')}</div>`
+      : `<div style="font-size:10px;color:var(--faint);margin-top:2px">(no header row detected)</div>`;
+    return `<label style="display:block;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;${cfg.rowCount === 0 ? 'opacity:0.5;cursor:not-allowed' : ''}">
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" data-sheet="${esc(name)}" ${checked} ${cfg.rowCount === 0 ? 'disabled' : ''} onchange="_toggleBomSheet('${esc(name)}', this.checked)">
+        <div style="flex:1">
+          <div style="font-size:12px;color:var(--txt);font-weight:600">${esc(name)}${tag}</div>
+          ${hdrPreview}
+        </div>
+        <div style="font-size:11px;color:var(--muted);min-width:80px;text-align:right">${cfg.rowCount.toLocaleString()} row${cfg.rowCount === 1 ? '' : 's'}</div>
+      </div>
+    </label>`;
+  }).join('');
+  const selectedCount = Object.values(_bomSheetCfg).filter(c => c.selected).length;
+  const totalRows = Object.values(_bomSheetCfg).filter(c => c.selected).reduce((s, c) => s + c.rowCount, 0);
+  document.getElementById('bomSheetPickerBody').innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+      This Excel has <strong style="color:var(--txt)">${_bomWB.SheetNames.length} sheets</strong>. Sheets that look like a per-component BOM (e.g. ENGINE, TRANSMISSION) are selected by default. Sheets that look like a catalog/master (large row count or name matches "parts"/"catalog"/etc.) are deselected — you can override.
+    </div>
+    <div style="max-height:50vh;overflow-y:auto;border:1px solid var(--border);border-radius:4px;background:var(--deep)">${rows}</div>
+    <div style="margin-top:14px;font-size:11px;color:var(--txt);text-align:right">
+      Selected: <strong>${selectedCount} sheet${selectedCount === 1 ? '' : 's'}</strong> · <strong>${totalRows.toLocaleString()} row${totalRows === 1 ? '' : 's'} total</strong>
+    </div>`;
+}
+
+function _toggleBomSheet(name, checked) {
+  if (_bomSheetCfg && _bomSheetCfg[name]) {
+    _bomSheetCfg[name].selected = checked;
+    _renderBomSheetPicker();
+  }
+}
+
+function confirmBomSheetSelection() {
+  if (!_bomWB || !_bomSheetCfg) return;
+  const selected = _bomWB.SheetNames.filter(n => _bomSheetCfg[n] && _bomSheetCfg[n].selected);
+  if (selected.length === 0) { toast('Select at least one sheet', 'error'); return; }
+  closeModal('modalBomSheetPicker');
+  _ingestBomSheets(_bomWB, selected);
+  _bomWB = null;
+  _bomSheetCfg = null;
+}
+
+// Internal: concatenate rows from selected sheets (each tagged with
+// _sourceSheet = sheet name) and feed into the existing column mapper.
+// _bomHdrs uses the FIRST selected sheet's headers as the canonical mapping
+// (operator can re-map in the column mapper if sheets have different column
+// orders, but most workbooks have consistent column structure across sheets).
+function _ingestBomSheets(wb, sheetNames) {
+  const allRaw = [];
+  let firstHdrs = null;
+  let skippedSheets = [];
+  sheetNames.forEach(sheetName => {
+    try {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      if (rows.length < 2) { skippedSheets.push(sheetName); return; }
+      const hdrs = rows[0].map(h => String(h));
+      if (!firstHdrs) firstHdrs = hdrs;
+      // Concatenate with a hidden marker (last column) capturing sheet name.
+      // The column mapper ignores this column (it's beyond the visible headers);
+      // confirmBomImport reads it via index = firstHdrs.length.
+      rows.slice(1).forEach(row => {
+        if (row.some(c => c !== '')) {
+          const extended = row.slice(0, firstHdrs.length).concat([sheetName]);
+          allRaw.push(extended);
+        }
+      });
+    } catch(_) { skippedSheets.push(sheetName); }
+  });
+  if (allRaw.length === 0) { toast('No data rows in the selected sheets', 'error'); return; }
+  _bomHdrs = firstHdrs;
+  _bomRaw  = allRaw;
+  if (skippedSheets.length) {
+    toast(`Skipped ${skippedSheets.length} empty / unreadable sheet${skippedSheets.length === 1 ? '' : 's'}: ${skippedSheets.slice(0,3).join(', ')}${skippedSheets.length > 3 ? '…' : ''}`, 'info');
+  }
+  buildMapper('bom');
 }
 
 function confirmBomImport() {
@@ -1991,15 +2115,26 @@ function confirmBomImport() {
   });
   if (mapping.description === undefined) { toast('Description column is required', 'error'); return; }
 
+  // v8.9 FIX-1 — multi-sheet: the last column of each _bomRaw row carries
+  // the source sheet name (appended by _ingestBomSheets). Surface it as
+  // a `component` field on each BOM item so downstream stock matching
+  // can use it as a hint when the operator hasn't mapped a Component column.
+  const sourceSheetIdx = _bomHdrs.length;
+
   const bom = _bomRaw.map(row => {
     const item = { notes:'' };
     BOM_FIELDS.forEach(f => { if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? ''); });
+    // Tag with source sheet (if multi-sheet ingest; otherwise null)
+    if (row[sourceSheetIdx] !== undefined) item._sourceSheet = String(row[sourceSheetIdx]);
     return item;
   }).filter(i => i.description);
 
   deploy.projects[selProjId].bom = bom;
   closeModal('modalBomMap');
-  toast(`Imported ${bom.length} BOM items`, 'success');
+  // Report multi-sheet origin if applicable
+  const uniqueSheets = [...new Set(bom.map(b => b._sourceSheet).filter(Boolean))];
+  const sheetMsg = uniqueSheets.length > 1 ? ` from ${uniqueSheets.length} sheets` : '';
+  toast(`Imported ${bom.length} BOM items${sheetMsg}`, 'success');
   renderMaterials(selProjId);
   _markUnsaved();
 }
@@ -2008,26 +2143,11 @@ function confirmBomImport() {
 // WORK ORDERS TAB
 // ─────────────────────────────────────────────
 let _woFilter = 'all';
-// v8.8 (Slide 9) — sap_material filter for the BOM↔IW39 link click-through.
-// Empty string = no filter (default). Set by filterWosByMaterial() when an
-// operator clicks the "🔗 N WOs" badge on a BOM row. Combines with _woFilter
-// (status) at render time so both can be active simultaneously.
-let _woSapFilter = '';
-
-// v8.8 — filter the WO tab to WOs that match a given SAP material number,
-// then switch to that tab. Clears any other active sap-filter (a fresh click
-// always replaces the prior filter). Sticky-toggle: clicking the same badge
-// twice clears the filter.
-function filterWosByMaterial(id, sapKey) {
-  if (_woSapFilter === sapKey) {
-    _woSapFilter = '';
-  } else {
-    _woSapFilter = sapKey;
-  }
-  // Switch to WO tab and re-render (switchTab handles the actual tab-DOM toggle)
-  try { switchTab('wo'); } catch(_) { /* fallback: just re-render */ }
-  renderWorkOrders(id);
-}
+// v8.9 FIX-1 (2026-05-12) — _woSapFilter + filterWosByMaterial() removed.
+// The v8.8 BOM↔IW39 material-match link was based on sap_material, which
+// operator-confirmed 2026-05-12 is not present in their IW39 exports.
+// WO filtering is now purely by unit Sort Field (FLOC) at render time
+// in renderWorkOrders (FIX-2). The status filter chips (_woFilter) remain.
 
 function renderWorkOrders(id) {
   const p  = pd(id);
@@ -2036,20 +2156,51 @@ function renderWorkOrders(id) {
     el.innerHTML = `<div class="empty"><span class="empty-icon">🔒</span>Activate this project to upload work orders.</div>`;
     badge('wo', 0); return;
   }
-  const wos = p.workOrders || [];
+  // v8.9 FIX-2 (2026-05-12) — Work Orders tab now pulls from fleet-wide IW39
+  // when loaded, filtered to this project's unit Sort Field + (optional)
+  // YBA2 toggle. Operator-flagged: the header pill said "IW39: as of HH:MM"
+  // (loaded) but this tab still showed "No work orders yet" — confusing.
+  // Now: if fleet-wide IW39 is loaded → use it (with badge in toolbar
+  // indicating the source). Fall back to per-project workOrders[] (the
+  // legacy v8.7/v8.8 path) if no fleet-wide is loaded.
+  const _fleetWideLoaded = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
+  const _unitId = p.unit ? String(p.unit).trim().toUpperCase() : '';
+  let wos;
+  let _woSource;
+  if (_fleetWideLoaded) {
+    wos = _fleetWideIW39.filter(wo => {
+      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return false;
+      if (_unitId && !String(wo.floc || '').toUpperCase().includes(_unitId)) return false;
+      return true;
+    });
+    _woSource = 'fleet';
+  } else {
+    wos = p.workOrders || [];
+    _woSource = 'project';
+  }
   badge('wo', wos.length || 0);
+
+  // Source indicator + actions
+  const _sourceBadge = _woSource === 'fleet'
+    ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(76,175,80,0.10);color:var(--green);border:1px solid var(--green);margin-left:8px">⚙ Fleet-wide IW39 · filtered to ${esc(_unitId || 'unit')}${_iw39YBA2Filter ? ' · YBA2 only' : ''}</span>`
+    : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(91,156,246,0.10);color:var(--blue);border:1px solid var(--border);margin-left:8px">📁 Per-project upload</span>` : '');
 
   el.innerHTML = `
     <div class="tab-toolbar">
-      <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} orders)</span>` : ''}</div>
+      <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} orders)</span>` : ''}${_sourceBadge}</div>
       <div style="display:flex;gap:8px">
-        ${wos.length ? `<button class="btn-clear" onclick="clearWOs('${id}')">Clear WOs</button>` : ''}
-        <button class="btn-upload" onclick="document.getElementById('woIn').click()">📂 Upload IW39 (Excel)</button>
+        ${_woSource === 'project' && wos.length ? `<button class="btn-clear" onclick="clearWOs('${id}')">Clear WOs</button>` : ''}
+        ${_woSource === 'fleet' ? `` : `<button class="btn-upload" onclick="document.getElementById('woIn').click()">📂 Upload IW39 (Excel)</button>`}
       </div>
     </div>`;
 
   if (!wos.length) {
-    el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No work orders loaded yet.<br>Upload a SAP IW39 export to map work orders to this project.<br><br><span style="color:var(--faint);font-size:11px">Expected columns: WO Number · Description · System Status · Planned Cost · Actual Cost · FLOC</span></div>`;
+    if (_fleetWideLoaded) {
+      // Fleet-wide IS loaded but no WOs match this unit — informative empty state
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No work orders found for unit <strong>${esc(_unitId || '—')}</strong>${_iw39YBA2Filter ? ' with order type YBA2' : ''}.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total) but none match this unit's Sort Field.<br><br><span style="color:var(--faint);font-size:11px">Try toggling YBA2 off (header) to see all order types, or upload a fresh IW39 if this unit was missing from the export.</span></div>`;
+    } else {
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No work orders loaded yet.<br>Upload a SAP IW39 export to map work orders to this project, OR upload a fleet-wide IW39 from the header pill (covers all units at once).<br><br><span style="color:var(--faint);font-size:11px">Expected columns: WO Number · Description · System Status · Planned Cost · Actual Cost · FLOC / Sort Field · Order Type</span></div>`;
+    }
     return;
   }
 
@@ -2106,20 +2257,13 @@ function renderWorkOrders(id) {
       <button class="tab-filter ${_woFilter==='CRTD' ?'active':''}" onclick="setWoFilter('CRTD','${id}')">CRTD (${crtdCount})</button>
       <button class="tab-filter ${_woFilter==='REL'  ?'active':''}" onclick="setWoFilter('REL','${id}')">REL (${relCount})</button>
       <button class="tab-filter ${_woFilter==='TECO' ?'active':''}" onclick="setWoFilter('TECO','${id}')">TECO/CLSD (${tecoCount})</button>
-      ${_woSapFilter ? `<button class="tab-filter active" style="background:rgba(91,156,246,0.15);border-color:var(--blue);color:var(--blue)" onclick="filterWosByMaterial('${id}','${esc(_woSapFilter)}')" title="Click to clear">🔗 SAP Material: ${esc(_woSapFilter)} ✕</button>` : ''}
     </div>`;
 
-  // v8.8 (Slide 9) — apply both filters in sequence. _woFilter is the status
-  // chip; _woSapFilter (set by filterWosByMaterial() when an operator clicks
-  // a BOM "🔗 N WOs" badge) narrows to one SAP Material No. Either can be
-  // active independently. Case-insensitive trim-aware compare matches the
-  // BOM-side keying.
+  // v8.9 FIX-2 — status filter only (the v8.8 _woSapFilter was removed
+  // since IW39 doesn't carry sap_material — operator-confirmed 2026-05-12).
   let visible = _woFilter === 'all' ? wos
     : _woFilter === 'TECO' ? wos.filter(w => ['TECO','CLSD'].includes((w.status||'').toUpperCase().trim()))
     : wos.filter(w => (w.status||'').toUpperCase().trim() === _woFilter);
-  if (_woSapFilter) {
-    visible = visible.filter(w => String(w.sap_material||'').trim().toUpperCase() === _woSapFilter);
-  }
 
   const rows = visible.map((wo, ri) => {
     const planned = parseFloat(wo.planned_cost)||0;
@@ -2516,33 +2660,18 @@ function _computeBomStockStatus(projId, bomRow) {
   return result;
 }
 
-function _matchingWOsForBomRow(projId, bomRow) {
-  const sapKey = _normVPN(bomRow.sap_material);
-  if (!sapKey) return [];
-  if (Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0) {
-    const p = pd(projId);
-    const unitId = p && p.unit ? String(p.unit).trim().toUpperCase() : '';
-    return _fleetWideIW39.filter(wo => {
-      if (_normVPN(wo.sap_material) !== sapKey) return false;
-      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return false;
-      if (unitId) {
-        const flocU = String(wo.floc || '').trim().toUpperCase();
-        if (!flocU.includes(unitId)) return false;
-      }
-      return true;
-    });
-  }
-  const p = pd(projId);
-  const wos = (p && p.workOrders) || [];
-  return wos.filter(wo => _normVPN(wo.sap_material) === sapKey);
-}
+// v8.9 FIX-1 (2026-05-12) — _matchingWOsForBomRow removed. The function
+// joined by sap_material which operator confirmed isn't in IW39 exports.
+// The Work Orders tab (FIX-2) is the canonical place to see WOs for a
+// project — they're filtered there by unit Sort Field, not by material.
+// The Stock drill-down no longer shows a WO section; cleaner UX since
+// every BOM row was showing the same per-unit WO list.
 
 function openStockDrillDown(projId, bomIdx) {
   const p = pd(projId);
   if (!p || !p.bom || !p.bom[bomIdx]) return;
   const bomRow = p.bom[bomIdx];
   const status = _computeBomStockStatus(projId, bomRow);
-  const wos    = _matchingWOsForBomRow(projId, bomRow);
   document.getElementById('stockDrillTitle').textContent = `📊 Stock — ${bomRow.description || bomRow.sap_material || bomRow.part_number || 'BOM row'}`;
   const stateLabel = ({
     in_stock:'<span style="color:var(--green);font-weight:600">✓ In stock</span>',
@@ -2588,28 +2717,13 @@ function openStockDrillDown(projId, bomIdx) {
           }).join('')}
           </tbody></table></div>`;
   }
-  html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">Matching Work Orders ${_iw39YBA2Filter ? '<span style="color:var(--blue);font-size:9px">· YBA2 filter active</span>' : ''}</div>`;
-  if (wos.length > 0) {
-    html += `<div style="overflow:auto;border:1px solid var(--border);border-radius:4px">
-      <table style="width:100%;border-collapse:collapse;font-size:10px">
-        <thead><tr style="background:var(--deep);color:var(--muted)">
-          <th style="padding:6px 8px;text-align:left">WO Number</th>
-          <th style="padding:6px 8px;text-align:left">Status</th>
-          <th style="padding:6px 8px;text-align:left">Order Type</th>
-          <th style="padding:6px 8px;text-align:left">FLOC / Sort Field</th>
-          <th style="padding:6px 8px;text-align:left">Description</th>
-        </tr></thead><tbody>
-        ${wos.slice(0, 50).map(wo => `<tr style="border-bottom:1px solid var(--border)">
-          <td class="mono" style="padding:6px 8px;color:var(--txt);font-weight:600">${esc(wo.wo_number || '')}</td>
-          <td style="padding:6px 8px;color:var(--muted)">${esc(wo.status || '—')}</td>
-          <td style="padding:6px 8px;color:var(--muted)">${esc(wo.order_type || '—')}</td>
-          <td class="mono" style="padding:6px 8px;color:var(--muted)">${esc(wo.floc || '—')}</td>
-          <td style="padding:6px 8px;color:var(--txt)">${esc(wo.description || '—')}</td>
-        </tr>`).join('')}
-        </tbody></table>${wos.length > 50 ? `<div style="padding:8px;font-size:10px;color:var(--faint);text-align:center">+ ${wos.length - 50} more WOs (showing first 50)</div>` : ''}</div>`;
-  } else {
-    html += `<div style="background:var(--deep);border:1px dashed var(--border);border-radius:4px;padding:14px;text-align:center;color:var(--faint);font-size:11px">No matching Work Orders.${!_fleetWideIW39 && !(pd(projId)?.workOrders?.length) ? '<br><span style="font-size:10px">Upload a fleet-wide IW39 from the header pill, or per-project IW39 from the Work Orders tab.</span>' : ''}</div>`;
-  }
+  // v8.9 FIX-1 (2026-05-12) — "Matching Work Orders" section REMOVED from
+  // drill-down. IW39 doesn't carry sap_material so the match was always
+  // empty; the per-unit WO list is identical for every BOM row anyway.
+  // Operator sees WOs in the Work Orders tab (FIX-2 wires it to fleet-wide
+  // IW39 filtered by unit Sort Field). Cleaner: drill-down stays focused
+  // on the inventory variant breakdown.
+  html += `<div style="font-size:11px;color:var(--faint);margin-top:14px;padding:10px 12px;background:var(--deep);border:1px dashed var(--border);border-radius:4px">📋 Work Orders for this unit appear in the <strong style="color:var(--txt)">Work Orders</strong> tab (filtered from the fleet-wide IW39 by Sort Field).</div>`;
   document.getElementById('stockDrillBody').innerHTML = html;
   openModal('modalStockDrill');
 }
@@ -3649,6 +3763,15 @@ function _deployDoAutoSave() {
 }
 
 function _deployTryRestoreAutoSave() {
+  // v8.9 FIX-4 (2026-05-12) — operator-flagged: the confirm() prompt fired
+  // every time the operator switched panels (Lens → Deploy → back) and
+  // looked unprofessional in client-facing meetings. Operator-locked:
+  // "Deploy should always load the latest session". Removed the prompt;
+  // now silently restores the auto-backup if it's newer than the file's
+  // lastSaved. A quiet info toast informs the operator that a restore
+  // happened (no action required). If they don't want the restore, they
+  // can Clear Saved or Save File over it — same options as before, just
+  // without the modal interruption.
   if (!fleetData || !deploy) return false;
   try {
     const raw = localStorage.getItem(_deployAutoSaveKey());
@@ -3660,15 +3783,14 @@ function _deployTryRestoreAutoSave() {
     const fileTs = (fleetData.meta && fleetData.meta.lastSaved) || '';
     if (fileTs && snap.savedAt <= fileTs) return false;
 
-    if (!confirm('A more recent unsaved Deploy session was found in this browser '
-        + '(auto-backup at ' + new Date(snap.savedAt).toLocaleString('en-AU') + ').\n\n'
-        + 'Restore those changes on top of the file you just loaded?')) {
-      return false;
-    }
-
-    // Replace deploy slice with the backed-up version (caller must re-render)
+    // Silent restore — replace deploy slice with the backed-up version.
     Object.assign(deploy, snap.deployData);
     _markUnsaved();
+    try {
+      const t = new Date(snap.savedAt);
+      const hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+      toast(`Restored Deploy edits from ${hh} (auto-backup)`, 'info');
+    } catch(_) {}
     return true;
   } catch(e) { console.warn('Deploy auto-save restore failed:', e); return false; }
 }
