@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.6 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.10 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -547,10 +547,11 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
         <span style="color:var(--muted);white-space:nowrap">⚙ IW39:</span>
         <span id="iw39StatusLbl" style="color:var(--muted);font-weight:600">Not loaded</span>
       </div>
-      <label id="yba2Toggle" style="display:none;align-items:center;gap:4px;font-size:10px;color:var(--muted);cursor:pointer" title="Filter the IW39 link badges + drill-downs to YBA2 (planned maintenance) order type only">
-        <input type="checkbox" id="yba2ToggleCB" onchange="toggleYBA2Filter(this.checked)" style="cursor:pointer">
-        <span>YBA2 only</span>
-      </label>
+      <!-- v8.10 FIX-1 (2026-05-12) — header YBA2 toggle removed. Order Type
+           filter is now a per-fleet config (deploy.config.iw39OrderTypes,
+           default 'YBA2') editable inline on the Work Orders tab. Operator
+           every-client-different: hardcoded YBA2 toggle didn't scale. -->
+      <span id="yba2Toggle" style="display:none"></span>
       <div style="display:flex;align-items:center;gap:6px;background:var(--deep);border:1px solid var(--border);border-radius:4px;padding:4px 10px">
         <span style="font-size:10px;color:var(--muted);white-space:nowrap">Call Horizon</span>
         <select id="horizonSel" style="background:transparent;border:none;color:var(--gold);font-size:11px;font-weight:700;cursor:pointer;outline:none;font-family:inherit" onchange="setCallHorizon(+this.value)">
@@ -892,7 +893,26 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
     <div id="bomSheetPickerBody"></div>
     <div class="m-actions">
       <button class="mbtn secondary" onclick="closeModal('modalBomSheetPicker'); _bomWB=null; _bomSheetCfg=null;">Cancel</button>
-      <button class="mbtn primary"   onclick="confirmBomSheetSelection()">Next: Map Columns →</button>
+      <button class="mbtn primary"   onclick="confirmBomSheetSelection()">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- v8.10 (2026-05-12) — Component ↔ BOM-sheet linking modal.
+     Opens after the sheet picker (FIX-1) confirms, when the project has
+     Cadence-linked scope components AND >1 sheet was selected. Pairs each
+     project component (left) with one BOM sheet (right) via fuzzy-suggested
+     defaults the operator overrides. The map persists per project as
+     deploy.projects[id].componentSheetMap and drives the Parts Readiness
+     rollup in the BOM tab. "Skip linking" path proceeds as v8.9 behaviour. -->
+<div class="modal-ov" id="modalComponentSheetLink">
+  <div class="modal" style="min-width:720px;max-width:920px">
+    <div class="modal-title">🔗 Link Components to BOM Sheets</div>
+    <div id="componentSheetLinkBody"></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="_cancelComponentSheetLink()">Cancel upload</button>
+      <button class="mbtn secondary" onclick="_skipComponentSheetLink()" title="Continue without saving a component↔sheet map (v8.9 behaviour). Parts Readiness rollup will be empty until you set a map.">Skip linking</button>
+      <button class="mbtn primary"   onclick="_confirmComponentSheetLink()">Confirm &amp; continue →</button>
     </div>
   </div>
 </div>
@@ -1044,7 +1064,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.9';   // single source of truth for tool version
+const VERSION = '8.10';  // single source of truth for tool version
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1201,7 +1221,13 @@ let _invMasterAsOf       = null;
 let _invMasterRowCount   = 0;
 let _fleetWideIW39       = null;   // Array<{wo_number, status, order_type, floc, sap_material, ...}>
 let _iw39AsOf            = null;
-let _iw39YBA2Filter      = false;  // Render-time toggle (Q3 = B)
+// v8.10 FIX-1 (2026-05-12 afternoon) — `_iw39YBA2Filter` removed. The
+// hardcoded YBA2 toggle is replaced by a per-fleet, user-editable filter
+// stored in deploy.config.iw39OrderTypes (default 'YBA2'). The status
+// chip is also gone — Work Orders tab now always restricts to OPEN
+// statuses (REL/CRTD) and excludes descriptions matching the keyword in
+// deploy.config.iw39ExcludeKeywords (default 'Service'). Both filters
+// are surfaced inline on the Work Orders tab toolbar.
 // Raw upload buffers — used while column mapper modal is open
 let _snapHdrs = []; let _snapRaw = null;
 let _imHdrs   = []; let _imRaw   = null;
@@ -1298,8 +1324,56 @@ function parseFleet() {
   deploy = fleetData.workingData.deployData;          // alias — mutations here ARE mutations in fleetData
   if (!deploy.projects) deploy.projects = {};
 
-  // Ensure config section exists — holds template library
+  // v8.10 (2026-05-12) — Mission Control dual-shape defensive merge.
+  // When Deploy is loaded standalone after a fleet was last saved from Lens
+  // (Mission Control flow), the file has FRESH iframe-edits at
+  // workingData.projectDetails but the workingData.deployData.projects copy
+  // is STALE — Lens never re-syncs deployData when iframe-Deploy posts edits
+  // back to the parent. Per-project, pick the richer side per Deploy-owned
+  // field (longer array / more keys). Symmetric: also recovers if the file
+  // was last saved by standalone Deploy and projectDetails is the stale one.
+  // Scheduled for proper architectural cleanup in v8.12 (dual-shape removal).
+  const _dualShapeFromPD = fleetData && fleetData.workingData && fleetData.workingData.projectDetails;
+  if (_dualShapeFromPD && typeof _dualShapeFromPD === 'object') {
+    const _richer = (a, b) => {
+      const lenA = Array.isArray(a) ? a.length : (a && typeof a === 'object' ? Object.keys(a).length : 0);
+      const lenB = Array.isArray(b) ? b.length : (b && typeof b === 'object' ? Object.keys(b).length : 0);
+      return lenA >= lenB ? a : b;
+    };
+    const _depFields = ['bom','componentSnapshot','componentSheetMap','gates','customTasks','workOrders','actions','notes'];
+    let _mergedProjects = 0, _mergedFields = 0;
+    Object.keys(_dualShapeFromPD).forEach(pid => {
+      const fromPD = _dualShapeFromPD[pid];
+      if (!fromPD || typeof fromPD !== 'object') return;
+      if (!deploy.projects[pid]) {
+        // Project only exists in projectDetails — adopt it wholesale.
+        deploy.projects[pid] = fromPD;
+        _mergedProjects++;
+      } else {
+        // Both have it — pick the richer side per field.
+        const dst = deploy.projects[pid];
+        _depFields.forEach(field => {
+          const merged = _richer(fromPD[field], dst[field]);
+          if (merged !== undefined && merged !== dst[field]) {
+            dst[field] = merged;
+            _mergedFields++;
+          }
+        });
+      }
+    });
+    if (_mergedProjects > 0 || _mergedFields > 0) {
+      console.log('[v8.10 dual-shape merge] projects adopted: ' + _mergedProjects + ', fields merged: ' + _mergedFields);
+    }
+  }
+
+  // Ensure config section exists — holds template library + per-fleet WO filters (v8.10 FIX-1)
   if (!deploy.config) deploy.config = { defaultTemplateId: 'standard_pcr', templates: {} };
+  // v8.10 FIX-1 (2026-05-12) — Per-fleet IW39 Work Order filters. Operator-locked:
+  // every client site uses different WO type codes (YBA2 / YBA3 / ZPM3 / etc.) and
+  // different PM-activity description markers. Inline-editable on the Work Orders
+  // tab. Empty value = no restriction (degrade safely). Comma-separated lists ok.
+  if (typeof deploy.config.iw39OrderTypes      !== 'string') deploy.config.iw39OrderTypes      = 'YBA2';
+  if (typeof deploy.config.iw39ExcludeKeywords !== 'string') deploy.config.iw39ExcludeKeywords = 'Service';
   // Seed built-in template if not yet present
   if (!deploy.config.templates.standard_pcr) {
     deploy.config.templates.standard_pcr = {
@@ -1388,11 +1462,17 @@ function ensurePD(id, templateId) {
       workOrders:   [],
       actions:      [],
       notes:        [],
+      // v8.10 — Component ↔ BOM-sheet mapping. componentId (number, keyed in
+      // fleetComps) → BOM sheet name (string). Built once during BOM upload
+      // via modalComponentSheetLink; editable later via the BOM tab toolbar.
+      // Drives per-component Parts Readiness rollup in renderMaterials.
+      componentSheetMap: {},
     };
   }
   // Back-fill missing fields for older data
   const p = deploy.projects[id];
   if (!p.customTasks) p.customTasks = [];
+  if (!p.componentSheetMap) p.componentSheetMap = {};   // v8.10
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   return p;
 }
@@ -1816,6 +1896,19 @@ const BOM_STATUSES = [
 
 let _bomFilter = 'all';
 
+// v8.10 (2026-05-12) — Grouped BOM tab: rows render under the component
+// they belong to (via componentSheetMap). Each group row shows a Parts
+// Readiness rollup badge (READY / PARTIAL / AT RISK / UNMAPPED). Click to
+// expand → inner table = the same v8.9 BOM columns. Unmapped sheets and
+// rows without _sourceSheet fall into a bottom "Unmapped" group so nothing
+// is hidden. Open/close state per component lives in _bomGroupOpen.
+let _bomGroupOpen = {};   // { 'comp_<id>' | 'unmapped': true/false }
+
+function toggleBomGroup(key, id) {
+  _bomGroupOpen[key] = !_bomGroupOpen[key];
+  renderMaterials(id);
+}
+
 function renderMaterials(id) {
   const p  = pd(id);
   const el = document.getElementById('matContent');
@@ -1833,7 +1926,6 @@ function renderMaterials(id) {
   const cnt = { pending:0, confirmed:0, ordered:0, received:0, missing:0 };
   bom.forEach(r => { cnt[r.sapStatus] = (cnt[r.sapStatus]||0) + 1; });
   const totalCost   = bom.reduce((s,r) => s + (parseFloat(r.unit_cost)||0) * (parseFloat(r.qty)||1), 0);
-  const rcvCost     = bom.filter(r=>r.sapStatus==='received').reduce((s,r) => s + (parseFloat(r.unit_cost)||0)*(parseFloat(r.qty)||1), 0);
   const readyPct    = bom.length ? Math.round((cnt.confirmed + cnt.ordered + cnt.received) / bom.length * 100) : 0;
 
   // v8.9 — per-project Component Snapshot indicator + upload button.
@@ -1843,11 +1935,24 @@ function renderMaterials(id) {
     ? `✓ Snapshot: ${_snap.length} components`
     : `📂 Upload Component Snapshot`;
 
+  // v8.10 — Component ↔ sheet map state. Resolve linked components from
+  // the Cadence-built fleet JSON (same source the Overview tab uses).
+  const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === id) : null;
+  const linkedComps = (fp && fp.linkedIds)
+    ? fp.linkedIds.map(i => fleetComps && fleetComps[i]).filter(Boolean)
+    : [];
+  const map = p.componentSheetMap || {};
+  const hasMapping = linkedComps.length > 0 && Object.values(map).some(v => v);
+  // Sheets present in this BOM (whether mapped or not)
+  const bomSheetsInUse = [...new Set(bom.map(r => r._sourceSheet).filter(Boolean))];
+  const showEditMapBtn = linkedComps.length > 0 && bomSheetsInUse.length > 0;
+
   el.innerHTML = `
     <div class="tab-toolbar">
       <div class="tab-toolbar-title">Bill of Materials${bom.length ? ` <span style="color:var(--muted);font-weight:400">(${bom.length} items)</span>` : ''}</div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-upload" onclick="document.getElementById('snapshotIn').click()" title="${_snapLoaded ? 'Re-upload to replace the Snapshot' : 'Per-unit cross-reference of part variants (NEW/EXC/REMAN)'}" style="${_snapLoaded?'background:rgba(76,175,80,0.10);border-color:var(--green);color:var(--green)':''}">${_snapBtnLabel}</button>
+        ${showEditMapBtn ? `<button class="btn-upload" onclick="openComponentSheetLinkFromToolbar('${id}')" title="Edit which BOM sheet feeds each project component" style="${hasMapping?'background:rgba(91,156,246,0.08);border-color:var(--blue);color:var(--blue)':''}">🔗 ${hasMapping ? 'Edit' : 'Set'} Component Map</button>` : ''}
         ${bom.length ? `<button class="btn-clear" onclick="clearBom('${id}')">Clear BOM</button>` : ''}
         <button class="btn-upload" onclick="document.getElementById('bomIn').click()">📂 Upload BOM (Excel)</button>
       </div>
@@ -1878,22 +1983,11 @@ function renderMaterials(id) {
       <button class="tab-filter ${_bomFilter==='missing'  ?'active':''}" onclick="setBomFilter('missing','${id}')" style="color:var(--red)">Not Found (${cnt.missing})</button>
     </div>`;
 
-  const visible = _bomFilter === 'all' ? bom : bom.filter(r => r.sapStatus === _bomFilter);
-
   const statusOpts = (cur) => BOM_STATUSES.map(s =>
     `<option value="${s.val}" ${s.val===cur?'selected':''}>${s.label}</option>`).join('');
-
   const rowClass = (s) => ({confirmed:'row-confirmed',ordered:'row-ordered',received:'row-received',missing:'row-missing'}[s]||'');
 
-  // v8.9 FIX-1 (2026-05-12) — BOM ↔ IW39 material-match link REMOVED.
-  // Operator-confirmed 2026-05-12: "the IW39 report does not include
-  // materials". The v8.8 sap_material join was always going to count zero
-  // because IW39 exports don't carry a SAP Material No column. The
-  // per-unit Work Orders tab (now wired to fleet-wide IW39 via FIX-2) is
-  // the canonical place to see WOs for this project. The "🔗 N WOs"
-  // per-BOM-row badge is gone.
-
-  // v8.9 — Stock badge
+  // Per-row stock badge (v8.9 — unchanged behaviour).
   const _stockBadgeFor = (row, realIdx) => {
     const status = _computeBomStockStatus(id, row);
     const stateMeta = {
@@ -1910,9 +2004,9 @@ function renderMaterials(id) {
     return `<button onclick="openStockDrillDown('${id}',${realIdx})" title="Click for stock detail across all variants" style="font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid ${stateMeta.border};background:${stateMeta.bg};color:${stateMeta.color};cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">${stateMeta.label}${sub}</button>`;
   };
 
-  const rows = visible.map((row, ri) => {
+  // Helper — renders a single BOM row in the inner table (same shape as v8.9).
+  const renderRow = (row) => {
     const realIdx = bom.indexOf(row);
-    // v8.9 FIX-1: link badge removed (IW39 has no material column to join on).
     return `
       <tr class="${rowClass(row.sapStatus)}">
         <td>${esc(row.line_no || String(realIdx+1))}</td>
@@ -1923,31 +2017,86 @@ function renderMaterials(id) {
         <td style="text-align:right">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
         <td style="text-align:center">${_stockBadgeFor(row, realIdx)}</td>
         <td>
-          <select class="gf-sel" style="font-size:10px;padding:2px 5px"
-            onchange="updateBomStatus('${id}',${realIdx},this.value)">
+          <select class="gf-sel" style="font-size:10px;padding:2px 5px" onchange="updateBomStatus('${id}',${realIdx},this.value)">
             ${statusOpts(row.sapStatus)}
           </select>
         </td>
-        <td><input class="inline-inp" value="${esc(row.notes||'')}" placeholder="Notes…"
-          onchange="updateBomNote('${id}',${realIdx},this.value)"></td>
-      </tr>`}).join('');
+        <td><input class="inline-inp" value="${esc(row.notes||'')}" placeholder="Notes…" onchange="updateBomNote('${id}',${realIdx},this.value)"></td>
+      </tr>`;
+  };
 
-  el.innerHTML += `<div class="dtw"><table class="dt">
-    <thead><tr>
-      <th>Line</th><th style="min-width:160px">Description</th>
-      <th>Part No. (VPN)</th><th>SAP Material No.</th>
-      <th>Qty</th><th>Line Cost</th>
-      <th title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
-      <th>SAP Status</th><th style="min-width:120px">Notes</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table></div>
-  ${visible.length !== bom.length ? `<div style="font-size:10px;color:var(--faint);padding:8px 0">Showing ${visible.length} of ${bom.length} items</div>` : ''}
-  ${(!_snapLoaded || _invMasterByMaterial === null) ? `<div style="margin-top:10px;padding:10px 14px;background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.4);border-radius:4px;font-size:11px;color:var(--gold)">
+  // Renders one component group: outer summary row + inner expandable rows table.
+  // The outer row shows the readiness badge; clicking it toggles _bomGroupOpen.
+  const renderGroup = (key, title, sub, rowsForGroup, readiness) => {
+    const open = !!_bomGroupOpen[key];
+    // Apply current SAP-status filter (Pending/Confirmed/etc.) INSIDE the group.
+    const visibleRows = _bomFilter === 'all' ? rowsForGroup : rowsForGroup.filter(r => r.sapStatus === _bomFilter);
+    const badgeMeta = readiness ? _readinessBadgeMeta(readiness.state) : _readinessBadgeMeta('no_parts');
+    const badgeHtml = `<span style="display:inline-block;font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid ${badgeMeta.border};background:${badgeMeta.bg};color:${badgeMeta.color};font-weight:700;letter-spacing:.4px">${badgeMeta.label}</span>`;
+    const stockSub = readiness && (readiness.state === 'ready' || readiness.state === 'partial' || readiness.state === 'at_risk')
+      ? `<span style="font-size:10px;color:var(--muted);margin-left:10px">${readiness.totalOnHand}OH · ${readiness.totalOnOrder}PO</span>`
+      : '';
+    const partsCount = `<span style="font-size:10px;color:var(--muted);margin-left:10px">${rowsForGroup.length} part${rowsForGroup.length === 1 ? '' : 's'}${visibleRows.length !== rowsForGroup.length ? ` · ${visibleRows.length} match filter` : ''}</span>`;
+    return `
+      <div style="border:1px solid var(--border);border-radius:6px;margin:8px 0;background:var(--surface);overflow:hidden">
+        <div onclick="toggleBomGroup('${esc(key)}','${id}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${open ? 'border-bottom:1px solid var(--border)' : ''}" onmouseover="this.style.background='var(--raised)'" onmouseout="this.style.background=''">
+          <span style="font-size:11px;color:var(--faint);width:14px;display:inline-block;transition:transform .15s;${open ? 'transform:rotate(90deg)' : ''}">▶</span>
+          <span style="font-size:13px;font-weight:600;color:var(--txt)">${esc(title)}</span>
+          ${sub ? `<span style="font-size:10px;color:var(--muted)">${esc(sub)}</span>` : ''}
+          <span style="flex:1"></span>
+          ${badgeHtml}${stockSub}${partsCount}
+        </div>
+        ${open ? `<div class="dtw" style="padding:0">
+          <table class="dt" style="margin:0">
+            <thead><tr>
+              <th>Line</th><th style="min-width:160px">Description</th>
+              <th>Part No. (VPN)</th><th>SAP Material No.</th>
+              <th>Qty</th><th>Line Cost</th>
+              <th title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
+              <th>SAP Status</th><th style="min-width:120px">Notes</th>
+            </tr></thead>
+            <tbody>${visibleRows.map(renderRow).join('') || '<tr><td colspan="9" style="padding:14px;color:var(--faint);font-style:italic;text-align:center">No rows match the current filter</td></tr>'}</tbody>
+          </table>
+        </div>` : ''}
+      </div>`;
+  };
+
+  // ── BUILD GROUPS ──────────────────────────────────────────────────────
+  let groupsHtml = '';
+
+  if (linkedComps.length > 0 && hasMapping) {
+    // Grouped view — one card per linked component, in Overview-tab order.
+    linkedComps.forEach(c => {
+      const sheet = map[c.id];
+      const compRows = sheet ? bom.filter(r => r._sourceSheet === sheet) : [];
+      const readiness = _computeComponentReadiness(id, c.id);
+      const sub = sheet ? `sheet: ${sheet}` : 'no sheet assigned';
+      groupsHtml += renderGroup('comp_' + c.id, c.component || c.name || '—', sub, compRows, readiness);
+    });
+    // "Unmapped" catch-all — rows whose _sourceSheet isn't in the map, plus
+    // legacy rows with no _sourceSheet tag at all.
+    const mappedSheetSet = new Set(Object.values(map).filter(Boolean));
+    const unmappedRows = bom.filter(r => !r._sourceSheet || !mappedSheetSet.has(r._sourceSheet));
+    if (unmappedRows.length > 0) {
+      const orphanSheets = [...new Set(unmappedRows.map(r => r._sourceSheet).filter(Boolean))];
+      const orphanSub = orphanSheets.length > 0 ? `from ${orphanSheets.length} sheet${orphanSheets.length === 1 ? '' : 's'}: ${orphanSheets.slice(0,3).join(', ')}${orphanSheets.length > 3 ? '…' : ''}` : 'no source sheet';
+      groupsHtml += renderGroup('unmapped', 'Unmapped (no scope)', orphanSub, unmappedRows, null);
+    }
+  } else {
+    // Ungrouped view — fall back to v8.9 behaviour (single flat list) inside
+    // a single open group. Operator sees the same data without the rollup.
+    _bomGroupOpen['__all__'] = true;
+    groupsHtml += renderGroup('__all__', 'All parts', linkedComps.length > 0 ? 'no component map set' : 'no Cadence-linked components for this project', bom, null);
+  }
+
+  el.innerHTML += groupsHtml;
+
+  // Helper banner when reference data isn't fully loaded — unchanged from v8.9.
+  el.innerHTML += (!_snapLoaded || _invMasterByMaterial === null) ? `<div style="margin-top:10px;padding:10px 14px;background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.4);border-radius:4px;font-size:11px;color:var(--gold)">
     💡 Stock badges show full data once both the <strong>Component Snapshot</strong> (toolbar above) and the <strong>Inventory Master</strong> (header pill) are loaded.
     ${!_snapLoaded ? '<div style="margin-top:4px;color:var(--muted);font-size:10px">• Snapshot: not loaded for this project yet</div>' : ''}
     ${_invMasterByMaterial === null ? '<div style="margin-top:2px;color:var(--muted);font-size:10px">• Inventory Master: not loaded for this session yet</div>' : ''}
-  </div>` : ''}`;
+  </div>` : '';
 }
 
 function setBomFilter(f, id) { _bomFilter = f; renderMaterials(id); }
@@ -2066,9 +2215,247 @@ function confirmBomSheetSelection() {
   const selected = _bomWB.SheetNames.filter(n => _bomSheetCfg[n] && _bomSheetCfg[n].selected);
   if (selected.length === 0) { toast('Select at least one sheet', 'error'); return; }
   closeModal('modalBomSheetPicker');
+
+  // v8.10 (2026-05-12) — if the project has Cadence-linked scope components
+  // AND the operator picked >1 sheet, open the scope↔sheet linking modal
+  // BEFORE the column mapper. This lets each project component (Overview
+  // tab list) be tied to its BOM sheet so the Parts Readiness rollup can
+  // group rows by component. Single-sheet picks or projects without linked
+  // components fall through to v8.9 behaviour (straight to column mapper).
+  const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(p => p.id === selProjId) : null;
+  const linked = (fp && fp.linkedIds)
+    ? fp.linkedIds.map(i => fleetComps && fleetComps[i]).filter(Boolean)
+    : [];
+  if (linked.length > 0 && selected.length > 1) {
+    _pendingBomSheets = selected;
+    _pendingLinkContext = 'upload';   // 'upload' (post-picker) | 'edit' (toolbar button)
+    _openComponentSheetLink(selProjId, linked, selected);
+    return;
+  }
+  // Fallback to v8.9 flow: no linkable components OR only one sheet selected.
   _ingestBomSheets(_bomWB, selected);
   _bomWB = null;
   _bomSheetCfg = null;
+}
+
+// v8.10 (2026-05-12) — Component ↔ BOM-sheet linking. State + UI + persistence.
+// Token-overlap fuzzy match scorer (same flavour as autoMatch() in column mapper).
+// Returns 0–1 where higher = better match. Used to pre-fill the linking modal
+// with sensible defaults the operator can override per row.
+function _scoreNameMatch(a, b) {
+  if (!a || !b) return 0;
+  const norm = s => String(s).toUpperCase().replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const A = new Set(norm(a)), B = new Set(norm(b));
+  if (A.size === 0 || B.size === 0) return 0;
+  let overlap = 0; A.forEach(t => { if (B.has(t)) overlap++; });
+  const jaccard = overlap / (A.size + B.size - overlap);
+  const aStr = norm(a).join(' '), bStr = norm(b).join(' ');
+  const sub = (aStr && bStr && (aStr.includes(bStr) || bStr.includes(aStr))) ? 0.25 : 0;
+  return Math.min(1, jaccard + sub);
+}
+
+// Module-level state for the linking modal (per-open lifetime)
+let _pendingBomSheets   = null;     // string[] of sheet names being linked
+let _pendingLinkContext = 'upload'; // 'upload' (continues to column mapper) | 'edit' (just saves the map)
+let _pendingLinkDraft   = null;     // { [componentId]: sheetName } — operator's in-progress choices
+let _pendingLinkedComps = null;     // array of component objects from fleetComps for current modal
+
+function _openComponentSheetLink(projId, linkedComps, sheetNames) {
+  _pendingLinkedComps = linkedComps;
+  _pendingBomSheets   = sheetNames;
+  const p = pd(projId);
+  const existing = (p && p.componentSheetMap) ? p.componentSheetMap : {};
+  // Seed draft: existing map wins; otherwise pick best fuzzy match per component.
+  const draft = {};
+  // Track which sheets already chosen so we don't suggest the same one twice (best score wins).
+  const usedSheets = new Set();
+  // First pass: honour existing map entries that still reference a current sheet.
+  linkedComps.forEach(c => {
+    const ex = existing[c.id];
+    if (ex && sheetNames.includes(ex)) {
+      draft[c.id] = ex;
+      usedSheets.add(ex);
+    }
+  });
+  // Second pass: rank remaining components by their best available sheet match.
+  const remaining = linkedComps.filter(c => !(c.id in draft));
+  // Build a candidate list: for each remaining component, scored against each unused sheet.
+  const candidates = [];
+  remaining.forEach(c => {
+    const name = c.component || c.name || '';
+    sheetNames.forEach(s => {
+      if (usedSheets.has(s)) return;
+      const score = _scoreNameMatch(name, s);
+      if (score >= 0.3) candidates.push({ compId: c.id, sheet: s, score });
+    });
+  });
+  // Greedy assignment: highest score first, skip if either side already taken.
+  candidates.sort((a, b) => b.score - a.score);
+  const takenComps = new Set();
+  candidates.forEach(c => {
+    if (takenComps.has(c.compId) || usedSheets.has(c.sheet)) return;
+    draft[c.compId] = c.sheet;
+    takenComps.add(c.compId);
+    usedSheets.add(c.sheet);
+  });
+  // Remaining components stay unmapped (empty string sentinel).
+  linkedComps.forEach(c => { if (!(c.id in draft)) draft[c.id] = ''; });
+  _pendingLinkDraft = draft;
+  _renderComponentSheetLink(projId);
+  openModal('modalComponentSheetLink');
+}
+
+function _renderComponentSheetLink(projId) {
+  if (!_pendingLinkedComps || !_pendingBomSheets || !_pendingLinkDraft) return;
+  const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(p => p.id === projId) : null;
+  const unitLbl = fp ? `${esc(fp.unit || '')} · ${esc(fp.model || '')}` : '';
+  const totalSheets = _pendingBomSheets.length;
+  const assignedSheets = new Set(Object.values(_pendingLinkDraft).filter(Boolean));
+  const unassignedSheets = _pendingBomSheets.filter(s => !assignedSheets.has(s));
+
+  const optsFor = (compId) => {
+    const cur = _pendingLinkDraft[compId] || '';
+    // Build option list: a sheet is selectable here if it's not already taken by another component
+    // (or if it's already the current choice for this component).
+    const opts = ['<option value="">— Unmapped —</option>'];
+    _pendingBomSheets.forEach(s => {
+      const takenByOther = assignedSheets.has(s) && _pendingLinkDraft[compId] !== s;
+      const sel = s === cur ? 'selected' : '';
+      const lbl = takenByOther ? `${s} (used)` : s;
+      opts.push(`<option value="${esc(s)}" ${sel} ${takenByOther ? 'disabled' : ''}>${esc(lbl)}</option>`);
+    });
+    return opts.join('');
+  };
+
+  const confidencePill = (compId) => {
+    const cur = _pendingLinkDraft[compId];
+    if (!cur) return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(120,120,120,0.10);color:var(--faint);border:1px solid var(--border)">unassigned</span>';
+    const comp = _pendingLinkedComps.find(c => c.id === compId);
+    const score = comp ? _scoreNameMatch(comp.component || comp.name || '', cur) : 0;
+    if (score >= 0.6)  return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(76,175,80,0.12);color:var(--green);border:1px solid var(--green)" title="High-confidence fuzzy match">strong</span>';
+    if (score >= 0.3)  return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(240,180,41,0.10);color:var(--gold);border:1px solid var(--gold)" title="Plausible fuzzy match — check before confirming">fuzzy</span>';
+    return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(91,156,246,0.08);color:var(--blue);border:1px solid var(--blue)" title="Manually chosen (low fuzzy score)">manual</span>';
+  };
+
+  const rows = _pendingLinkedComps.map(c => {
+    const catLbl = (window.NumaCoreLib && typeof window.NumaCoreLib.categoryLabel === 'function')
+      ? window.NumaCoreLib.categoryLabel(c.category || '')
+      : (c.category || '');
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:7px 10px;color:var(--txt);font-weight:600">${esc(c.component || c.name || '—')}</td>
+      <td style="padding:7px 10px;color:var(--muted);font-size:11px">${esc(catLbl)}</td>
+      <td style="padding:7px 10px">
+        <select class="gf-sel" style="width:100%;font-size:11px" onchange="_setComponentSheetDraft(${c.id}, this.value)">
+          ${optsFor(c.id)}
+        </select>
+      </td>
+      <td style="padding:7px 10px;text-align:center">${confidencePill(c.id)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('componentSheetLinkBody').innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+      Match each project component (from the Overview tab) to the BOM sheet that holds its parts.
+      Defaults are fuzzy-suggested; a <strong style="color:var(--green)">strong</strong> match is high-confidence,
+      a <strong style="color:var(--gold)">fuzzy</strong> match should be verified.
+      ${unitLbl ? `<br><strong style="color:var(--txt)">${unitLbl}</strong> · ${_pendingLinkedComps.length} component${_pendingLinkedComps.length === 1 ? '' : 's'} · ${totalSheets} BOM sheet${totalSheets === 1 ? '' : 's'}` : ''}
+    </div>
+    <div style="max-height:55vh;overflow-y:auto;border:1px solid var(--border);border-radius:4px;background:var(--deep)">
+      <table style="width:100%;border-collapse:collapse">
+        <thead style="position:sticky;top:0;background:var(--deep);z-index:1">
+          <tr style="border-bottom:2px solid var(--border)">
+            <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Component</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:140px">Category</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:260px">BOM sheet</th>
+            <th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;width:90px">Match</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px;display:flex;justify-content:space-between;font-size:11px;color:var(--muted)">
+      <span>${unassignedSheets.length > 0
+        ? `<strong style="color:var(--gold)">${unassignedSheets.length} sheet${unassignedSheets.length === 1 ? '' : 's'} unassigned:</strong> ${unassignedSheets.map(s => esc(s)).join(', ')}`
+        : '<strong style="color:var(--green)">All sheets assigned.</strong>'}</span>
+      <span>${Object.values(_pendingLinkDraft).filter(Boolean).length} of ${_pendingLinkedComps.length} components mapped</span>
+    </div>`;
+}
+
+function _setComponentSheetDraft(compId, sheetName) {
+  if (!_pendingLinkDraft) return;
+  _pendingLinkDraft[compId] = sheetName || '';
+  // Re-render so the "(used)" option labels + counters stay accurate.
+  _renderComponentSheetLink(selProjId);
+}
+
+function _cancelComponentSheetLink() {
+  closeModal('modalComponentSheetLink');
+  if (_pendingLinkContext === 'upload') {
+    // Upload aborted entirely — clear workbook state, no map written.
+    _bomWB = null; _bomSheetCfg = null;
+    toast('BOM upload cancelled', 'info');
+  }
+  _pendingBomSheets = null;
+  _pendingLinkDraft = null;
+  _pendingLinkedComps = null;
+}
+
+function _skipComponentSheetLink() {
+  closeModal('modalComponentSheetLink');
+  if (_pendingLinkContext === 'upload') {
+    // Continue without saving any component↔sheet map — v8.9 behaviour.
+    _ingestBomSheets(_bomWB, _pendingBomSheets);
+    _bomWB = null; _bomSheetCfg = null;
+  }
+  _pendingBomSheets = null;
+  _pendingLinkDraft = null;
+  _pendingLinkedComps = null;
+}
+
+function _confirmComponentSheetLink() {
+  if (!_pendingLinkDraft || !selProjId) return;
+  const p = pd(selProjId);
+  if (!p) return;
+  // Persist the draft. Empty-string values are kept (explicit unmapped) so a
+  // re-open shows the operator's "this stays unmapped" decision instead of
+  // re-running fuzzy match against the unchanged sheet list.
+  p.componentSheetMap = { ..._pendingLinkDraft };
+  _markUnsaved();
+  closeModal('modalComponentSheetLink');
+  const ctx = _pendingLinkContext;
+  // Stash the picker selection before we null out the pending state — we need
+  // it to continue the BOM ingest in the 'upload' path. The component map is
+  // an independent concept from the picker selection: every sheet the operator
+  // picked still gets ingested; unmapped sheets land in the "Unmapped" group
+  // on the BOM tab. So we pass the original selection straight through.
+  const sheetsToIngest = _pendingBomSheets || [];
+  _pendingBomSheets = null;
+  _pendingLinkDraft = null;
+  _pendingLinkedComps = null;
+  if (ctx === 'upload') {
+    _ingestBomSheets(_bomWB, sheetsToIngest);
+    _bomWB = null; _bomSheetCfg = null;
+    toast('Component map saved', 'success');
+  } else {
+    // 'edit' context — just refresh the BOM tab to re-group with the new map.
+    renderMaterials(selProjId);
+    toast('Component map updated', 'success');
+  }
+}
+
+// Toolbar button — re-open the linking modal from the BOM tab without
+// re-uploading. Derives the sheet list from the BOM rows already imported.
+function openComponentSheetLinkFromToolbar(projId) {
+  const p = pd(projId); if (!p) return;
+  const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === projId) : null;
+  const linked = (fp && fp.linkedIds)
+    ? fp.linkedIds.map(i => fleetComps && fleetComps[i]).filter(Boolean)
+    : [];
+  if (linked.length === 0) { toast('This project has no Cadence-linked components to map', 'info'); return; }
+  const sheets = [...new Set((p.bom || []).map(r => r._sourceSheet).filter(Boolean))];
+  if (sheets.length === 0) { toast('Upload a multi-sheet BOM first to enable linking', 'info'); return; }
+  _pendingLinkContext = 'edit';
+  _openComponentSheetLink(projId, linked, sheets);
 }
 
 // Internal: concatenate rows from selected sheets (each tagged with
@@ -2156,85 +2543,129 @@ function renderWorkOrders(id) {
     el.innerHTML = `<div class="empty"><span class="empty-icon">🔒</span>Activate this project to upload work orders.</div>`;
     badge('wo', 0); return;
   }
-  // v8.9 FIX-2 (2026-05-12) — Work Orders tab now pulls from fleet-wide IW39
-  // when loaded, filtered to this project's unit Sort Field + (optional)
-  // YBA2 toggle. Operator-flagged: the header pill said "IW39: as of HH:MM"
-  // (loaded) but this tab still showed "No work orders yet" — confusing.
-  // Now: if fleet-wide IW39 is loaded → use it (with badge in toolbar
-  // indicating the source). Fall back to per-project workOrders[] (the
-  // legacy v8.7/v8.8 path) if no fleet-wide is loaded.
+  // v8.10 FIX-1 (2026-05-12 afternoon) — Tighter WO filter pipeline. Per
+  // operator: (1) only OPEN WOs (status token ∈ REL/CRTD; TECO/CLSD/CNCL
+  // never appear), (2) exclude any WO whose description contains the
+  // configured exclusion keyword(s) (default 'Service' — covers '(PM)
+  // Service' line items), (3) Order Type filter is per-fleet configurable
+  // (default 'YBA2' but every client site is different — supports a
+  // comma-separated allow-list). Builds on v8.9 FIX-2 unit FLOC filter.
+  const _orderTypes = String(deploy.config?.iw39OrderTypes || '')
+    .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  const _excludeKeywords = String(deploy.config?.iw39ExcludeKeywords || '')
+    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const _statusToken = s => String(s || '').trim().split(/[\s,;|/]+/)[0].toUpperCase();
+  const _OPEN_STATUSES = ['REL', 'CRTD'];
+
   const _fleetWideLoaded = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
   const _unitId = p.unit ? String(p.unit).trim().toUpperCase() : '';
-  let wos;
+
+  const _filterRow = (wo) => {
+    // (a) Unit FLOC substring (skip if no unit known)
+    if (_unitId && !String(wo.floc || '').toUpperCase().includes(_unitId)) return false;
+    // (b) Order type allow-list (skip if list is empty = no restriction)
+    if (_orderTypes.length > 0 && !_orderTypes.includes((wo.order_type || '').toUpperCase())) return false;
+    // (c) Open status — first alphanumeric token of status string in REL/CRTD
+    if (!_OPEN_STATUSES.includes(_statusToken(wo.status))) return false;
+    // (d) Description keyword exclusion (any match = exclude)
+    if (_excludeKeywords.length > 0) {
+      const dl = String(wo.description || '').toLowerCase();
+      if (_excludeKeywords.some(kw => dl.includes(kw))) return false;
+    }
+    return true;
+  };
+
+  let _sourcePool;     // pre-filter source (for "N of M filtered" counts)
   let _woSource;
   if (_fleetWideLoaded) {
-    wos = _fleetWideIW39.filter(wo => {
-      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return false;
-      if (_unitId && !String(wo.floc || '').toUpperCase().includes(_unitId)) return false;
-      return true;
-    });
+    _sourcePool = _fleetWideIW39;
     _woSource = 'fleet';
   } else {
-    wos = p.workOrders || [];
+    _sourcePool = p.workOrders || [];
     _woSource = 'project';
   }
+  const wos = _sourcePool.filter(_filterRow);
   badge('wo', wos.length || 0);
 
   // Source indicator + actions
+  const _orderTypesLbl    = _orderTypes.length      ? _orderTypes.join(', ')         : '(any)';
+  const _excludeKwsLbl    = _excludeKeywords.length ? _excludeKeywords.join(', ')    : '(none)';
+  const _filteredOutCount = _sourcePool.length - wos.length;
   const _sourceBadge = _woSource === 'fleet'
-    ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(76,175,80,0.10);color:var(--green);border:1px solid var(--green);margin-left:8px">⚙ Fleet-wide IW39 · filtered to ${esc(_unitId || 'unit')}${_iw39YBA2Filter ? ' · YBA2 only' : ''}</span>`
-    : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(91,156,246,0.10);color:var(--blue);border:1px solid var(--border);margin-left:8px">📁 Per-project upload</span>` : '');
+    ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(76,175,80,0.10);color:var(--green);border:1px solid var(--green);margin-left:8px">⚙ Fleet-wide IW39 · filtered to ${esc(_unitId || 'unit')} · ${esc(_orderTypesLbl)} · open only</span>`
+    : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(91,156,246,0.10);color:var(--blue);border:1px solid var(--border);margin-left:8px">📁 Per-project upload · ${esc(_orderTypesLbl)} · open only</span>` : '');
+
+  // Inline filter config (operator-editable, persists per fleet in deploy.config).
+  // Lives on the Work Orders tab toolbar per operator preference 2026-05-12.
+  const _filterConfigBar = `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:8px 14px;background:var(--deep);border:1px solid var(--border);border-radius:6px;margin-bottom:10px;font-size:11px">
+      <span style="color:var(--muted);font-weight:600">WO filters (per fleet):</span>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--muted)">Order types:</span>
+        <input id="iw39OrderTypesInp" class="inline-inp" style="width:160px;font-family:monospace;text-transform:uppercase"
+               value="${esc(deploy.config?.iw39OrderTypes || '')}"
+               title="Comma-separated SAP Order Type codes to include (e.g. YBA2 or YBA2,YBA3). Empty = no restriction."
+               onblur="updateIW39FilterConfig('iw39OrderTypes', this.value, '${id}')"
+               onkeydown="if(event.key==='Enter') this.blur()">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--muted)">Hide descriptions containing:</span>
+        <input id="iw39ExcludeKwInp" class="inline-inp" style="width:200px;font-family:inherit"
+               value="${esc(deploy.config?.iw39ExcludeKeywords || '')}"
+               title="Comma-separated keywords to exclude (case-insensitive substring match on Description). Empty = no exclusion. Default 'Service' covers SAP (PM) Service line items."
+               onblur="updateIW39FilterConfig('iw39ExcludeKeywords', this.value, '${id}')"
+               onkeydown="if(event.key==='Enter') this.blur()">
+      </label>
+      <span style="color:var(--faint);font-size:10px;margin-left:auto">Status: only REL + CRTD (open) shown. TECO/CLSD/CNCL hidden.</span>
+    </div>`;
 
   el.innerHTML = `
     <div class="tab-toolbar">
-      <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} orders)</span>` : ''}${_sourceBadge}</div>
+      <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} of ${_sourcePool.length} after filter)</span>` : ''}${_sourceBadge}</div>
       <div style="display:flex;gap:8px">
-        ${_woSource === 'project' && wos.length ? `<button class="btn-clear" onclick="clearWOs('${id}')">Clear WOs</button>` : ''}
+        ${_woSource === 'project' && _sourcePool.length ? `<button class="btn-clear" onclick="clearWOs('${id}')">Clear WOs</button>` : ''}
         ${_woSource === 'fleet' ? `` : `<button class="btn-upload" onclick="document.getElementById('woIn').click()">📂 Upload IW39 (Excel)</button>`}
       </div>
-    </div>`;
+    </div>
+    ${_filterConfigBar}`;
 
   if (!wos.length) {
     if (_fleetWideLoaded) {
-      // Fleet-wide IS loaded but no WOs match this unit — informative empty state
-      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No work orders found for unit <strong>${esc(_unitId || '—')}</strong>${_iw39YBA2Filter ? ' with order type YBA2' : ''}.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total) but none match this unit's Sort Field.<br><br><span style="color:var(--faint);font-size:11px">Try toggling YBA2 off (header) to see all order types, or upload a fresh IW39 if this unit was missing from the export.</span></div>`;
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No <strong>open</strong> work orders match the current filter for unit <strong>${esc(_unitId || '—')}</strong>.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total; ${_filteredOutCount.toLocaleString()} excluded by the active filter).<br><br><span style="color:var(--faint);font-size:11px">Active filter: Order types = <strong>${esc(_orderTypesLbl)}</strong> · Hide descriptions containing = <strong>${esc(_excludeKwsLbl)}</strong> · Status = REL/CRTD only.<br>Adjust filters above or check the Sort Field is set on this project.</span></div>`;
     } else {
-      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No work orders loaded yet.<br>Upload a SAP IW39 export to map work orders to this project, OR upload a fleet-wide IW39 from the header pill (covers all units at once).<br><br><span style="color:var(--faint);font-size:11px">Expected columns: WO Number · Description · System Status · Planned Cost · Actual Cost · FLOC / Sort Field · Order Type</span></div>`;
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No open work orders match the current filter.<br>${_sourcePool.length === 0 ? 'No IW39 loaded yet — upload one above, or load a fleet-wide IW39 from the header pill.' : `${_sourcePool.length} WOs uploaded but all excluded by the filter (status not in REL/CRTD, wrong order type, or description matched the exclusion keyword).`}<br><br><span style="color:var(--faint);font-size:11px">Expected columns: WO Number · Description · User Status · Planned Cost · Actual Cost · FLOC / Sort Field · Order Type</span></div>`;
     }
     return;
   }
 
   const sapBadge = s => {
     if (!s) return '<span class="sb sb-gr">—</span>';
-    const u = s.toUpperCase().trim();
-    if (u === 'TECO' || u === 'CLSD') return `<span class="sb sb-g">${esc(u)}</span>`;
-    if (u === 'REL')  return `<span class="sb sb-b">REL</span>`;
-    if (u === 'CRTD') return `<span class="sb sb-gr">CRTD</span>`;
-    if (u === 'PCNF') return `<span class="sb sb-a">PCNF</span>`;
-    return `<span class="sb sb-gr">${esc(s)}</span>`;
+    const t = _statusToken(s);
+    if (t === 'REL')  return `<span class="sb sb-b" title="${esc(s)}">REL</span>`;
+    if (t === 'CRTD') return `<span class="sb sb-gr" title="${esc(s)}">CRTD</span>`;
+    if (t === 'PCNF') return `<span class="sb sb-a" title="${esc(s)}">PCNF</span>`;
+    return `<span class="sb sb-gr" title="${esc(s)}">${esc(t)}</span>`;
   };
 
-  // Status counts + cost totals
-  const statCount = {};
+  // Post-filter counts + cost totals — only OPEN statuses survive here.
   let totalPlanned = 0, totalActual = 0;
+  let crtdCount = 0, relCount = 0;
   wos.forEach(wo => {
-    const u = (wo.status||'').toUpperCase().trim() || 'UNKNOWN';
-    statCount[u] = (statCount[u]||0) + 1;
+    const t = _statusToken(wo.status);
+    if (t === 'CRTD') crtdCount++;
+    else if (t === 'REL') relCount++;
     totalPlanned += parseFloat(wo.planned_cost)||0;
     totalActual  += parseFloat(wo.actual_cost) ||0;
   });
-  const relCount  = statCount['REL']  || 0;
-  const tecoCount = (statCount['TECO']||0) + (statCount['CLSD']||0);
-  const crtdCount = statCount['CRTD'] || 0;
   const variance  = totalActual - totalPlanned;
   const actPct    = totalPlanned > 0 ? Math.min(Math.round(totalActual/totalPlanned*100), 200) : 0;
 
   el.innerHTML += `
     <div class="summary-strip">
-      <div class="sum-card"><div class="sum-card-val" style="color:var(--txt)">${wos.length}</div><div class="sum-card-lbl">Total WOs</div></div>
+      <div class="sum-card"><div class="sum-card-val" style="color:var(--txt)">${wos.length}</div><div class="sum-card-lbl">Open WOs</div></div>
       <div class="sum-card"><div class="sum-card-val" style="color:var(--muted)">${crtdCount}</div><div class="sum-card-lbl">Created (CRTD)</div></div>
       <div class="sum-card"><div class="sum-card-val" style="color:var(--blue)">${relCount}</div><div class="sum-card-lbl">Released (REL)</div></div>
-      <div class="sum-card"><div class="sum-card-val" style="color:var(--green)">${tecoCount}</div><div class="sum-card-lbl">Complete (TECO)</div></div>
+      ${_filteredOutCount > 0 ? `<div class="sum-card"><div class="sum-card-val" style="color:var(--faint)">${_filteredOutCount.toLocaleString()}</div><div class="sum-card-lbl">Filtered Out</div></div>` : ''}
       ${totalPlanned>0 ? `
       <div class="sum-card" style="min-width:130px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
@@ -2253,17 +2684,14 @@ function renderWorkOrders(id) {
       </div>` : ''}
     </div>
     <div class="tab-filters">
-      <button class="tab-filter ${_woFilter==='all'  ?'active':''}" onclick="setWoFilter('all','${id}')">All (${wos.length})</button>
+      <button class="tab-filter ${_woFilter==='all'  ?'active':''}" onclick="setWoFilter('all','${id}')">All open (${wos.length})</button>
       <button class="tab-filter ${_woFilter==='CRTD' ?'active':''}" onclick="setWoFilter('CRTD','${id}')">CRTD (${crtdCount})</button>
       <button class="tab-filter ${_woFilter==='REL'  ?'active':''}" onclick="setWoFilter('REL','${id}')">REL (${relCount})</button>
-      <button class="tab-filter ${_woFilter==='TECO' ?'active':''}" onclick="setWoFilter('TECO','${id}')">TECO/CLSD (${tecoCount})</button>
     </div>`;
 
-  // v8.9 FIX-2 — status filter only (the v8.8 _woSapFilter was removed
-  // since IW39 doesn't carry sap_material — operator-confirmed 2026-05-12).
+  // Sub-filter within the already-open set (CRTD / REL chip narrows further).
   let visible = _woFilter === 'all' ? wos
-    : _woFilter === 'TECO' ? wos.filter(w => ['TECO','CLSD'].includes((w.status||'').toUpperCase().trim()))
-    : wos.filter(w => (w.status||'').toUpperCase().trim() === _woFilter);
+              : wos.filter(w => _statusToken(w.status) === _woFilter);
 
   const rows = visible.map((wo, ri) => {
     const planned = parseFloat(wo.planned_cost)||0;
@@ -2545,23 +2973,37 @@ function confirmIW39FleetImport() {
   _fleetWideIW39 = wos;
   _iw39AsOf      = new Date().toISOString();
   _woHdrs = []; _woRaw = null;
-  const yba2Count = wos.filter(w => (w.order_type || '').toUpperCase() === 'YBA2').length;
+  // v8.10 FIX-1 — count by the active per-fleet order-type allow-list,
+  // not the hardcoded YBA2 (every client site differs).
+  const _ot = String((deploy && deploy.config && deploy.config.iw39OrderTypes) || '')
+    .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  const matchingCount = _ot.length === 0
+    ? wos.length
+    : wos.filter(w => _ot.includes((w.order_type || '').toUpperCase())).length;
   closeModal('modalIW39FleetMap');
-  _updateIW39StatusPill(yba2Count);
-  const tgl = document.getElementById('yba2Toggle');
-  if (tgl) tgl.style.display = yba2Count > 0 ? 'flex' : 'none';
-  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${yba2Count.toLocaleString()} YBA2 (session memory)`, 'success');
+  _updateIW39StatusPill(matchingCount);
+  const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
+  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl} (session memory)`, 'success');
   if (selProjId) renderMaterials(selProjId);
 }
 
-function _updateIW39StatusPill(yba2Count) {
+function _updateIW39StatusPill(matchingCount) {
   const lbl = document.getElementById('iw39StatusLbl');
   if (!lbl) return;
   if (_fleetWideIW39 && _fleetWideIW39.length > 0) {
     const t = new Date(_iw39AsOf);
     const hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
-    if (yba2Count === undefined) yba2Count = _fleetWideIW39.filter(w => (w.order_type || '').toUpperCase() === 'YBA2').length;
-    lbl.textContent = `as of ${hh} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${yba2Count.toLocaleString()} YBA2`;
+    // v8.10 FIX-1 — render the post-filter count next to the total; the
+    // active filter list is shown on the Work Orders tab itself.
+    const _ot = String((deploy && deploy.config && deploy.config.iw39OrderTypes) || '')
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (matchingCount === undefined) {
+      matchingCount = _ot.length === 0
+        ? _fleetWideIW39.length
+        : _fleetWideIW39.filter(w => _ot.includes((w.order_type || '').toUpperCase())).length;
+    }
+    const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
+    lbl.textContent = `as of ${hh} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} ${matchLbl}`;
     lbl.style.color = 'var(--green)';
   } else {
     lbl.textContent = 'Not loaded';
@@ -2569,9 +3011,19 @@ function _updateIW39StatusPill(yba2Count) {
   }
 }
 
-function toggleYBA2Filter(checked) {
-  _iw39YBA2Filter = !!checked;
-  if (selProjId) renderMaterials(selProjId);
+// v8.10 FIX-1 — Save inline WO-filter config (per-fleet, persisted in
+// deploy.config). Called onblur from the two text inputs on the Work
+// Orders tab. Trims whitespace and re-renders the tab + the IW39 status
+// pill so the new counts surface immediately.
+function updateIW39FilterConfig(key, value, projId) {
+  if (!deploy || !deploy.config) return;
+  if (key !== 'iw39OrderTypes' && key !== 'iw39ExcludeKeywords') return;
+  const trimmed = String(value || '').split(',').map(s => s.trim()).filter(Boolean).join(',');
+  if (deploy.config[key] === trimmed) return;   // no-op
+  deploy.config[key] = trimmed;
+  _markUnsaved();
+  _updateIW39StatusPill();   // refresh header pill count
+  if (projId) renderWorkOrders(projId);
 }
 
 // ─── Stock lookup helpers ───────────────────────────────────────────
@@ -2666,6 +3118,47 @@ function _computeBomStockStatus(projId, bomRow) {
 // project — they're filtered there by unit Sort Field, not by material.
 // The Stock drill-down no longer shows a WO section; cleaner UX since
 // every BOM row was showing the same per-unit WO list.
+
+// v8.10 (2026-05-12) — Per-component Parts Readiness rollup. Aggregates the
+// 6-state per-row stock results (in_stock / partial / on_order_only / out /
+// no_snapshot / no_inventory) into a 3-state component-level badge (ready /
+// partial / at_risk) plus a fourth 'unmapped' state for components without
+// a sheet assignment. Drives the BOM tab group-row badges. Pure function —
+// callable from the readiness modal, the Overview tab pill (future), or
+// reporting/export paths (future).
+function _computeComponentReadiness(projId, componentId) {
+  const p = pd(projId);
+  if (!p) return { state: 'unmapped', parts: 0, totalOnHand: 0, totalOnOrder: 0, counts: {} };
+  const map = p.componentSheetMap || {};
+  const sheet = map[componentId];
+  if (!sheet) return { state: 'unmapped', parts: 0, totalOnHand: 0, totalOnOrder: 0, counts: {} };
+  const rows = (p.bom || []).filter(r => r._sourceSheet === sheet);
+  if (rows.length === 0) return { state: 'no_parts', parts: 0, totalOnHand: 0, totalOnOrder: 0, counts: {}, sheet };
+  const statuses = rows.map(r => _computeBomStockStatus(projId, r));
+  const counts = { in_stock:0, partial:0, on_order_only:0, out:0, no_snapshot:0, no_inventory:0 };
+  statuses.forEach(s => { if (counts[s.state] !== undefined) counts[s.state]++; });
+  const totalOnHand  = statuses.reduce((a, s) => a + (s.totalOnHand  || 0), 0);
+  const totalOnOrder = statuses.reduce((a, s) => a + (s.totalOnOrder || 0), 0);
+  const gaps         = counts.out + counts.no_inventory + counts.no_snapshot;
+  let state;
+  if (counts.in_stock === rows.length)                                     state = 'ready';
+  else if (gaps === 0 && (counts.partial + counts.on_order_only) > 0)      state = 'partial';
+  else if ((counts.in_stock + counts.partial + counts.on_order_only) > 0)  state = 'partial';
+  else                                                                      state = 'at_risk';
+  return { state, parts: rows.length, totalOnHand, totalOnOrder, counts, sheet };
+}
+
+// Visual style lookup for the readiness badge (Deploy CSS tokens — no new
+// classes needed). Used by renderMaterials group rows and the Overview pill.
+function _readinessBadgeMeta(state) {
+  return ({
+    ready:    { label:'READY',    bg:'rgba(76,175,80,0.15)',  border:'var(--green)', color:'var(--green)' },
+    partial:  { label:'PARTIAL',  bg:'rgba(255,193,7,0.15)',  border:'var(--gold)',  color:'var(--gold)' },
+    at_risk:  { label:'AT RISK',  bg:'rgba(244,67,54,0.15)',  border:'var(--red)',   color:'var(--red)'  },
+    unmapped: { label:'UNMAPPED', bg:'rgba(120,120,120,0.10)',border:'var(--border)',color:'var(--muted)'},
+    no_parts: { label:'0 PARTS',  bg:'rgba(120,120,120,0.10)',border:'var(--border)',color:'var(--muted)'},
+  })[state] || { label:'—', bg:'transparent', border:'var(--border)', color:'var(--muted)' };
+}
 
 function openStockDrillDown(projId, bomIdx) {
   const p = pd(projId);
