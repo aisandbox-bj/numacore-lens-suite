@@ -74,10 +74,11 @@ If you see a 404, wait 2 more minutes and retry. If it's still 404 after 5 minut
 
 ## Known gotchas
 
-- **Case sensitivity.** GitHub Pages serves files case-sensitively. `Images/` and `images/` are different paths. Use lowercase `images` exactly as written above.
+- **Case sensitivity (FOLDER name).** GitHub Pages serves files case-sensitively. `Images/` and `images/` are different paths. Use lowercase `images` exactly as written above.
+- **Case sensitivity (FILE EXTENSION) — bit us 2026-05-12.** Same rule applies to the extension: `drill-surface-small.PNG` and `drill-surface-small.png` are DIFFERENT files to GitHub Pages. The HTML references `.png` (lowercase) everywhere. **Always confirm your local filenames are lowercase `.png` BEFORE uploading.** Windows hides extensions by default and some workflows (screenshot tools, older save dialogs) write `.PNG` uppercase, which works locally but breaks on Pages. Safe pattern: in File Explorer, View → Show file extensions → confirm every file ends in `.png` (lowercase) before clicking Upload. If you've already uploaded `.PNG` files and the images break on Pages, the fix is a two-step case-only rename in git — ping Claude and it's a 30-second fix.
 - **Spaces.** None of the filenames have spaces. Don't add any.
-- **File type.** All 10 files must be `.png`. If Windows hid the extension and you typed `haul-truck-rigid` without `.png`, the file will fail to serve.
-- **One commit for all 10.** If you upload in batches, the intermediate states of the repo will have missing files. Not a disaster, but cleanest to do all 10 in one commit.
+- **File type.** All image files must be `.png` (lowercase). If Windows hid the extension and you typed the filename without `.png`, or if Windows wrote `.PNG`, the file will fail to serve.
+- **One commit for all images.** If you upload in batches, the intermediate states of the repo will have missing files. Not a disaster, but cleanest to do all in one commit.
 
 ---
 
