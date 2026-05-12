@@ -536,6 +536,21 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
       <span class="sub" id="clientLbl">Shutdown &amp; Project Manager</span>
     </div>
     <div class="hdr-actions">
+      <!-- v8.9 — fleet-wide session uploads (Inventory Master + IW39). Both
+           live in session memory only (per operator 2026-05-11). Status
+           pills surface as-of timestamps + row counts; click to re-upload. -->
+      <div id="invMasterStatus" style="display:flex;align-items:center;gap:6px;background:var(--deep);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px" onclick="document.getElementById('invMasterIn').click()" title="Click to upload (or re-upload) the fleet-wide Inventory Master Excel. Session memory only.">
+        <span style="color:var(--muted);white-space:nowrap">📦 Inventory:</span>
+        <span id="invMasterStatusLbl" style="color:var(--muted);font-weight:600">Not loaded</span>
+      </div>
+      <div id="iw39Status" style="display:flex;align-items:center;gap:6px;background:var(--deep);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px" onclick="document.getElementById('iw39FleetIn').click()" title="Click to upload (or re-upload) the fleet-wide IW39 Excel. Session memory only.">
+        <span style="color:var(--muted);white-space:nowrap">⚙ IW39:</span>
+        <span id="iw39StatusLbl" style="color:var(--muted);font-weight:600">Not loaded</span>
+      </div>
+      <label id="yba2Toggle" style="display:none;align-items:center;gap:4px;font-size:10px;color:var(--muted);cursor:pointer" title="Filter the IW39 link badges + drill-downs to YBA2 (planned maintenance) order type only">
+        <input type="checkbox" id="yba2ToggleCB" onchange="toggleYBA2Filter(this.checked)" style="cursor:pointer">
+        <span>YBA2 only</span>
+      </label>
       <div style="display:flex;align-items:center;gap:6px;background:var(--deep);border:1px solid var(--border);border-radius:4px;padding:4px 10px">
         <span style="font-size:10px;color:var(--muted);white-space:nowrap">Call Horizon</span>
         <select id="horizonSel" style="background:transparent;border:none;color:var(--gold);font-size:11px;font-weight:700;cursor:pointer;outline:none;font-family:inherit" onchange="setCallHorizon(+this.value)">
@@ -715,6 +730,10 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 <!-- Hidden file inputs -->
 <input type="file" id="bomIn"     accept=".xlsx,.xls,.csv" style="display:none" onchange="handleBomFile(event)">
 <input type="file" id="woIn"      accept=".xlsx,.xls,.csv" style="display:none" onchange="handleWoFile(event)">
+<!-- v8.9 — Component Snapshot (per-project) + fleet-wide Inventory Master + fleet-wide IW39 inputs -->
+<input type="file" id="snapshotIn"   accept=".xlsx,.xls,.csv" style="display:none" onchange="handleSnapshotFile(event)">
+<input type="file" id="invMasterIn"  accept=".xlsx,.xls,.csv" style="display:none" onchange="handleInvMasterFile(event)">
+<input type="file" id="iw39FleetIn"  accept=".xlsx,.xls,.csv" style="display:none" onchange="handleIW39FleetFile(event)">
 
 <!-- ══════════════════════════════════════════════════
      MODALS
@@ -862,6 +881,59 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
   </div>
 </div>
 
+<!-- v8.9 — Component Snapshot column mapper -->
+<div class="modal-ov" id="modalSnapshotMap">
+  <div class="modal" style="min-width:560px">
+    <div class="modal-title">📋 Map Component Snapshot Columns</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Per-unit cross-reference. Maps each component to up to 12 VPN variants (NEW · EXCHANGE · REMAN, 4 generations each).</div>
+    <div class="cm-grid" id="snapshotMapGrid"></div>
+    <div class="cm-hint" id="snapshotRowCount"></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="closeModal('modalSnapshotMap')">Cancel</button>
+      <button class="mbtn primary"   onclick="confirmSnapshotImport()">Import Snapshot →</button>
+    </div>
+  </div>
+</div>
+
+<!-- v8.9 — Inventory Master column mapper -->
+<div class="modal-ov" id="modalInvMasterMap">
+  <div class="modal" style="min-width:560px">
+    <div class="modal-title">📦 Map Inventory Master Columns</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Session snapshot — data lives in browser memory only and is never saved into the fleet JSON.</div>
+    <div class="cm-grid" id="invMasterMapGrid"></div>
+    <div class="cm-hint" id="invMasterRowCount"></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="closeModal('modalInvMasterMap')">Cancel</button>
+      <button class="mbtn primary"   onclick="confirmInvMasterImport()">Import Inventory Master →</button>
+    </div>
+  </div>
+</div>
+
+<!-- v8.9 — Fleet-wide IW39 column mapper (separate from per-project IW39 modal) -->
+<div class="modal-ov" id="modalIW39FleetMap">
+  <div class="modal" style="min-width:560px">
+    <div class="modal-title">⚙ Map Fleet-wide IW39 Columns</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Fleet-wide IW39 — covers all units. Per-unit filtering happens at render time. Session memory only.</div>
+    <div class="cm-grid" id="iw39FleetMapGrid"></div>
+    <div class="cm-hint" id="iw39FleetRowCount"></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="closeModal('modalIW39FleetMap')">Cancel</button>
+      <button class="mbtn primary"   onclick="confirmIW39FleetImport()">Import IW39 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- v8.9 — Stock drill-down modal -->
+<div class="modal-ov" id="modalStockDrill">
+  <div class="modal" style="min-width:680px;max-width:880px">
+    <div class="modal-title" id="stockDrillTitle">📊 Stock Detail</div>
+    <div id="stockDrillBody" style="max-height:62vh;overflow-y:auto"></div>
+    <div class="m-actions">
+      <button class="mbtn primary" onclick="closeModal('modalStockDrill')">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <!-- ══════════════════════════════════════════════════
@@ -956,7 +1028,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.8';   // single source of truth for tool version
+const VERSION = '8.9';   // single source of truth for tool version
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1004,6 +1076,50 @@ const WO_FIELDS = [
   // we can show a "🔗 N WOs" badge on matching BOM rows + a click-to-filter
   // shortcut. Optional column — IW39 exports without it still work.
   { key:'sap_material', label:'SAP Material No.',  required:false },
+  // v8.9 — Order Type column (e.g. YBA2 for planned maintenance). Filter at
+  // render time when surfacing matching WOs on BOM rows. Optional.
+  { key:'order_type',   label:'Order Type (YBA2 etc)', required:false },
+];
+
+// v8.9 — Component Snapshot per-unit cross-reference. Up to 12 VPN variants
+// per component across NEW/EXC/REMAN × 4 generations. Column-04 = current;
+// 01–03 = superseded. Per-project (each unit has its own); persists in
+// fleetData.workingData.deployData.projects[id].componentSnapshot[].
+const SNAPSHOT_FIELDS = [
+  { key:'fleet',      label:'Fleet',                 required:false },
+  { key:'model',      label:'Model',                 required:false },
+  { key:'sn_prefix',  label:'S/N PreFix',            required:false },
+  { key:'component',  label:'Component',             required:true  },
+  { key:'identifier', label:'Identifier',            required:false },
+  { key:'new_01',     label:'New 01',                required:false },
+  { key:'new_02',     label:'New 02',                required:false },
+  { key:'new_03',     label:'New 03',                required:false },
+  { key:'new_04',     label:'New 04 (current)',      required:false },
+  { key:'exc_01',     label:'EXC 01',                required:false },
+  { key:'exc_02',     label:'EXC 02',                required:false },
+  { key:'exc_03',     label:'EXC 03',                required:false },
+  { key:'exc_04',     label:'EXC 04 (current)',      required:false },
+  { key:'reman_01',   label:'REMAN 01',              required:false },
+  { key:'reman_02',   label:'REMAN 02',              required:false },
+  { key:'reman_03',   label:'REMAN 03',              required:false },
+  { key:'reman_04',   label:'REMAN 04 (current)',    required:false },
+];
+
+// v8.9 — Inventory Master fields. Session-memory only (NEVER persisted into
+// fleetData — operator-locked: "true snapshot only at moment of download").
+// Two indexes built at upload: _invMasterByMaterial + _invMasterByVPN.
+const INVMASTER_FIELDS = [
+  { key:'material',         label:'Material (SAP No.)',        required:true  },
+  { key:'description',      label:'Material Description',      required:false },
+  { key:'mfg_part_no',      label:'Manufacturer Part No.',     required:false },
+  { key:'open_po',          label:'Open_PO (qty on order)',    required:false },
+  { key:'po_flag',          label:'PO_Flag (Y/N)',             required:false },
+  { key:'tot_qty_oh',       label:'Tot_Qty_OH (on hand)',      required:false },
+  { key:'mov_ave_price',    label:'MovAvePrice',               required:false },
+  { key:'onhand_loc',       label:'OnHand_Loc',                required:false },
+  { key:'mrp_min',          label:'MRP_Min (reorder point)',   required:false },
+  { key:'mrp_max',          label:'MRP_Max',                   required:false },
+  { key:'mat_grp_descr',    label:'Mat_Grp_Descr',             required:false },
 ];
 
 // Column auto-match aliases
@@ -1013,12 +1129,32 @@ const ALIASES = {
   status:       ['status','sys status','system status','user status'],
   planned_cost: ['planned','planned cost','plan cost','planned value','budget'],
   actual_cost:  ['actual','actual cost','act cost','actual value'],
-  floc:         ['floc','functional location','equipment','search term','asset'],
+  floc:         ['floc','functional location','equipment','search term','asset','sort field'],
   part_number:  ['part','vpn','part number','oem','manufacturer part'],
-  sap_material: ['sap','material no','material number','matl','sap number'],
+  sap_material: ['sap','material no','material number','matl','sap number','material'],
   qty:          ['qty','quantity','count','pcs'],
   unit_cost:    ['unit cost','unit price','price','net price'],
   line_no:      ['line','item','pos','position','seq','item no'],
+  // v8.9 — additions for IW39 order type + Component Snapshot + Inventory Master columns
+  order_type:   ['order type','art','order cat','category','type'],
+  fleet:        ['fleet','fleet type','equipment type'],
+  model:        ['model','machine model','asset model'],
+  sn_prefix:    ['s/n prefix','sn prefix','serial prefix','sn pre','prefix'],
+  component:    ['component','comp','assembly'],
+  identifier:   ['identifier','id','unique id'],
+  new_01:       ['new 01'], new_02: ['new 02'], new_03: ['new 03'], new_04: ['new 04'],
+  exc_01:       ['exc 01'], exc_02: ['exc 02'], exc_03: ['exc 03'], exc_04: ['exc 04'],
+  reman_01:     ['reman 01'], reman_02: ['reman 02'], reman_03: ['reman 03'], reman_04: ['reman 04'],
+  material:        ['material','material no','sap material','material number'],
+  mfg_part_no:     ['manufacturer part no','mfg part','vpn','vendor part','manufacturer part'],
+  open_po:         ['open_po','open po','open po qty','po qty'],
+  po_flag:         ['po_flag','po flag'],
+  tot_qty_oh:      ['tot_qty_oh','tot qty oh','total qty oh','total on hand','on hand qty','quantity on hand'],
+  mov_ave_price:   ['movaveprice','mov ave price','moving average price','mov avg price','moving avg'],
+  onhand_loc:      ['onhand_loc','on hand location','storage location','sloc','bin'],
+  mrp_min:         ['mrp_min','mrp min','min stock','reorder point','safety stock min'],
+  mrp_max:         ['mrp_max','mrp max','max stock','reorder ceiling'],
+  mat_grp_descr:   ['mat_grp_descr','material group','mat group','material group descr','class'],
 };
 
 // ─────────────────────────────────────────────
@@ -1036,6 +1172,20 @@ let curTab      = 'overview';
 let sbFilter    = 'all';
 
 let callHorizonMonths = 3;
+
+// v8.9 — SESSION-MEMORY STORES (NEVER persisted to fleetData JSON).
+// Operator-locked 2026-05-11: "true snapshot only at moment of download".
+// Page reload → re-upload required. Re-upload replaces (no merge).
+let _invMasterByMaterial = null;   // Map<normalisedMaterial, {description, on_hand, on_order_qty, po_flag, location, mov_avg_price, mrp_min, mrp_max, mat_grp, mfg_part_no}>
+let _invMasterByVPN      = null;   // Map<normalisedVPN, same shape> — built from Manufacturer Part No. column
+let _invMasterAsOf       = null;
+let _invMasterRowCount   = 0;
+let _fleetWideIW39       = null;   // Array<{wo_number, status, order_type, floc, sap_material, ...}>
+let _iw39AsOf            = null;
+let _iw39YBA2Filter      = false;  // Render-time toggle (Q3 = B)
+// Raw upload buffers — used while column mapper modal is open
+let _snapHdrs = []; let _snapRaw = null;
+let _imHdrs   = []; let _imRaw   = null;
 
 let ganttZoomLevel = 1;
 function ganttZoomLabel(z) {
@@ -1667,10 +1817,18 @@ function renderMaterials(id) {
   const rcvCost     = bom.filter(r=>r.sapStatus==='received').reduce((s,r) => s + (parseFloat(r.unit_cost)||0)*(parseFloat(r.qty)||1), 0);
   const readyPct    = bom.length ? Math.round((cnt.confirmed + cnt.ordered + cnt.received) / bom.length * 100) : 0;
 
+  // v8.9 — per-project Component Snapshot indicator + upload button.
+  const _snap = p.componentSnapshot;
+  const _snapLoaded = Array.isArray(_snap) && _snap.length > 0;
+  const _snapBtnLabel = _snapLoaded
+    ? `✓ Snapshot: ${_snap.length} components`
+    : `📂 Upload Component Snapshot`;
+
   el.innerHTML = `
     <div class="tab-toolbar">
       <div class="tab-toolbar-title">Bill of Materials${bom.length ? ` <span style="color:var(--muted);font-weight:400">(${bom.length} items)</span>` : ''}</div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-upload" onclick="document.getElementById('snapshotIn').click()" title="${_snapLoaded ? 'Re-upload to replace the Snapshot' : 'Per-unit cross-reference of part variants (NEW/EXC/REMAN)'}" style="${_snapLoaded?'background:rgba(76,175,80,0.10);border-color:var(--green);color:var(--green)':''}">${_snapBtnLabel}</button>
         ${bom.length ? `<button class="btn-clear" onclick="clearBom('${id}')">Clear BOM</button>` : ''}
         <button class="btn-upload" onclick="document.getElementById('bomIn').click()">📂 Upload BOM (Excel)</button>
       </div>
@@ -1708,24 +1866,53 @@ function renderMaterials(id) {
 
   const rowClass = (s) => ({confirmed:'row-confirmed',ordered:'row-ordered',received:'row-received',missing:'row-missing'}[s]||'');
 
-  // v8.8 (Slide 9) — BOM ↔ IW39 auto-link. Build a count map (sap_material → # of
-  // matching IW39 entries). Used below to surface a "🔗 N WOs" badge on BOM rows
-  // whose SAP Material No. has corresponding work orders. Empty / missing
-  // sap_material values are skipped. Case-insensitive trim-aware match so
-  // "1234-ABC" / "1234-abc " count as the same key.
+  // v8.8 BOM ↔ IW39 link count map (per-project workOrders fallback).
+  // v8.9 — also count fleet-wide IW39 hits (filtered to this project's unit
+  // + optional YBA2 toggle). If fleet-wide is loaded, prefer those counts.
   const _wos = p.workOrders || [];
   const _bomLinkCounts = {};
   _wos.forEach(wo => {
     const k = String(wo.sap_material || '').trim().toUpperCase();
     if (k) _bomLinkCounts[k] = (_bomLinkCounts[k] || 0) + 1;
   });
+  const _useFleetIW39 = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
+  const _fleetUnitId = p.unit ? String(p.unit).trim().toUpperCase() : '';
+  const _fleetIW39Counts = {};
+  if (_useFleetIW39) {
+    _fleetWideIW39.forEach(wo => {
+      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return;
+      if (_fleetUnitId && !String(wo.floc || '').toUpperCase().includes(_fleetUnitId)) return;
+      const k = String(wo.sap_material || '').trim().toUpperCase();
+      if (k) _fleetIW39Counts[k] = (_fleetIW39Counts[k] || 0) + 1;
+    });
+  }
+
+  // v8.9 — Stock badge
+  const _stockBadgeFor = (row, realIdx) => {
+    const status = _computeBomStockStatus(id, row);
+    const stateMeta = {
+      in_stock:      { label: '✓ In stock',    bg: 'rgba(76,175,80,0.15)',  border: 'var(--green)',  color: 'var(--green)' },
+      partial:       { label: '⚠ Partial',     bg: 'rgba(255,193,7,0.15)',  border: 'var(--gold)',   color: 'var(--gold)' },
+      on_order_only: { label: '⚠ On order',    bg: 'rgba(255,193,7,0.10)',  border: 'var(--gold)',   color: 'var(--gold)' },
+      out:           { label: '✗ Out',         bg: 'rgba(244,67,54,0.12)',  border: 'var(--red)',    color: 'var(--red)' },
+      no_snapshot:   { label: '⚪ No snapshot', bg: 'rgba(120,120,120,0.10)', border: 'var(--border)', color: 'var(--muted)' },
+      no_inventory:  { label: '⚪ Not in master',bg:'rgba(120,120,120,0.10)', border: 'var(--border)', color: 'var(--muted)' },
+    }[status.state];
+    const sub = status.state === 'in_stock' || status.state === 'partial' || status.state === 'on_order_only'
+      ? ` <span style="font-size:9px;opacity:0.85">${status.totalOnHand}OH·${status.totalOnOrder}PO</span>`
+      : '';
+    return `<button onclick="openStockDrillDown('${id}',${realIdx})" title="Click for stock detail across all variants" style="font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid ${stateMeta.border};background:${stateMeta.bg};color:${stateMeta.color};cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">${stateMeta.label}${sub}</button>`;
+  };
 
   const rows = visible.map((row, ri) => {
     const realIdx = bom.indexOf(row);
     const _sapKey = String(row.sap_material || '').trim().toUpperCase();
-    const _linkCount = _sapKey ? (_bomLinkCounts[_sapKey] || 0) : 0;
+    // v8.9 — prefer fleet-wide counts when loaded; else per-project
+    const _linkCount = _sapKey
+      ? (_useFleetIW39 ? (_fleetIW39Counts[_sapKey] || 0) : (_bomLinkCounts[_sapKey] || 0))
+      : 0;
     const _linkBadge = _linkCount > 0
-      ? `<button class="bom-wo-link" onclick="filterWosByMaterial('${id}','${esc(_sapKey)}')" title="Filter Work Orders to this SAP Material" style="margin-left:6px;font-size:9px;padding:1px 6px;border-radius:10px;border:1px solid var(--blue);background:rgba(91,156,246,0.12);color:var(--blue);cursor:pointer;font-family:inherit">🔗 ${_linkCount} WO${_linkCount===1?'':'s'}</button>`
+      ? `<button class="bom-wo-link" onclick="${_useFleetIW39 ? `openStockDrillDown('${id}',${realIdx})` : `filterWosByMaterial('${id}','${esc(_sapKey)}')`}" title="${_useFleetIW39 ? 'Show matching WOs in detail (fleet-wide IW39, filtered to this unit)' : 'Filter Work Orders to this SAP Material'}" style="margin-left:6px;font-size:9px;padding:1px 6px;border-radius:10px;border:1px solid var(--blue);background:rgba(91,156,246,0.12);color:var(--blue);cursor:pointer;font-family:inherit">🔗 ${_linkCount} WO${_linkCount===1?'':'s'}</button>`
       : '';
     return `
       <tr class="${rowClass(row.sapStatus)}">
@@ -1735,6 +1922,7 @@ function renderMaterials(id) {
         <td class="mono">${esc(row.sap_material || '')}${_linkBadge}</td>
         <td style="text-align:right">${esc(row.qty || '')}</td>
         <td style="text-align:right">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
+        <td style="text-align:center">${_stockBadgeFor(row, realIdx)}</td>
         <td>
           <select class="gf-sel" style="font-size:10px;padding:2px 5px"
             onchange="updateBomStatus('${id}',${realIdx},this.value)">
@@ -1749,11 +1937,18 @@ function renderMaterials(id) {
     <thead><tr>
       <th>Line</th><th style="min-width:160px">Description</th>
       <th>Part No. (VPN)</th><th>SAP Material No.</th>
-      <th>Qty</th><th>Line Cost</th><th>SAP Status</th><th style="min-width:120px">Notes</th>
+      <th>Qty</th><th>Line Cost</th>
+      <th title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
+      <th>SAP Status</th><th style="min-width:120px">Notes</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>
-  ${visible.length !== bom.length ? `<div style="font-size:10px;color:var(--faint);padding:8px 0">Showing ${visible.length} of ${bom.length} items</div>` : ''}`;
+  ${visible.length !== bom.length ? `<div style="font-size:10px;color:var(--faint);padding:8px 0">Showing ${visible.length} of ${bom.length} items</div>` : ''}
+  ${(!_snapLoaded || _invMasterByMaterial === null) ? `<div style="margin-top:10px;padding:10px 14px;background:rgba(255,193,7,0.08);border:1px solid rgba(255,193,7,0.4);border-radius:4px;font-size:11px;color:var(--gold)">
+    💡 Stock badges show full data once both the <strong>Component Snapshot</strong> (toolbar above) and the <strong>Inventory Master</strong> (header pill) are loaded.
+    ${!_snapLoaded ? '<div style="margin-top:4px;color:var(--muted);font-size:10px">• Snapshot: not loaded for this project yet</div>' : ''}
+    ${_invMasterByMaterial === null ? '<div style="margin-top:2px;color:var(--muted);font-size:10px">• Inventory Master: not loaded for this session yet</div>' : ''}
+  </div>` : ''}`;
 }
 
 function setBomFilter(f, id) { _bomFilter = f; renderMaterials(id); }
@@ -2035,17 +2230,411 @@ function confirmWoImport() {
   _markUnsaved();
 }
 
+// ═════════════════════════════════════════════════════════════════════
+// v8.9 — COMPONENT SNAPSHOT + INVENTORY MASTER + FLEET-WIDE IW39 UPLOADS
+// ═════════════════════════════════════════════════════════════════════
+// VPN normaliser — preserves "-EXC" suffix, strips other hyphens.
+function _normVPN(s) {
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.normaliseVPN === 'function') {
+    return window.NumaCoreLib.normaliseVPN(s);
+  }
+  if (s == null) return '';
+  var v = String(s).trim().toUpperCase();
+  if (v === '' || v === 'N/A') return '';
+  if (v.length >= 4 && v.slice(-4) === '-EXC') {
+    return v.slice(0, -4).replace(/-/g, '') + '-EXC';
+  }
+  return v.replace(/-/g, '');
+}
+
+// Generic Excel reader used by all 3 v8.9 upload handlers
+function _readExcel(file, onSuccess, onError) {
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const wb = XLSX.read(ev.target.result, { type:'binary' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      if (rows.length < 2) { onError('File appears empty'); return; }
+      const hdrs = rows[0].map(h => String(h));
+      const raw  = rows.slice(1).filter(r => r.some(c => c !== ''));
+      onSuccess(hdrs, raw);
+    } catch(err) { onError('Could not read file: ' + err.message); }
+  };
+  r.onerror = () => onError('Could not read file');
+  r.readAsBinaryString(file);
+}
+
+function _toNumOrZero(v) {
+  if (v == null || v === '' || v === '—') return 0;
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+}
+
+// ─── Component Snapshot (per-project) ───────────────────────────────
+function handleSnapshotFile(e) {
+  const file = e.target.files[0]; if (!file) return;
+  if (!selProjId || !pd(selProjId)?.activated) {
+    toast('Activate a project first, then upload its Component Snapshot', 'error');
+    e.target.value = ''; return;
+  }
+  _readExcel(file, (hdrs, raw) => {
+    _snapHdrs = hdrs; _snapRaw = raw;
+    buildMapper('snapshot');
+  }, msg => toast(msg, 'error'));
+  e.target.value = '';
+}
+
+function confirmSnapshotImport() {
+  const mapping = {};
+  SNAPSHOT_FIELDS.forEach(f => {
+    const s = document.getElementById('sm_' + f.key);
+    if (s && s.value !== '(skip)') mapping[f.key] = _snapHdrs.indexOf(s.value);
+  });
+  if (mapping.component === undefined) { toast('Component column is required', 'error'); return; }
+  const snap = _snapRaw.map(row => {
+    const item = {};
+    SNAPSHOT_FIELDS.forEach(f => {
+      if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? '').trim();
+    });
+    return item;
+  }).filter(i => i.component);
+  // Replace (per operator decision #3)
+  deploy.projects[selProjId].componentSnapshot = snap;
+  closeModal('modalSnapshotMap');
+  toast(`Imported Component Snapshot — ${snap.length} components`, 'success');
+  _snapHdrs = []; _snapRaw = null;
+  renderMaterials(selProjId);
+  _markUnsaved();
+}
+
+// ─── Fleet-wide Inventory Master (session memory) ───────────────────
+function handleInvMasterFile(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  toast(`Parsing Inventory Master (${sizeMB} MB)…`, 'info');
+  _readExcel(file, (hdrs, raw) => {
+    _imHdrs = hdrs; _imRaw = raw;
+    buildMapper('im');
+  }, msg => toast(msg, 'error'));
+  e.target.value = '';
+}
+
+function confirmInvMasterImport() {
+  const mapping = {};
+  INVMASTER_FIELDS.forEach(f => {
+    const s = document.getElementById('imc_' + f.key);
+    if (s && s.value !== '(skip)') mapping[f.key] = _imHdrs.indexOf(s.value);
+  });
+  if (mapping.material === undefined) { toast('Material (SAP No.) column is required', 'error'); return; }
+  const byMaterial = new Map();
+  const byVPN      = new Map();
+  let _rowsLoaded = 0, _vpnEntries = 0;
+  _imRaw.forEach(row => {
+    const material = _normVPN(row[mapping.material]);
+    if (!material) return;
+    const entry = {
+      material_raw:  String(row[mapping.material] ?? '').trim(),
+      description:   mapping.description    !== undefined ? String(row[mapping.description]    ?? '').trim() : '',
+      mfg_part_no:   mapping.mfg_part_no    !== undefined ? String(row[mapping.mfg_part_no]    ?? '').trim() : '',
+      open_po:       _toNumOrZero(mapping.open_po     !== undefined ? row[mapping.open_po]     : 0),
+      po_flag:       (mapping.po_flag        !== undefined ? String(row[mapping.po_flag]        ?? '').trim().toUpperCase() : ''),
+      tot_qty_oh:    _toNumOrZero(mapping.tot_qty_oh  !== undefined ? row[mapping.tot_qty_oh]  : 0),
+      mov_ave_price: _toNumOrZero(mapping.mov_ave_price!== undefined ? row[mapping.mov_ave_price]: 0),
+      onhand_loc:    mapping.onhand_loc     !== undefined ? String(row[mapping.onhand_loc]     ?? '').trim() : '',
+      mrp_min:       _toNumOrZero(mapping.mrp_min     !== undefined ? row[mapping.mrp_min]     : 0),
+      mrp_max:       _toNumOrZero(mapping.mrp_max     !== undefined ? row[mapping.mrp_max]     : 0),
+      mat_grp_descr: mapping.mat_grp_descr  !== undefined ? String(row[mapping.mat_grp_descr]  ?? '').trim() : '',
+    };
+    byMaterial.set(material, entry);
+    const vpn = _normVPN(entry.mfg_part_no);
+    if (vpn && !byVPN.has(vpn)) { byVPN.set(vpn, entry); _vpnEntries++; }
+    _rowsLoaded++;
+  });
+  _invMasterByMaterial = byMaterial;
+  _invMasterByVPN      = byVPN;
+  _invMasterAsOf       = new Date().toISOString();
+  _invMasterRowCount   = _rowsLoaded;
+  _imHdrs = []; _imRaw = null;
+  closeModal('modalInvMasterMap');
+  _updateInvMasterStatusPill();
+  toast(`Inventory Master loaded — ${_rowsLoaded.toLocaleString()} materials · ${_vpnEntries.toLocaleString()} VPN-indexed (session memory)`, 'success');
+  if (selProjId) renderMaterials(selProjId);
+}
+
+function _updateInvMasterStatusPill() {
+  const lbl = document.getElementById('invMasterStatusLbl');
+  if (!lbl) return;
+  if (_invMasterByMaterial && _invMasterByMaterial.size > 0) {
+    const t = new Date(_invMasterAsOf);
+    const hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+    lbl.textContent = `as of ${hh} · ${_invMasterRowCount.toLocaleString()} mats`;
+    lbl.style.color = 'var(--green)';
+  } else {
+    lbl.textContent = 'Not loaded';
+    lbl.style.color = 'var(--muted)';
+  }
+}
+
+// ─── Fleet-wide IW39 (session memory) ───────────────────────────────
+function handleIW39FleetFile(e) {
+  const file = e.target.files[0]; if (!file) return;
+  _readExcel(file, (hdrs, raw) => {
+    _woHdrs = hdrs; _woRaw = raw;
+    buildMapper('iw39fleet');
+  }, msg => toast(msg, 'error'));
+  e.target.value = '';
+}
+
+function confirmIW39FleetImport() {
+  const mapping = {};
+  WO_FIELDS.forEach(f => {
+    const s = document.getElementById('wfm_' + f.key);
+    if (s && s.value !== '(skip)') mapping[f.key] = _woHdrs.indexOf(s.value);
+  });
+  if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
+  const wos = _woRaw.map(row => {
+    const item = {};
+    WO_FIELDS.forEach(f => { if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? '').trim(); });
+    return item;
+  }).filter(i => i.wo_number);
+  _fleetWideIW39 = wos;
+  _iw39AsOf      = new Date().toISOString();
+  _woHdrs = []; _woRaw = null;
+  const yba2Count = wos.filter(w => (w.order_type || '').toUpperCase() === 'YBA2').length;
+  closeModal('modalIW39FleetMap');
+  _updateIW39StatusPill(yba2Count);
+  const tgl = document.getElementById('yba2Toggle');
+  if (tgl) tgl.style.display = yba2Count > 0 ? 'flex' : 'none';
+  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${yba2Count.toLocaleString()} YBA2 (session memory)`, 'success');
+  if (selProjId) renderMaterials(selProjId);
+}
+
+function _updateIW39StatusPill(yba2Count) {
+  const lbl = document.getElementById('iw39StatusLbl');
+  if (!lbl) return;
+  if (_fleetWideIW39 && _fleetWideIW39.length > 0) {
+    const t = new Date(_iw39AsOf);
+    const hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
+    if (yba2Count === undefined) yba2Count = _fleetWideIW39.filter(w => (w.order_type || '').toUpperCase() === 'YBA2').length;
+    lbl.textContent = `as of ${hh} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${yba2Count.toLocaleString()} YBA2`;
+    lbl.style.color = 'var(--green)';
+  } else {
+    lbl.textContent = 'Not loaded';
+    lbl.style.color = 'var(--muted)';
+  }
+}
+
+function toggleYBA2Filter(checked) {
+  _iw39YBA2Filter = !!checked;
+  if (selProjId) renderMaterials(selProjId);
+}
+
+// ─── Stock lookup helpers ───────────────────────────────────────────
+function _findSnapshotRowByVPN(projId, bomVPN) {
+  const p = pd(projId);
+  if (!p || !Array.isArray(p.componentSnapshot)) return null;
+  const target = _normVPN(bomVPN);
+  if (!target) return null;
+  const VARIANT_KEYS = ['new_01','new_02','new_03','new_04','exc_01','exc_02','exc_03','exc_04','reman_01','reman_02','reman_03','reman_04'];
+  for (let i = 0; i < p.componentSnapshot.length; i++) {
+    const r = p.componentSnapshot[i];
+    for (let k = 0; k < VARIANT_KEYS.length; k++) {
+      if (_normVPN(r[VARIANT_KEYS[k]]) === target) return r;
+    }
+  }
+  return null;
+}
+
+function _collectSnapshotVariants(snapRow) {
+  if (!snapRow) return [];
+  const VARIANT_KEYS = [
+    {k:'new_01',  type:'NEW',   gen:1}, {k:'new_02', type:'NEW', gen:2},
+    {k:'new_03',  type:'NEW',   gen:3}, {k:'new_04', type:'NEW', gen:4},
+    {k:'exc_01',  type:'EXC',   gen:1}, {k:'exc_02', type:'EXC', gen:2},
+    {k:'exc_03',  type:'EXC',   gen:3}, {k:'exc_04', type:'EXC', gen:4},
+    {k:'reman_01',type:'REMAN', gen:1}, {k:'reman_02',type:'REMAN',gen:2},
+    {k:'reman_03',type:'REMAN', gen:3}, {k:'reman_04',type:'REMAN',gen:4},
+  ];
+  const out = [];
+  VARIANT_KEYS.forEach(({k, type, gen}) => {
+    const raw = String(snapRow[k] || '').trim();
+    const norm = _normVPN(raw);
+    if (norm) out.push({ vpn: raw, vpnNorm: norm, generation: gen, type, slotKey: k, isCurrent: gen === 4 });
+  });
+  return out;
+}
+
+function _lookupVariantInInventory(vpnNorm) {
+  if (!vpnNorm) return null;
+  if (_invMasterByMaterial && _invMasterByMaterial.has(vpnNorm)) return _invMasterByMaterial.get(vpnNorm);
+  if (_invMasterByVPN      && _invMasterByVPN.has(vpnNorm))      return _invMasterByVPN.get(vpnNorm);
+  return null;
+}
+
+function _computeBomStockStatus(projId, bomRow) {
+  const result = {
+    state: 'no_snapshot', totalOnHand: 0, totalOnOrder: 0,
+    variantsWithStock: 0, snapRow: null, variants: [], lookups: [],
+  };
+  const snapRow = _findSnapshotRowByVPN(projId, bomRow.part_number);
+  if (!snapRow) {
+    const sap = _normVPN(bomRow.sap_material);
+    if (sap && _invMasterByMaterial && _invMasterByMaterial.has(sap)) {
+      const entry = _invMasterByMaterial.get(sap);
+      result.totalOnHand  = entry.tot_qty_oh || 0;
+      result.totalOnOrder = entry.open_po    || 0;
+      if (result.totalOnHand > 0) result.variantsWithStock = 1;
+      result.lookups = [{ variant: { vpn: sap, vpnNorm: sap, generation: 4, type:'DIRECT', isCurrent: true }, entry }];
+      result.state = result.totalOnHand >= (parseFloat(bomRow.qty) || 1)
+        ? 'in_stock'
+        : (result.totalOnHand > 0 ? 'partial' : (result.totalOnOrder > 0 ? 'on_order_only' : 'out'));
+      return result;
+    }
+    return result;
+  }
+  result.snapRow = snapRow;
+  result.variants = _collectSnapshotVariants(snapRow);
+  result.lookups = result.variants.map(v => ({ variant: v, entry: _lookupVariantInInventory(v.vpnNorm) }));
+  const qty = parseFloat(bomRow.qty) || 1;
+  result.totalOnHand  = result.lookups.reduce((s, l) => s + (l.entry ? (l.entry.tot_qty_oh || 0) : 0), 0);
+  result.totalOnOrder = result.lookups.reduce((s, l) => s + (l.entry ? (l.entry.open_po    || 0) : 0), 0);
+  result.variantsWithStock = result.lookups.filter(l => l.entry && l.entry.tot_qty_oh > 0).length;
+  if (_invMasterByMaterial === null) {
+    result.state = 'no_inventory';
+  } else if (result.lookups.every(l => !l.entry)) {
+    result.state = 'no_inventory';
+  } else if (result.totalOnHand >= qty) {
+    result.state = 'in_stock';
+  } else if (result.totalOnHand > 0) {
+    result.state = 'partial';
+  } else if (result.totalOnOrder > 0) {
+    result.state = 'on_order_only';
+  } else {
+    result.state = 'out';
+  }
+  return result;
+}
+
+function _matchingWOsForBomRow(projId, bomRow) {
+  const sapKey = _normVPN(bomRow.sap_material);
+  if (!sapKey) return [];
+  if (Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0) {
+    const p = pd(projId);
+    const unitId = p && p.unit ? String(p.unit).trim().toUpperCase() : '';
+    return _fleetWideIW39.filter(wo => {
+      if (_normVPN(wo.sap_material) !== sapKey) return false;
+      if (_iw39YBA2Filter && (wo.order_type || '').toUpperCase() !== 'YBA2') return false;
+      if (unitId) {
+        const flocU = String(wo.floc || '').trim().toUpperCase();
+        if (!flocU.includes(unitId)) return false;
+      }
+      return true;
+    });
+  }
+  const p = pd(projId);
+  const wos = (p && p.workOrders) || [];
+  return wos.filter(wo => _normVPN(wo.sap_material) === sapKey);
+}
+
+function openStockDrillDown(projId, bomIdx) {
+  const p = pd(projId);
+  if (!p || !p.bom || !p.bom[bomIdx]) return;
+  const bomRow = p.bom[bomIdx];
+  const status = _computeBomStockStatus(projId, bomRow);
+  const wos    = _matchingWOsForBomRow(projId, bomRow);
+  document.getElementById('stockDrillTitle').textContent = `📊 Stock — ${bomRow.description || bomRow.sap_material || bomRow.part_number || 'BOM row'}`;
+  const stateLabel = ({
+    in_stock:'<span style="color:var(--green);font-weight:600">✓ In stock</span>',
+    partial:'<span style="color:var(--gold);font-weight:600">⚠ Partial</span>',
+    on_order_only:'<span style="color:var(--gold);font-weight:600">⚠ On order only</span>',
+    out:'<span style="color:var(--red);font-weight:600">✗ Out of stock, no PO</span>',
+    no_snapshot:'<span style="color:var(--muted);font-weight:600">⚪ No snapshot entry</span>',
+    no_inventory:'<span style="color:var(--muted);font-weight:600">⚪ Material not in master</span>',
+  })[status.state];
+  let html = `
+    <div style="background:var(--deep);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:14px;font-size:11px">
+      <div style="display:flex;justify-content:space-between;gap:14px;margin-bottom:6px"><span style="color:var(--muted)">Description</span><span style="color:var(--txt);font-weight:600">${esc(bomRow.description || '—')}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;margin-bottom:6px"><span style="color:var(--muted)">BOM VPN</span><span class="mono" style="color:var(--txt)">${esc(bomRow.part_number || '—')}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;margin-bottom:6px"><span style="color:var(--muted)">BOM SAP Material</span><span class="mono" style="color:var(--txt)">${esc(bomRow.sap_material || '—')}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;margin-bottom:6px"><span style="color:var(--muted)">Quantity needed</span><span style="color:var(--txt);font-weight:600">${esc(bomRow.qty || '1')}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;padding-top:8px;border-top:1px solid var(--border);margin-top:8px"><span style="color:var(--muted)">Stock state</span><span>${stateLabel}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:14px;margin-top:6px"><span style="color:var(--muted)">Total on hand · on order (across variants)</span><span style="color:var(--txt);font-weight:600">${status.totalOnHand.toLocaleString()} · ${status.totalOnOrder.toLocaleString()}</span></div>
+      ${_invMasterAsOf ? `<div style="font-size:10px;color:var(--faint);margin-top:6px">Inventory data as of ${new Date(_invMasterAsOf).toLocaleString()}</div>` : '<div style="font-size:10px;color:var(--orange);margin-top:6px">⚠ No Inventory Master loaded — upload from the header pill to populate stock data</div>'}
+    </div>`;
+  if (status.snapRow && status.variants.length > 0) {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">All variants for component "${esc(status.snapRow.component || '')}"</div>
+      <div style="overflow:auto;border:1px solid var(--border);border-radius:4px;margin-bottom:14px">
+        <table style="width:100%;border-collapse:collapse;font-size:10px">
+          <thead><tr style="background:var(--deep);color:var(--muted)">
+            <th style="padding:6px 8px;text-align:left">Type · Gen</th>
+            <th style="padding:6px 8px;text-align:left">VPN</th>
+            <th style="padding:6px 8px;text-align:left">Inventory match</th>
+            <th style="padding:6px 8px;text-align:right">On hand</th>
+            <th style="padding:6px 8px;text-align:right">On order</th>
+            <th style="padding:6px 8px;text-align:left">Location</th>
+          </tr></thead><tbody>
+          ${status.lookups.map(l => {
+            const v = l.variant; const e = l.entry;
+            const isCur = v.isCurrent ? ' <span style="background:rgba(91,156,246,0.15);color:var(--blue);padding:1px 5px;border-radius:8px;font-size:9px">current</span>' : '';
+            return `<tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:6px 8px;color:var(--txt);font-weight:600">${esc(v.type)} ${esc(String(v.generation).padStart(2,'0'))}${isCur}</td>
+              <td class="mono" style="padding:6px 8px;color:var(--txt)">${esc(v.vpn)}</td>
+              <td style="padding:6px 8px;color:${e?'var(--txt)':'var(--faint)'}" title="${e?esc(e.description||''):''}">${e ? esc((e.material_raw || '') + ' — ' + (e.description || '').slice(0, 40)) : '<span style="font-style:italic">no match</span>'}</td>
+              <td style="padding:6px 8px;text-align:right;color:${e && e.tot_qty_oh > 0 ? 'var(--green)' : (e ? 'var(--muted)' : 'var(--faint)')};font-weight:600">${e ? (e.tot_qty_oh || 0).toLocaleString() : '—'}</td>
+              <td style="padding:6px 8px;text-align:right;color:${e && e.open_po > 0 ? 'var(--gold)' : (e ? 'var(--muted)' : 'var(--faint)')}">${e ? (e.open_po || 0).toLocaleString() : '—'}${e && e.po_flag === 'Y' && !e.open_po ? ' <span style="font-size:9px">(PO open, qty unknown)</span>' : ''}</td>
+              <td style="padding:6px 8px;color:var(--muted)">${e ? esc(e.onhand_loc || '—') : '—'}</td>
+            </tr>`;
+          }).join('')}
+          </tbody></table></div>`;
+  }
+  html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">Matching Work Orders ${_iw39YBA2Filter ? '<span style="color:var(--blue);font-size:9px">· YBA2 filter active</span>' : ''}</div>`;
+  if (wos.length > 0) {
+    html += `<div style="overflow:auto;border:1px solid var(--border);border-radius:4px">
+      <table style="width:100%;border-collapse:collapse;font-size:10px">
+        <thead><tr style="background:var(--deep);color:var(--muted)">
+          <th style="padding:6px 8px;text-align:left">WO Number</th>
+          <th style="padding:6px 8px;text-align:left">Status</th>
+          <th style="padding:6px 8px;text-align:left">Order Type</th>
+          <th style="padding:6px 8px;text-align:left">FLOC / Sort Field</th>
+          <th style="padding:6px 8px;text-align:left">Description</th>
+        </tr></thead><tbody>
+        ${wos.slice(0, 50).map(wo => `<tr style="border-bottom:1px solid var(--border)">
+          <td class="mono" style="padding:6px 8px;color:var(--txt);font-weight:600">${esc(wo.wo_number || '')}</td>
+          <td style="padding:6px 8px;color:var(--muted)">${esc(wo.status || '—')}</td>
+          <td style="padding:6px 8px;color:var(--muted)">${esc(wo.order_type || '—')}</td>
+          <td class="mono" style="padding:6px 8px;color:var(--muted)">${esc(wo.floc || '—')}</td>
+          <td style="padding:6px 8px;color:var(--txt)">${esc(wo.description || '—')}</td>
+        </tr>`).join('')}
+        </tbody></table>${wos.length > 50 ? `<div style="padding:8px;font-size:10px;color:var(--faint);text-align:center">+ ${wos.length - 50} more WOs (showing first 50)</div>` : ''}</div>`;
+  } else {
+    html += `<div style="background:var(--deep);border:1px dashed var(--border);border-radius:4px;padding:14px;text-align:center;color:var(--faint);font-size:11px">No matching Work Orders.${!_fleetWideIW39 && !(pd(projId)?.workOrders?.length) ? '<br><span style="font-size:10px">Upload a fleet-wide IW39 from the header pill, or per-project IW39 from the Work Orders tab.</span>' : ''}</div>`;
+  }
+  document.getElementById('stockDrillBody').innerHTML = html;
+  openModal('modalStockDrill');
+}
+
 // ─────────────────────────────────────────────
-// COLUMN MAPPER (shared)
+// COLUMN MAPPER (shared) — v8.9 extended for 3 additional upload types
+//   bom | wo | snapshot | im (inventory master) | iw39fleet (fleet-wide IW39)
 // ─────────────────────────────────────────────
+const MAPPER_CFG = {
+  bom:       { fields: BOM_FIELDS,       hdrsRef: () => _bomHdrs,   rawRef: () => _bomRaw,   prefix: 'bm',   gridId: 'bomMapGrid',         cntId: 'bomRowCount',         modalId: 'modalBomMap' },
+  wo:        { fields: WO_FIELDS,        hdrsRef: () => _woHdrs,    rawRef: () => _woRaw,    prefix: 'wm',   gridId: 'woMapGrid',          cntId: 'woRowCount',          modalId: 'modalWoMap' },
+  snapshot:  { fields: SNAPSHOT_FIELDS,  hdrsRef: () => _snapHdrs,  rawRef: () => _snapRaw,  prefix: 'sm',   gridId: 'snapshotMapGrid',    cntId: 'snapshotRowCount',    modalId: 'modalSnapshotMap' },
+  im:        { fields: INVMASTER_FIELDS, hdrsRef: () => _imHdrs,    rawRef: () => _imRaw,    prefix: 'imc',  gridId: 'invMasterMapGrid',   cntId: 'invMasterRowCount',   modalId: 'modalInvMasterMap' },
+  iw39fleet: { fields: WO_FIELDS,        hdrsRef: () => _woHdrs,    rawRef: () => _woRaw,    prefix: 'wfm',  gridId: 'iw39FleetMapGrid',   cntId: 'iw39FleetRowCount',   modalId: 'modalIW39FleetMap' },
+};
+
 function buildMapper(type) {
-  const fields  = type === 'bom' ? BOM_FIELDS : WO_FIELDS;
-  const hdrs    = type === 'bom' ? _bomHdrs   : _woHdrs;
-  const raw     = type === 'bom' ? _bomRaw    : _woRaw;
-  const prefix  = type === 'bom' ? 'bm'       : 'wm';
-  const gridId  = type === 'bom' ? 'bomMapGrid'  : 'woMapGrid';
-  const cntId   = type === 'bom' ? 'bomRowCount' : 'woRowCount';
-  const modalId = type === 'bom' ? 'modalBomMap' : 'modalWoMap';
+  const cfg = MAPPER_CFG[type];
+  const fields  = cfg.fields;
+  const hdrs    = cfg.hdrsRef();
+  const raw     = cfg.rawRef();
+  const prefix  = cfg.prefix;
+  const gridId  = cfg.gridId;
+  const cntId   = cfg.cntId;
+  const modalId = cfg.modalId;
 
   document.getElementById(gridId).innerHTML = fields.map(f => {
     const match = hdrs.find(h => autoMatch(h, f.key));
@@ -2077,12 +2666,13 @@ function autoMatch(header, fieldKey) {
 // live. Injects a table into a #<prefix>Preview container that's created on
 // first call (idempotent).
 function renderMapperPreview(type) {
-  const fields  = type === 'bom' ? BOM_FIELDS : WO_FIELDS;
-  const hdrs    = type === 'bom' ? _bomHdrs   : _woHdrs;
-  const raw     = type === 'bom' ? _bomRaw    : _woRaw;
-  const prefix  = type === 'bom' ? 'bm'       : 'wm';
-  const gridId  = type === 'bom' ? 'bomMapGrid'  : 'woMapGrid';
-  const cntId   = type === 'bom' ? 'bomRowCount' : 'woRowCount';
+  const cfg = MAPPER_CFG[type];
+  const fields  = cfg.fields;
+  const hdrs    = cfg.hdrsRef();
+  const raw     = cfg.rawRef();
+  const prefix  = cfg.prefix;
+  const gridId  = cfg.gridId;
+  const cntId   = cfg.cntId;
   const previewId = type + 'MapPreview';
 
   // Read the current mapping from the dropdowns

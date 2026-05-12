@@ -15,6 +15,15 @@
  *   showToast()   — CPT v17:2299 (extended with severity)
  *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
  *
+ * Version 1.5.0 — Deploy v8.9 adds VPN normalisation for cross-referencing
+ *   dealer-provided part numbers against Inventory Master + Component
+ *   Snapshot cross-reference data:
+ *     normaliseVPN(s) — strips all hyphens EXCEPT the "-EXC" suffix that
+ *     identifies exchange-type variants. Operator-locked rule (2026-05-11):
+ *     "3723563-EXC" → "3723563-EXC" (preserved)
+ *     "123-4567"   → "1234567" (interior hyphen stripped)
+ *     "XYZ-ABC-EXC" → "XYZABC-EXC" (interior stripped, EXC suffix kept)
+ *   Trims + uppercases. Empty / N/A inputs return ''.
  * Version 1.4.0 — Chunk 5 (Slide 6) adds cross-tool category vocabulary
  *   unification + cross-tool Sort Field CAPS rule:
  *     canonicalCategory, categoryLabel, categoryColor, CATEGORY_SYNONYMS,
@@ -37,7 +46,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.4.0';
+  var VERSION = '1.5.0';
   var DEFAULT_TZ = 'America/Edmonton';   // Mountain Time (Canada)
   var DEFAULT_CURRENCY = 'CAD';          // Canadian dollar — Chunk 3 (Slide 8) operator decision 2026-05-10
   var DEFAULT_LOCALE = 'en-CA';          // Canadian English — Chunk 3 (Slide 8) operator decision 2026-05-10
@@ -934,6 +943,40 @@
   }
 
   // ─────────────────────────────────────────────────────────────
+  // VPN NORMALISATION  (Deploy v8.9 — cross-reference matching)
+  // ─────────────────────────────────────────────────────────────
+  /**
+   * Normalise a vendor part number (VPN) for cross-reference matching.
+   *
+   * Operator-locked rule (2026-05-11): strip all hyphens EXCEPT the literal
+   * "-EXC" suffix that identifies exchange-variant parts. Trims whitespace,
+   * uppercases for case-insensitive matching. Treats null / undefined / ''
+   * / 'N/A' as empty (returns '').
+   *
+   * Examples:
+   *   normaliseVPN('3723563')         → '3723563'
+   *   normaliseVPN('3723563-EXC')     → '3723563-EXC'   (EXC suffix preserved)
+   *   normaliseVPN('9W9603-EXC')      → '9W9603-EXC'   (preserved)
+   *   normaliseVPN('123-4567')        → '1234567'      (interior hyphen stripped)
+   *   normaliseVPN('XYZ-ABC-EXC')     → 'XYZABC-EXC'   (interior stripped, EXC kept)
+   *   normaliseVPN('  3723563  ')     → '3723563'      (trim)
+   *   normaliseVPN('N/A')             → ''             (literal N/A treated as missing)
+   *   normaliseVPN(null)              → ''
+   *
+   * Use at LOOKUP boundaries when matching dealer-provided part numbers
+   * against an Inventory Master or Component Snapshot cross-reference table.
+   */
+  function normaliseVPN(rawVPN) {
+    if (rawVPN == null) return '';
+    var v = String(rawVPN).trim().toUpperCase();
+    if (v === '' || v === 'N/A') return '';
+    if (v.length >= 4 && v.slice(-4) === '-EXC') {
+      return v.slice(0, -4).replace(/-/g, '') + '-EXC';
+    }
+    return v.replace(/-/g, '');
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // EXPORT
   // ─────────────────────────────────────────────────────────────
   window.NumaCoreLib = {
@@ -965,6 +1008,8 @@
     CATEGORY_LABELS: CATEGORY_LABELS,
     CATEGORY_COLORS: CATEGORY_COLORS,
     normaliseSortField: normaliseSortField,
+    // Deploy v8.9 — VPN normalisation for cross-reference matching
+    normaliseVPN: normaliseVPN,
     VERSION: VERSION
   };
 })();
