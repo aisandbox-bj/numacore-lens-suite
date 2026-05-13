@@ -2032,6 +2032,77 @@ function renderMaterials(id) {
     return `<button onclick="openStockDrillDown('${id}',${realIdx})" title="Click for stock detail across all variants" style="font-size:9px;padding:2px 7px;border-radius:10px;border:1px solid ${stateMeta.border};background:${stateMeta.bg};color:${stateMeta.color};cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">${stateMeta.label}${sub}</button>`;
   };
 
+  // v8.10 FIX-6 (2026-05-13) — Cross-project material demand index.
+  // The stock badge per row only checks "is this part available?" — but if
+  // multiple components across multiple ACTIVE projects all want the same
+  // part, the green ✓ In stock can mislead (LH + RH Final Drive both pulling
+  // from the same sheet via FIX-2.1 is the classic case: 1 unit in stock,
+  // both rows show green, only one will actually get it).
+  // Build a Map<materialKey, [{projId, componentId, unit, componentName, qty}]>
+  // by walking every activated project + each componentSheetMap entry +
+  // each BOM row tagged with that sheet. A caller = a (projId, componentId)
+  // tuple. Materials called by >1 distinct caller get a blue ⚠ flag at the
+  // row + at the component header. Key resolution: prefer sap_material
+  // (canonical SAP identity), fall back to part_number (VPN) if blank.
+  const _crossDemand = new Map();
+  if (deploy && deploy.projects) {
+    Object.keys(deploy.projects).forEach(pid => {
+      const pp = deploy.projects[pid];
+      if (!pp || !pp.activated) return;
+      const fpp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === pid) : null;
+      const unitLbl = (fpp && fpp.unit) || '?';
+      const ppMap   = pp.componentSheetMap || {};
+      const ppBom   = Array.isArray(pp.bom) ? pp.bom : [];
+      Object.keys(ppMap).forEach(componentId => {
+        const sheet = ppMap[componentId];
+        if (!sheet) return;
+        const comp = (typeof fleetComps !== 'undefined' && fleetComps) ? fleetComps[componentId] : null;
+        const compName = (comp && (comp.component || comp.name)) || '?';
+        ppBom.forEach(r => {
+          if (r._sourceSheet !== sheet) return;
+          const matKey = _normVPN(r.sap_material) || _normVPN(r.part_number);
+          if (!matKey) return;
+          if (!_crossDemand.has(matKey)) _crossDemand.set(matKey, []);
+          _crossDemand.get(matKey).push({
+            projId: pid,
+            componentId: String(componentId),
+            unit: unitLbl,
+            component: compName,
+            qty: parseFloat(r.qty) || 0
+          });
+        });
+      });
+    });
+  }
+
+  // Returns null if this row has no cross-project conflict; otherwise
+  // returns { count, others } where others is the list of caller tuples
+  // excluding the current (projId, componentId) caller. The count is the
+  // distinct (projId, componentId) pair count INCLUDING this one (so 2 =
+  // one other component/project also calls this material; 3 = two others).
+  const _crossDemandFlagFor = (row, currentComponentId) => {
+    const matKey = _normVPN(row.sap_material) || _normVPN(row.part_number);
+    if (!matKey) return null;
+    const callers = _crossDemand.get(matKey) || [];
+    if (callers.length <= 1) return null;
+    const distinct = new Set();
+    callers.forEach(c => distinct.add(c.projId + '::' + c.componentId));
+    if (distinct.size <= 1) return null;
+    const selfKey = id + '::' + String(currentComponentId || '');
+    const others  = callers.filter(c => (c.projId + '::' + c.componentId) !== selfKey);
+    if (others.length === 0) return null;
+    return { count: distinct.size, others };
+  };
+
+  // Renders the inline blue ⚠ flag. Tooltip lists each (unit, component, qty)
+  // caller. Used on both row Stock cells and component-header rollup badges.
+  const _renderCrossDemandFlag = (flag) => {
+    if (!flag) return '';
+    const tip = flag.others.map(o => `${o.unit} / ${o.component} (qty ${o.qty})`).join(' · ');
+    const n   = flag.others.length;
+    return ` <span style="display:inline-flex;align-items:center;gap:2px;color:var(--blue);font-size:10px;font-weight:700;margin-left:4px;cursor:help;background:rgba(91,156,246,0.10);border:1px solid var(--blue);border-radius:8px;padding:1px 5px" title="Cross-project demand — also called by: ${esc(tip)}">⚠ ${n}</span>`;
+  };
+
   // Helper — renders a single BOM row in the inner table (same shape as v8.9).
   // v8.10 FIX-5.2 (2026-05-13) — Per operator: centre all columns EXCEPT
   // Line, Description, and Notes. Qty / Line Cost were previously right-
@@ -2048,8 +2119,13 @@ function renderMaterials(id) {
   // the main row's VPN is also skipped to avoid showing the main as its own
   // alt. The reuses _computeBomStockStatus.lookups (already computed for
   // the main stock badge — no extra inventory-lookup cost).
-  const renderRow = (row) => {
+  const renderRow = (row, currentComponentId) => {
     const realIdx = bom.indexOf(row);
+    // v8.10 FIX-6 (2026-05-13) — Cross-project demand flag (blue ⚠).
+    // Surfaces in the Stock cell when this material is also called by
+    // another (projId, componentId) caller across all active projects.
+    const _crossFlag = _crossDemandFlagFor(row, currentComponentId);
+    const _crossFlagHtml = _renderCrossDemandFlag(_crossFlag);
     const mainRowHtml = `
       <tr class="${rowClass(row.sapStatus)}">
         <td>${esc(row.line_no || String(realIdx+1))}</td>
@@ -2058,7 +2134,7 @@ function renderMaterials(id) {
         <td class="mono" style="text-align:center">${esc(row.sap_material || '')}</td>
         <td style="text-align:center">${esc(row.qty || '')}</td>
         <td style="text-align:center">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
-        <td style="text-align:center">${_stockBadgeFor(row, realIdx)}</td>
+        <td style="text-align:center;white-space:nowrap">${_stockBadgeFor(row, realIdx)}${_crossFlagHtml}</td>
         <td style="text-align:center">
           <select class="gf-sel" style="font-size:10px;padding:2px 5px" onchange="updateBomStatus('${id}',${realIdx},this.value)">
             ${statusOpts(row.sapStatus)}
@@ -2101,7 +2177,11 @@ function renderMaterials(id) {
 
   // Renders one component group: outer summary row + inner expandable rows table.
   // The outer row shows the readiness badge; clicking it toggles _bomGroupOpen.
-  const renderGroup = (key, title, sub, rowsForGroup, readiness) => {
+  // v8.10 FIX-6 — componentId threads through to renderRow so the cross-project
+  // demand flag knows which "self" caller to exclude from the conflict check.
+  // ALSO: roll up the row-level flags to a group-level header flag — if ANY
+  // row in this component has cross-project demand, show ⚠ on the header.
+  const renderGroup = (key, title, sub, rowsForGroup, readiness, componentId) => {
     const open = !!_bomGroupOpen[key];
     // Apply current SAP-status filter (Pending/Confirmed/etc.) INSIDE the group.
     const visibleRows = _bomFilter === 'all' ? rowsForGroup : rowsForGroup.filter(r => r.sapStatus === _bomFilter);
@@ -2111,6 +2191,28 @@ function renderMaterials(id) {
       ? `<span style="font-size:10px;color:var(--muted);margin-left:10px">${readiness.totalOnHand}OH · ${readiness.totalOnOrder}PO</span>`
       : '';
     const partsCount = `<span style="font-size:10px;color:var(--muted);margin-left:10px">${rowsForGroup.length} part${rowsForGroup.length === 1 ? '' : 's'}${visibleRows.length !== rowsForGroup.length ? ` · ${visibleRows.length} match filter` : ''}</span>`;
+    // v8.10 FIX-6 — Group-level cross-demand rollup. Walk this component's
+    // rows; collect all OTHER callers (projId+componentId) across all flags.
+    // De-duplicate by caller-key so a single (unit, component) caller across
+    // multiple rows only appears once in the tooltip.
+    let _groupFlagHtml = '';
+    if (componentId !== undefined && componentId !== null) {
+      const _seenCallerKeys = new Set();
+      const _aggOthers = [];
+      rowsForGroup.forEach(r => {
+        const f = _crossDemandFlagFor(r, componentId);
+        if (!f) return;
+        f.others.forEach(o => {
+          const k = o.projId + '::' + o.componentId;
+          if (_seenCallerKeys.has(k)) return;
+          _seenCallerKeys.add(k);
+          _aggOthers.push(o);
+        });
+      });
+      if (_aggOthers.length > 0) {
+        _groupFlagHtml = _renderCrossDemandFlag({ count: _aggOthers.length + 1, others: _aggOthers });
+      }
+    }
     return `
       <div style="border:1px solid var(--border);border-radius:6px;margin:8px 0;background:var(--surface);overflow:hidden">
         <div onclick="toggleBomGroup('${esc(key)}','${id}')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;${open ? 'border-bottom:1px solid var(--border)' : ''}" onmouseover="this.style.background='var(--raised)'" onmouseout="this.style.background=''">
@@ -2118,7 +2220,7 @@ function renderMaterials(id) {
           <span style="font-size:13px;font-weight:600;color:var(--txt)">${esc(title)}</span>
           ${sub ? `<span style="font-size:10px;color:var(--muted)">${esc(sub)}</span>` : ''}
           <span style="flex:1"></span>
-          ${badgeHtml}${stockSub}${partsCount}
+          ${badgeHtml}${stockSub}${_groupFlagHtml}${partsCount}
         </div>
         ${open ? `<div class="dtw" style="padding:0">
           <table class="dt" style="margin:0">
@@ -2129,7 +2231,7 @@ function renderMaterials(id) {
               <th style="text-align:center" title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
               <th style="text-align:center">SAP Status</th><th style="min-width:120px">Notes</th>
             </tr></thead>
-            <tbody>${visibleRows.map(renderRow).join('') || '<tr><td colspan="9" style="padding:14px;color:var(--faint);font-style:italic;text-align:center">No rows match the current filter</td></tr>'}</tbody>
+            <tbody>${visibleRows.map(r => renderRow(r, componentId)).join('') || '<tr><td colspan="9" style="padding:14px;color:var(--faint);font-style:italic;text-align:center">No rows match the current filter</td></tr>'}</tbody>
           </table>
         </div>` : ''}
       </div>`;
@@ -2145,7 +2247,10 @@ function renderMaterials(id) {
       const compRows = sheet ? bom.filter(r => r._sourceSheet === sheet) : [];
       const readiness = _computeComponentReadiness(id, c.id);
       const sub = sheet ? `sheet: ${sheet}` : 'no sheet assigned';
-      groupsHtml += renderGroup('comp_' + c.id, c.component || c.name || '—', sub, compRows, readiness);
+      // v8.10 FIX-6 — pass c.id as componentId so the cross-project demand
+      // flag knows this component is the "self" caller (excluded from the
+      // conflict list shown in the tooltip).
+      groupsHtml += renderGroup('comp_' + c.id, c.component || c.name || '—', sub, compRows, readiness, c.id);
     });
     // "Unmapped" catch-all — rows whose _sourceSheet isn't in the map, plus
     // legacy rows with no _sourceSheet tag at all.
@@ -2154,13 +2259,15 @@ function renderMaterials(id) {
     if (unmappedRows.length > 0) {
       const orphanSheets = [...new Set(unmappedRows.map(r => r._sourceSheet).filter(Boolean))];
       const orphanSub = orphanSheets.length > 0 ? `from ${orphanSheets.length} sheet${orphanSheets.length === 1 ? '' : 's'}: ${orphanSheets.slice(0,3).join(', ')}${orphanSheets.length > 3 ? '…' : ''}` : 'no source sheet';
-      groupsHtml += renderGroup('unmapped', 'Unmapped (no scope)', orphanSub, unmappedRows, null);
+      // Unmapped group has no single componentId — cross-demand flag uses
+      // empty string as the self-key; all real callers will surface.
+      groupsHtml += renderGroup('unmapped', 'Unmapped (no scope)', orphanSub, unmappedRows, null, '');
     }
   } else {
     // Ungrouped view — fall back to v8.9 behaviour (single flat list) inside
     // a single open group. Operator sees the same data without the rollup.
     _bomGroupOpen['__all__'] = true;
-    groupsHtml += renderGroup('__all__', 'All parts', linkedComps.length > 0 ? 'no component map set' : 'no Cadence-linked components for this project', bom, null);
+    groupsHtml += renderGroup('__all__', 'All parts', linkedComps.length > 0 ? 'no component map set' : 'no Cadence-linked components for this project', bom, null, '');
   }
 
   el.innerHTML += groupsHtml;
