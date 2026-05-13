@@ -4661,9 +4661,21 @@ function renderIdlingPreview() {
       // percent (the stored convention). Percent (0-100) → use as-is.
       if (isFinite(raw) && box.format === 'decimal') raw = raw * 100;
 
-      // No-data: empty Idle cell OR fatal callout keyword. v8.6 FIX-2 rule
-      // unchanged.
-      if (!isFinite(raw) || IDLING_FATAL_CALLOUT_RX.test(callout)) {
+      // v8.7 FIX-1 (2026-05-13 late evening) — no-data rule loosened to ONLY
+      // skip rows where the Idle % cell is empty or non-numeric. The v8.6/v8.7
+      // pre-FIX-1 rule ALSO skipped rows with "Insufficient" / "Missing" /
+      // "Invalid" in the Callouts column — the original spec choice (operator
+      // option (b)). In practice this was too aggressive: most rows in real
+      // Cat/Vitals exports carry a precision/missing-meter warning but the
+      // Idle % is still computed and present. Operator's live test showed
+      // 74-of-78 rows being skipped wholesale even though the values were
+      // there. Trust Cat's number; the operator can pre-filter the XLSX
+      // upstream if they want to exclude flagged rows. The IDLING_FATAL_CALLOUT_RX
+      // constant is kept defined for now in case we want to surface it as an
+      // optional checkbox in a later patch ("skip flagged rows").
+      // (note: `callout` is still parsed above so it's available if we add the
+      // toggle later — harmless if unused.)
+      if (!isFinite(raw)) {
         boxStats.noData++;
         continue;
       }
@@ -4721,7 +4733,7 @@ function renderIdlingPreview() {
     const srcDesc = esc(s.sheet) + ' · ' + esc(s.column) + ' (' + (s.format === 'decimal' ? 'dec' : '%') + ')';
     statsHtml += '<div class="stat-pill"><div class="stat-num s-green">' + s.matched + '</div><div class="stat-lbl">' + esc(boxLbl) + ' → ' + targetLbl + ' matched <span style="color:var(--text3);font-size:10px">[' + srcDesc + ']</span></div></div>';
     if (s.unmatched) statsHtml += '<div class="stat-pill"><div class="stat-num s-amber">' + s.unmatched + '</div><div class="stat-lbl">' + esc(boxLbl) + ' unmatched</div></div>';
-    if (s.noData)    statsHtml += '<div class="stat-pill"><div class="stat-num">'         + s.noData    + '</div><div class="stat-lbl">' + esc(boxLbl) + ' no data (skipped)</div></div>';
+    if (s.noData)    statsHtml += '<div class="stat-pill"><div class="stat-num">'         + s.noData    + '</div><div class="stat-lbl">' + esc(boxLbl) + ' empty Idle % cell (skipped)</div></div>';
   });
   statsEl.innerHTML = statsHtml || '<div style="color:var(--text3);font-size:12px">No boxes configured — fill in at least one (Sheet + Column) above and re-click Preview Apply.</div>';
 
@@ -4853,7 +4865,7 @@ function applyIdlingToJSON() {
   const dateStr = new Date().toISOString().split('T')[0];
   fleet.meta.notes = (fleet.meta.notes || '') +
     (fleet.meta.notes ? '\n' : '') +
-    'Idling import via Intake v8.7 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
+    'Idling import via Intake v8.7 FIX-1 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
 
   // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
   const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
