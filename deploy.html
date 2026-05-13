@@ -1163,7 +1163,7 @@ const INVMASTER_FIELDS = [
 
 // Column auto-match aliases
 const ALIASES = {
-  wo_number:    ['wo','order number','work order','wbs','order no'],
+  wo_number:    ['wo','order','order number','work order','wbs','order no'],   // v8.10 FIX-2.4 — operator's IW39 column is literally "Order"
   description:  ['description','desc','short text','title','text'],
   status:       ['status','sys status','system status','user status'],
   planned_cost: ['planned','planned cost','plan cost','planned value','budget'],
@@ -1467,12 +1467,20 @@ function ensurePD(id, templateId) {
       // via modalComponentSheetLink; editable later via the BOM tab toolbar.
       // Drives per-component Parts Readiness rollup in renderMaterials.
       componentSheetMap: {},
+      // v8.10 FIX-2.5 (2026-05-13) — Cache of the sheet names the operator
+      // saw when they last linked components. Used by the Edit Map button
+      // so re-opening the modal still shows ALL the original sheet options,
+      // not just the sheets that currently have surviving BOM rows. Empty
+      // sheets get remembered so the operator can still link/unlink them
+      // without re-uploading the workbook.
+      componentSheetMapMeta: { knownSheets: [] },
     };
   }
   // Back-fill missing fields for older data
   const p = deploy.projects[id];
   if (!p.customTasks) p.customTasks = [];
   if (!p.componentSheetMap) p.componentSheetMap = {};   // v8.10
+  if (!p.componentSheetMapMeta) p.componentSheetMapMeta = { knownSheets: [] };   // v8.10 FIX-2.5
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   return p;
 }
@@ -2177,6 +2185,12 @@ function _renderBomSheetPicker() {
     const cfg = _bomSheetCfg[name];
     const checked = cfg.selected ? 'checked' : '';
     const tag = cfg.isCatalog ? '<span style="font-size:9px;padding:1px 6px;background:rgba(255,193,7,0.15);color:var(--gold);border-radius:8px;margin-left:8px">catalog-like</span>' : '';
+    // v8.10 FIX-2.3 (2026-05-13) — Empty-sheet visual flag. Pre-FIX-2.3 a row
+    // with rowCount=0 was just dimmed. Operator missed empty per-component
+    // template sheets and only later found out their multi-sheet BOM had data
+    // only in ENGINE — all other linked sheets came back with no rows. Now:
+    // surface a red "(empty)" tag next to the sheet name so it can't be missed.
+    const emptyTag = cfg.rowCount === 0 ? '<span style="font-size:9px;padding:1px 6px;background:rgba(244,67,54,0.12);color:var(--red);border:1px solid var(--red);border-radius:8px;margin-left:8px">empty</span>' : '';
     const hdrPreview = cfg.headers.length
       ? `<div style="font-size:10px;color:var(--faint);margin-top:2px">cols: ${cfg.headers.map(h => esc(h)).join(' · ')}</div>`
       : `<div style="font-size:10px;color:var(--faint);margin-top:2px">(no header row detected)</div>`;
@@ -2184,10 +2198,10 @@ function _renderBomSheetPicker() {
       <div style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" data-sheet="${esc(name)}" ${checked} ${cfg.rowCount === 0 ? 'disabled' : ''} onchange="_toggleBomSheet('${esc(name)}', this.checked)">
         <div style="flex:1">
-          <div style="font-size:12px;color:var(--txt);font-weight:600">${esc(name)}${tag}</div>
+          <div style="font-size:12px;color:var(--txt);font-weight:600">${esc(name)}${tag}${emptyTag}</div>
           ${hdrPreview}
         </div>
-        <div style="font-size:11px;color:var(--muted);min-width:80px;text-align:right">${cfg.rowCount.toLocaleString()} row${cfg.rowCount === 1 ? '' : 's'}</div>
+        <div style="font-size:11px;color:${cfg.rowCount === 0 ? 'var(--red)' : 'var(--muted)'};min-width:80px;text-align:right;font-weight:${cfg.rowCount === 0 ? '600' : '400'}">${cfg.rowCount.toLocaleString()} row${cfg.rowCount === 1 ? '' : 's'}</div>
       </div>
     </label>`;
   }).join('');
@@ -2312,17 +2326,42 @@ function _renderComponentSheetLink(projId) {
   const totalSheets = _pendingBomSheets.length;
   const assignedSheets = new Set(Object.values(_pendingLinkDraft).filter(Boolean));
   const unassignedSheets = _pendingBomSheets.filter(s => !assignedSheets.has(s));
+  // v8.10 FIX-2.3 (2026-05-13) — Identify which selected sheets have zero
+  // data rows. Empty sheets create a misleading "linked" state — operator
+  // links Transmission → TRANSMISSION but if the TRANSMISSION sheet was a
+  // template stub with only a header, no parts will show up under it
+  // afterwards. We surface this in the modal as a warning + per-row
+  // indicator so the operator knows BEFORE confirming the link.
+  const _emptySheets = (_bomSheetCfg)
+    ? _pendingBomSheets.filter(s => _bomSheetCfg[s] && _bomSheetCfg[s].rowCount === 0)
+    : [];
+  const _sheetRowCount = (s) => (_bomSheetCfg && _bomSheetCfg[s]) ? (_bomSheetCfg[s].rowCount || 0) : null;
 
   const optsFor = (compId) => {
     const cur = _pendingLinkDraft[compId] || '';
-    // Build option list: a sheet is selectable here if it's not already taken by another component
-    // (or if it's already the current choice for this component).
+    // v8.10 FIX-2.1 (2026-05-13) — Real operator case: LH/RH or FRT/REAR
+    // component WOs often share the same BOM sheet (e.g. Left + Right Final
+    // Drive both pull from "L&R FINAL DRIVE"). Pre-FIX-2.1 the dropdown
+    // hard-disabled an already-taken sheet, blocking the duplicate-job
+    // workflow. Now: keep the "(used)" visual marker as a soft warning but
+    // leave the option enabled. componentSheetMap stays one-to-one per
+    // component (still {componentId: sheetName}); the same sheetName can
+    // appear as the value for multiple componentIds. Downstream BOM-tab
+    // rollup will naturally render the same _sourceSheet rows under both
+    // component cards (which is what the operator wants for LH+RH cases).
+    // v8.10 FIX-2.3 (2026-05-13) — Empty sheets also tagged inline so the
+    // operator sees them in this modal even if they missed it in the picker.
     const opts = ['<option value="">— Unmapped —</option>'];
     _pendingBomSheets.forEach(s => {
       const takenByOther = assignedSheets.has(s) && _pendingLinkDraft[compId] !== s;
       const sel = s === cur ? 'selected' : '';
-      const lbl = takenByOther ? `${s} (used)` : s;
-      opts.push(`<option value="${esc(s)}" ${sel} ${takenByOther ? 'disabled' : ''}>${esc(lbl)}</option>`);
+      const rc = _sheetRowCount(s);
+      const isEmpty = rc === 0;
+      const flags = [];
+      if (takenByOther) flags.push('used');
+      if (isEmpty)      flags.push('empty');
+      const lbl = flags.length ? `${s} (${flags.join(', ')})` : s;
+      opts.push(`<option value="${esc(s)}" ${sel}>${esc(lbl)}</option>`);
     });
     return opts.join('');
   };
@@ -2330,6 +2369,12 @@ function _renderComponentSheetLink(projId) {
   const confidencePill = (compId) => {
     const cur = _pendingLinkDraft[compId];
     if (!cur) return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(120,120,120,0.10);color:var(--faint);border:1px solid var(--border)">unassigned</span>';
+    // v8.10 FIX-2.3 (2026-05-13) — Empty-sheet pill overrides the fuzzy
+    // confidence pill. Strong/fuzzy match doesn't matter if the sheet has
+    // no data — the operator needs to know the link will yield 0 parts.
+    if (_sheetRowCount(cur) === 0) {
+      return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(244,67,54,0.12);color:var(--red);border:1px solid var(--red)" title="The selected sheet contains no data rows. Linking this component to it will yield 0 parts on the BOM tab.">empty sheet</span>';
+    }
     const comp = _pendingLinkedComps.find(c => c.id === compId);
     const score = comp ? _scoreNameMatch(comp.component || comp.name || '', cur) : 0;
     if (score >= 0.6)  return '<span style="font-size:9px;padding:1px 7px;border-radius:9px;background:rgba(76,175,80,0.12);color:var(--green);border:1px solid var(--green)" title="High-confidence fuzzy match">strong</span>';
@@ -2378,7 +2423,12 @@ function _renderComponentSheetLink(projId) {
         ? `<strong style="color:var(--gold)">${unassignedSheets.length} sheet${unassignedSheets.length === 1 ? '' : 's'} unassigned:</strong> ${unassignedSheets.map(s => esc(s)).join(', ')}`
         : '<strong style="color:var(--green)">All sheets assigned.</strong>'}</span>
       <span>${Object.values(_pendingLinkDraft).filter(Boolean).length} of ${_pendingLinkedComps.length} components mapped</span>
-    </div>`;
+    </div>
+    ${_emptySheets.length > 0 ? `
+    <div style="margin-top:10px;padding:8px 12px;background:rgba(244,67,54,0.08);border:1px solid rgba(244,67,54,0.4);border-radius:4px;font-size:11px;color:var(--red);line-height:1.5">
+      ⚠ <strong>${_emptySheets.length} of the ${_pendingBomSheets.length} selected sheets are empty</strong> (header row only, no data): <strong>${_emptySheets.map(s => esc(s)).join(', ')}</strong>.<br>
+      <span style="color:var(--muted);font-size:10px">Components linked to an empty sheet will show "0 parts" on the BOM tab. Common cause: the workbook has template stubs for components that weren't actually filled in. If you didn't expect this, Cancel and check the source file before re-uploading.</span>
+    </div>` : ''}`;
 }
 
 function _setComponentSheetDraft(compId, sheetName) {
@@ -2420,6 +2470,16 @@ function _confirmComponentSheetLink() {
   // re-open shows the operator's "this stays unmapped" decision instead of
   // re-running fuzzy match against the unchanged sheet list.
   p.componentSheetMap = { ..._pendingLinkDraft };
+  // v8.10 FIX-2.5 (2026-05-13) — Cache the sheet names the operator saw in
+  // this session's link modal. Drives the Edit Map sheet-list union so
+  // re-edits see all originally-considered sheets, not just sheets with
+  // surviving BOM rows (which is just ENGINE when other per-component
+  // sheets were empty templates).
+  if (!p.componentSheetMapMeta) p.componentSheetMapMeta = { knownSheets: [] };
+  // Union with any previously-known sheets (cumulative across multiple
+  // upload sessions in case the operator works in passes).
+  const _prevKnown = Array.isArray(p.componentSheetMapMeta.knownSheets) ? p.componentSheetMapMeta.knownSheets : [];
+  p.componentSheetMapMeta.knownSheets = [...new Set([..._prevKnown, ...(_pendingBomSheets || [])])];
   _markUnsaved();
   closeModal('modalComponentSheetLink');
   const ctx = _pendingLinkContext;
@@ -2444,7 +2504,19 @@ function _confirmComponentSheetLink() {
 }
 
 // Toolbar button — re-open the linking modal from the BOM tab without
-// re-uploading. Derives the sheet list from the BOM rows already imported.
+// re-uploading. v8.10 FIX-2.5 (2026-05-13) — the sheet list is now the
+// UNION of three sources:
+//   1. _sourceSheet values present in the current BOM rows (sheets with
+//      surviving data — what pre-FIX-2.5 used)
+//   2. Existing componentSheetMap values (sheets previously linked, even
+//      if the linked sheet ended up with no rows)
+//   3. componentSheetMapMeta.knownSheets cache (every sheet the operator
+//      saw in their last upload-time link modal — covers the case where
+//      an empty sheet was offered but never linked)
+// This means re-opening the Edit Map modal shows EVERY sheet the operator
+// has considered, not just the few that produced data. Fixes the operator
+// bug where only ENGINE appeared because that was the only sheet with
+// surviving rows.
 function openComponentSheetLinkFromToolbar(projId) {
   const p = pd(projId); if (!p) return;
   const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === projId) : null;
@@ -2452,7 +2524,12 @@ function openComponentSheetLinkFromToolbar(projId) {
     ? fp.linkedIds.map(i => fleetComps && fleetComps[i]).filter(Boolean)
     : [];
   if (linked.length === 0) { toast('This project has no Cadence-linked components to map', 'info'); return; }
-  const sheets = [...new Set((p.bom || []).map(r => r._sourceSheet).filter(Boolean))];
+  const fromBom    = (p.bom || []).map(r => r._sourceSheet).filter(Boolean);
+  const fromMap    = Object.values(p.componentSheetMap || {}).filter(Boolean);
+  const fromCache  = (p.componentSheetMapMeta && Array.isArray(p.componentSheetMapMeta.knownSheets))
+    ? p.componentSheetMapMeta.knownSheets
+    : [];
+  const sheets = [...new Set([...fromBom, ...fromMap, ...fromCache])];
   if (sheets.length === 0) { toast('Upload a multi-sheet BOM first to enable linking', 'info'); return; }
   _pendingLinkContext = 'edit';
   _openComponentSheetLink(projId, linked, sheets);
@@ -2489,7 +2566,11 @@ function _ingestBomSheets(wb, sheetNames) {
   _bomHdrs = firstHdrs;
   _bomRaw  = allRaw;
   if (skippedSheets.length) {
-    toast(`Skipped ${skippedSheets.length} empty / unreadable sheet${skippedSheets.length === 1 ? '' : 's'}: ${skippedSheets.slice(0,3).join(', ')}${skippedSheets.length > 3 ? '…' : ''}`, 'info');
+    // v8.10 FIX-2.3 (2026-05-13) — Operator missed this toast previously when
+    // most of the multi-sheet BOM was empty templates. Upgrade to 'warn'
+    // (sticky/red) and spell out ALL skipped sheet names instead of truncating
+    // to the first 3 — operator needs to know exactly which sheets had no data.
+    toast(`⚠ Skipped ${skippedSheets.length} empty / unreadable sheet${skippedSheets.length === 1 ? '' : 's'} (header row only, no data): ${skippedSheets.join(', ')}. If you expected data in these, check the source workbook.`, 'warn');
   }
   buildMapper('bom');
 }
@@ -2522,6 +2603,13 @@ function confirmBomImport() {
   const uniqueSheets = [...new Set(bom.map(b => b._sourceSheet).filter(Boolean))];
   const sheetMsg = uniqueSheets.length > 1 ? ` from ${uniqueSheets.length} sheets` : '';
   toast(`Imported ${bom.length} BOM items${sheetMsg}`, 'success');
+  // v8.10 FIX-2.2 (2026-05-13) — back-fill SAP materials from Inventory Master
+  // via VPN lookup. If the inventory is loaded, this runs immediately. If not,
+  // confirmInvMasterImport also calls it later so the back-fill catches up.
+  const _backfilled = _backfillSapMaterialsFromInventory(selProjId);
+  if (_backfilled > 0) {
+    toast(`Back-filled SAP material on ${_backfilled} of ${bom.length} BOM rows from Inventory Master`, 'success');
+  }
   renderMaterials(selProjId);
   _markUnsaved();
 }
@@ -2558,7 +2646,17 @@ function renderWorkOrders(id) {
   const _OPEN_STATUSES = ['REL', 'CRTD'];
 
   const _fleetWideLoaded = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
-  const _unitId = p.unit ? String(p.unit).trim().toUpperCase() : '';
+  // v8.10 FIX-2.6 (2026-05-13) — Unit Sort Field for the WO filter must be
+  // resolved from fleetProjects (the Cadence-built fleet metadata), NOT from
+  // deploy.projects[id] which doesn't carry a `unit` field. The v8.9 FIX-2
+  // pattern said "filter to unit Sort Field" but read from the wrong place —
+  // _unitId resolved to '' so the filter short-circuited and ALL WOs for the
+  // matching order type + status surfaced regardless of unit. Operator-flagged
+  // 2026-05-13 morning: 5,051 WOs visible for BD402 (out of 33,726). Fix mirrors
+  // the same fleetProjects lookup pattern used by confirmBomSheetSelection and
+  // openComponentSheetLinkFromToolbar in the v8.10 main feature.
+  const _fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === id) : null;
+  const _unitId = (_fp && _fp.unit) ? String(_fp.unit).trim().toUpperCase() : '';
 
   const _filterRow = (wo) => {
     // (a) Unit FLOC substring (skip if no unit known)
@@ -2698,14 +2796,17 @@ function renderWorkOrders(id) {
     const actual  = parseFloat(wo.actual_cost) ||0;
     const varAmt  = actual - planned;
     const varPct  = planned > 0 ? Math.round(varAmt/planned*100) : null;
+    // v8.10 FIX-2.6 (2026-05-13) — Planned / Actual / Variance now center-aligned
+    // per operator. Was right-aligned (operator screenshot showed yellow-arrow
+    // call-outs on these three columns).
     return `
     <tr>
       <td class="mono" style="font-weight:600">${esc(wo.wo_number||'')}</td>
       <td style="min-width:160px">${esc(wo.description||'')}</td>
       <td>${sapBadge(wo.status)}</td>
-      <td style="text-align:right">${planned ? fmtCost(planned) : '—'}</td>
-      <td style="text-align:right">${actual ? fmtCost(actual) : '—'}</td>
-      <td style="text-align:right;color:${varAmt>0?'var(--red)':varAmt<0?'var(--green)':'var(--faint)'}">
+      <td style="text-align:center">${planned ? fmtCost(planned) : '—'}</td>
+      <td style="text-align:center">${actual ? fmtCost(actual) : '—'}</td>
+      <td style="text-align:center;color:${varAmt>0?'var(--red)':varAmt<0?'var(--green)':'var(--faint)'}">
         ${varPct!==null ? `${varAmt>0?'+':''}${fmtCost(varAmt)} <span style="font-size:9px">(${varPct>0?'+':''}${varPct}%)</span>` : '—'}
       </td>
       <td style="font-size:10px;color:var(--muted)">${esc(wo.floc||'')}</td>
@@ -2716,7 +2817,7 @@ function renderWorkOrders(id) {
   el.innerHTML += `<div class="dtw"><table class="dt">
     <thead><tr>
       <th>WO Number</th><th>Description</th><th>Status</th>
-      <th>Planned</th><th>Actual</th><th>Variance</th>
+      <th style="text-align:center">Planned</th><th style="text-align:center">Actual</th><th style="text-align:center">Variance</th>
       <th>FLOC</th><th style="min-width:120px">Notes</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -2931,6 +3032,22 @@ function confirmInvMasterImport() {
   closeModal('modalInvMasterMap');
   _updateInvMasterStatusPill();
   toast(`Inventory Master loaded — ${_rowsLoaded.toLocaleString()} materials · ${_vpnEntries.toLocaleString()} VPN-indexed (session memory)`, 'success');
+  // v8.10 FIX-2.2 (2026-05-13) — sweep ALL activated projects with BOMs and
+  // back-fill any blank sap_material via VPN lookup. Catches the case where
+  // the BOM was uploaded before the inventory. One sweep per Inventory Master
+  // import. Counts changes for operator visibility.
+  if (deploy && deploy.projects) {
+    let _totalBackfilled = 0;
+    let _projectsTouched = 0;
+    Object.keys(deploy.projects).forEach(pid => {
+      const n = _backfillSapMaterialsFromInventory(pid);
+      if (n > 0) { _totalBackfilled += n; _projectsTouched++; }
+    });
+    if (_totalBackfilled > 0) {
+      toast(`Back-filled SAP material on ${_totalBackfilled} BOM rows across ${_projectsTouched} project${_projectsTouched === 1 ? '' : 's'}`, 'success');
+      _markUnsaved();
+    }
+  }
   if (selProjId) renderMaterials(selProjId);
 }
 
@@ -3066,6 +3183,35 @@ function _lookupVariantInInventory(vpnNorm) {
   if (_invMasterByMaterial && _invMasterByMaterial.has(vpnNorm)) return _invMasterByMaterial.get(vpnNorm);
   if (_invMasterByVPN      && _invMasterByVPN.has(vpnNorm))      return _invMasterByVPN.get(vpnNorm);
   return null;
+}
+
+// v8.10 FIX-2.2 (2026-05-13) — Back-fill SAP material on BOM rows via VPN
+// lookup in Inventory Master. Operator workflow: dealer-provided BOMs often
+// omit the SAP Material No. column (operator skipped it in the mapper).
+// Pre-FIX-2.2 those rows just showed "⚪ No snapshot" forever. Now: walk
+// every BOM row with an empty sap_material, look up its part_number (VPN)
+// in the Inventory Master indices, and write back the matched SAP material.
+// Persists into the fleet JSON via the existing bom[] save path. Long-term
+// project memory — subsequent sessions don't need the inventory loaded to
+// see the SAP number on each row.
+// Returns: number of rows changed.
+// Called from: confirmBomImport (after BOM ingest) + confirmInvMasterImport
+// (after inventory maps built, in case BOM was loaded before inventory).
+function _backfillSapMaterialsFromInventory(projId) {
+  const p = pd(projId); if (!p || !Array.isArray(p.bom) || p.bom.length === 0) return 0;
+  if (!_invMasterByMaterial && !_invMasterByVPN) return 0;
+  let _changed = 0;
+  p.bom.forEach(row => {
+    if (row.sap_material && String(row.sap_material).trim() !== '') return; // already has one
+    const vpnNorm = _normVPN(row.part_number);
+    if (!vpnNorm) return;
+    const entry = _lookupVariantInInventory(vpnNorm);
+    if (entry && entry.material_raw) {
+      row.sap_material = entry.material_raw;
+      _changed++;
+    }
+  });
+  return _changed;
 }
 
 function _computeBomStockStatus(projId, bomRow) {
