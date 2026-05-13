@@ -1617,6 +1617,10 @@ body { background: #030f0c; }
 .hc-cm-high     { background: rgba(251,146,60,0.22);  color: #fb923c; }
 .hc-cm-vhigh    { background: rgba(248,113,113,0.22); color: #f87171; }
 .hc-cm-nr       { background: rgba(255,255,255,0.03); color: #546e7a; font-size: 0.55rem; letter-spacing: 0.5px; }
+/* v4.3.1 D1 — heatmap cells with a sample become clickable to open the ConMon
+   sample popup (same modal as the unit-detail row click; single source of truth). */
+.hm-cm-clickable { cursor: pointer; transition: filter 0.12s, box-shadow 0.12s; }
+.hm-cm-clickable:hover { filter: brightness(1.15); box-shadow: inset 0 0 0 1px rgba(61,201,160,0.55); }
 .hm-side-label {
   font-size: 0.48rem; color: #0f6e56; letter-spacing: 1.5px; text-transform: uppercase;
   padding: 3px 8px 2px; border-bottom: 1px solid #061a15; background: rgba(4,9,20,0.9);
@@ -2047,7 +2051,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3';
+const VERSION = '4.3.1';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2348,6 +2352,38 @@ function isSampleStale(sample) {
   return ageMs > days * 86400000;
 }
 
+// v4.3.1 B2 — Component trend classifier. Operates on the most recent 4 samples
+// (assumes input ordered OLDEST → NEWEST, same convention as the `sorted` array
+// in openConMonHistory + _renderConMonTrendSVG). Returns one of:
+//   'up'      — slope positive (rank rising = condition deteriorating; bad)
+//   'flat'    — within the dead-zone (|slope| < 0.5 rank/sample)
+//   'down'    — slope negative (rank falling = condition improving; good)
+//   'unknown' — fewer than 5 samples total (≤4 = no usable last-4 window),
+//               or any of the last 4 samples has a non-numeric rank.
+// Reused by Ship 2 in:
+//   - the per-row arrow on the unit-detail ConMon tile (C1)
+//   - the trend indicator drawn inside the ConMon sample popup chart (B1/B2)
+// Math: simple linear regression on the last 4 ranks against x = 0..3, slope =
+// covariance(x,y) / variance(x). variance(x) for [0,1,2,3] is constant = 5.
+// Dead-zone of 0.5 rank-units per step matches the operator's visual sensitivity
+// (a rank shift smaller than half a band step over 4 samples reads as "flat").
+function _componentTrend(samples) {
+  if (!Array.isArray(samples) || samples.length <= 4) return 'unknown';
+  var last4 = samples.slice(-4);
+  var ranks = last4.map(function(s) {
+    return (s && typeof s.sample_rank === 'number' && isFinite(s.sample_rank))
+      ? s.sample_rank : null;
+  });
+  if (ranks.some(function(r) { return r === null; })) return 'unknown';
+  var meanY = (ranks[0] + ranks[1] + ranks[2] + ranks[3]) / 4;
+  // meanX for x = [0,1,2,3] is 1.5; sum((x_i - 1.5)^2) = 5
+  var num = (-1.5) * (ranks[0] - meanY) + (-0.5) * (ranks[1] - meanY)
+          + ( 0.5) * (ranks[2] - meanY) + ( 1.5) * (ranks[3] - meanY);
+  var slope = num / 5;
+  if (Math.abs(slope) < 0.5) return 'flat';
+  return (slope > 0) ? 'up' : 'down';
+}
+
 // ── v3.7 — ConMon Tile —————————————————————————————————————————————————
 // Renders a standalone Condition Monitoring tile in the left canvas area.
 // Most recent sample per target+location group. Click row → history modal.
@@ -2563,9 +2599,24 @@ function renderConMonTile(unit_id) {
     var meta    = dateStr + stale + (rnkStr ? ' · ' + rnkStr : '');
     var bandLbl = coolant ? 'COOLANT'
       : (latest.band || 'unknown').replace('_', ' ').toUpperCase();
+    // v4.3.1 C1+C2 — per-row trend arrow. groups[gk] is newest-first per the
+    // comment above; _componentTrend expects oldest→newest, so reverse before
+    // passing. 'unknown' (≤4 samples or any null rank in the last 4) → no arrow.
+    // Coolant samples use a different bands schema and don't have ranks → no arrow.
+    var trendTok = coolant ? 'unknown' : _componentTrend(groups[gk].slice().reverse());
+    var trendHtml = '';
+    if (trendTok === 'up') {
+      trendHtml = '<span class="cm-trend-arrow cm-trend-up" title="Deteriorating (rank rising over last 4 samples)">&#x25B2;</span>';
+    } else if (trendTok === 'down') {
+      trendHtml = '<span class="cm-trend-arrow cm-trend-down" title="Improving (rank falling over last 4 samples)">&#x25BC;</span>';
+    } else if (trendTok === 'flat') {
+      // Flat indicator inherits the current severity colour (spec C1: "matches current severity colour").
+      trendHtml = '<span class="cm-trend-arrow cm-trend-flat" style="color:' + colour + '" title="Stable (within dead-zone over last 4 samples)">&#x2014;</span>';
+    }
     html +=
       '<div class="cm-sample-row" data-gk="' + encodeURIComponent(gk) + '">' +
         '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
+        trendHtml +
         '<div class="cm-row-info">' +
           '<span class="cm-row-target">' + target + loc + '</span>' +
           '<span class="cm-row-meta">' + meta + '</span>' +
@@ -2800,6 +2851,27 @@ function _renderConMonTrendSVG(sorted) {
     { v: yMax, label: String(yMax) }
   ];
 
+  // v4.3.1 B1 — 4-point moving-average overlay. For each i >= 3 where all of
+  // ranks[i-3..i] are non-null, plot the rolling mean against xs[i]. Skips
+  // windows containing any null rank (breaks the path with an M instead of L
+  // so the visible line doesn't lie across a gap).
+  var ma4Segs = [];
+  var maPenUp = true;
+  for (var maI = 3; maI < sorted.length; maI++) {
+    var ra = ranks[maI - 3], rb = ranks[maI - 2], rc = ranks[maI - 1], rd = ranks[maI];
+    if (ra === null || rb === null || rc === null || rd === null) {
+      maPenUp = true;
+      continue;
+    }
+    var maY = yOf((ra + rb + rc + rd) / 4);
+    var maX = xOf(xs[maI]);
+    ma4Segs.push((maPenUp ? 'M ' : 'L ') + maX.toFixed(1) + ' ' + maY.toFixed(1));
+    maPenUp = false;
+  }
+  var maPath = ma4Segs.length
+    ? '<path class="cmh-ma-line" d="' + ma4Segs.join(' ') + '"><title>4-point moving average</title></path>'
+    : '';
+
   var svg =
     '<svg id="cmh-graph-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">' +
       // Axes
@@ -2819,6 +2891,8 @@ function _renderConMonTrendSVG(sorted) {
       dateTicks.map(function(t) {
         return '<text class="cmh-axis-tick" x="' + t.x + '" y="' + (H - 8) + '" text-anchor="' + t.anchor + '">' + esc(t.label) + '</text>';
       }).join('') +
+      // v4.3.1 B1 — moving-average overlay (drawn behind the main line)
+      maPath +
       // Trend line
       '<path class="cmh-line" d="' + lineSegs.join(' ') + '"/>' +
       // Points (drawn last so they sit on top)
@@ -5958,7 +6032,7 @@ function renderConMonHeatmap(fleet, model) {
         }
         var stale   = isSampleStale(sample) ? ' · STALE' : '';
         var dateStr = sample.sample_date || '—';
-        td.className = cls;
+        td.className = cls + ' hm-cm-clickable';  // v4.3.1 D1
         // FIX-1: um.unit, label, dateStr, sample.scope JSON-derived. band is from a
         // closed enum but escape defensively for parity.
         td.innerHTML = rank +
@@ -5966,7 +6040,25 @@ function renderConMonHeatmap(fleet, model) {
           '<span class="tip-line">&#x1F4C5; ' + esc(dateStr) + esc(stale) + '</span>' +
           '<span class="tip-line">&#x1F4CA; ' + esc(band.replace('_', ' ').toUpperCase()) + ' (rank ' + rank + ')</span>' +
           '<span class="tip-line">&#x1F50D; Scope: ' + esc(sample.scope || '—') + '</span>' +
+          '<span class="tip-line" style="opacity:0.7;font-style:italic;">click for sample history</span>' +
           '</div>';
+        // v4.3.1 D1 — Heatmap cell click opens the SAME ConMon sample popup as the
+        // unit-detail row click. Single source-of-truth function (openConMonHistory),
+        // two entry points. Find all samples for THIS (unit, target+location) group
+        // from conMonByUnit (Intake-owned, READ-ONLY). Capture um.unit + rk in this
+        // iteration's closure — JS forEach gives a fresh closure per iteration.
+        (function(unitName, groupKey, unitKeyLower) {
+          td.addEventListener('click', function() {
+            var allForUnit = conMonByUnit[unitKeyLower] || [];
+            var groupSamples = allForUnit.filter(function(s) {
+              var k = (s.target || '—') + '|' + (s.location || '');
+              return k === groupKey;
+            });
+            if (groupSamples.length > 0) {
+              openConMonHistory(unitName, groupKey, groupSamples);
+            }
+          });
+        })(um.unit, rk, um.unit.toLowerCase());
       } else {
         td.className = 'hm-cell hc-cm-nr';
         td.textContent = 'NR';
@@ -6045,6 +6137,13 @@ function renderHeatmapBoth(fleet, model) {
 .cm-row-meta { display:block; font-size:0.57rem; color:#5dcaa5; opacity:0.75; margin-top:1px; }
 .cm-row-arrow { font-size:0.85rem; color:#3dc9a0; opacity:0.4; flex-shrink:0; transition:opacity 0.15s; }
 .cm-sample-row:hover .cm-row-arrow { opacity:1; }
+/* v4.3.1 C1 — per-row trend arrow. Up=red (deteriorating), Down=green (improving),
+   Flat=current severity colour (set inline). Sits between the band-pill and the
+   row-info text. Hidden via 'unknown' token = no markup emitted. */
+.cm-trend-arrow { font-size:0.72rem; font-weight:700; flex-shrink:0; line-height:1; min-width:11px; text-align:center; }
+.cm-trend-up   { color:#e24b4a; }
+.cm-trend-down { color:#5dcaa5; }
+.cm-trend-flat { opacity:0.75; }
 /* ── v3.7 — ConMon History Modal ──────────────────────────────────────── */
 #cm-history-overlay {
   display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72);
@@ -6053,27 +6152,30 @@ function renderHeatmapBoth(fleet, model) {
 #cm-history-overlay.open { display:flex; }
 #cm-history-modal {
   background:#061a15; border:1px solid rgba(61,201,160,0.28); border-radius:12px;
-  padding:22px 24px; min-width:680px; max-width:860px; width:90%;
+  padding:22px 24px;
+  /* v4.3.1 B5 — popup ~30% wider to give the +30% taller chart proportional width.
+     Pre-B5: min 680 / max 860. Post-B5: min 800 / max 1100. */
+  min-width:800px; max-width:1100px; width:90%;
   max-height:80vh; display:flex; flex-direction:column;
   box-shadow:0 20px 60px rgba(0,0,0,0.85);
 }
-/* v4.1 — Side-by-side layout: graph LEFT, sample list RIGHT. Modal width 720-860 per operator spec. */
-/* v4.3 D2 — align-items:flex-start so the right-side sample list does NOT stretch
+/* v4.1 — Side-by-side layout: graph LEFT, sample list RIGHT.
+   v4.3 D2 — align-items:flex-start so the right-side sample list does NOT stretch
    past the bottom of the left-side trend graph. max-height on .cmh-list-col caps
-   the list at approximately the graph's content height (SVG 240 + caption ~20 + padding)
-   so the popup is the same height regardless of sample count; the list scrolls internally
-   if needed. Tuned to the existing 240px chart; will be re-tuned alongside Ship 2's B5 (chart +30%). */
+   the list at approximately the graph's content height.
+   v4.3.1 B5 — chart is now ~30% taller (240 → 312px); list-col max-height re-tuned
+   from 270px → 360px to align with the new chart bottom. */
 #cmh-body.cmh-split { display:flex; gap:16px; flex:1; min-height:0; align-items:flex-start; }
 .cmh-graph-col { flex:1 1 50%; min-width:280px; display:flex; flex-direction:column; align-items:stretch; }
-.cmh-list-col  { flex:1 1 50%; min-width:280px; overflow-y:auto; padding-right:2px; max-height:270px; }
+.cmh-list-col  { flex:1 1 50%; min-width:280px; overflow-y:auto; padding-right:2px; max-height:360px; }
 /* Responsive fallback — narrow viewports stack graph above list. */
 @media (max-width:640px) {
   #cm-history-modal { min-width:0; max-width:95vw; }
   #cmh-body.cmh-split { flex-direction:column; gap:12px; }
   .cmh-graph-col, .cmh-list-col { flex:1 1 auto; min-width:0; }
 }
-/* Trend graph SVG container */
-#cmh-graph-svg { width:100%; height:240px; background:rgba(255,255,255,0.015); border:1px solid rgba(255,255,255,0.05); border-radius:6px; }
+/* Trend graph SVG container — v4.3.1 B5: height 240 → 312 (~30% bigger, same internal aspect via preserveAspectRatio="none"). */
+#cmh-graph-svg { width:100%; height:312px; background:rgba(255,255,255,0.015); border:1px solid rgba(255,255,255,0.05); border-radius:6px; }
 .cmh-graph-caption { font-size:0.58rem; color:#5dcaa5; letter-spacing:0.6px; text-transform:uppercase; margin:6px 4px 0; opacity:0.7; }
 /* Trend graph elements (inline SVG styling) */
 #cmh-graph-svg .cmh-axis-line { stroke:rgba(255,255,255,0.12); stroke-width:1; }
@@ -6083,6 +6185,10 @@ function renderHeatmapBoth(fleet, model) {
 #cmh-graph-svg .cmh-thresh-high    { stroke:#ef4444; stroke-width:1; stroke-dasharray:3,3; opacity:0.4; }
 #cmh-graph-svg .cmh-thresh-label   { fill:#5dcaa5; font-size:8px; opacity:0.6; }
 #cmh-graph-svg .cmh-line { fill:none; stroke:#3dc9a0; stroke-width:1.4; opacity:0.55; }
+/* v4.3.1 B1 — 4-point moving-average overlay. Dashed + lower opacity so it
+   reads as supporting context rather than competing with the raw trend line.
+   Distinct stroke colour (light teal) for additional visual separation. */
+#cmh-graph-svg .cmh-ma-line { fill:none; stroke:#b8ede0; stroke-width:1.3; stroke-dasharray:4,4; opacity:0.45; pointer-events:none; }
 #cmh-graph-svg .cmh-point { stroke:rgba(0,0,0,0.4); stroke-width:1; cursor:pointer; transition:r 0.1s; }
 #cmh-graph-svg .cmh-point:hover { r:6; filter:drop-shadow(0 0 4px currentColor); }
 #cmh-graph-svg .cmh-stale-flag { fill:#f59e0b; font-size:10px; pointer-events:none; }
