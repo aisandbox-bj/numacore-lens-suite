@@ -1014,6 +1014,19 @@ body { background: #030f0c; }
 #banner-right {
   display:flex; align-items:center; gap:8px; margin-left:auto; padding:0 12px;
 }
+/* v4.3.5 (Ship 6) — unsaved-changes dot in the banner next to SAVE FILE.
+   Lit (gold pulse) when ui_settings in localStorage is ahead of the JSON file
+   (operator has toggled visibility but not clicked SAVE FILE yet). */
+.lens-unsaved-dot {
+  display:inline-block; width:8px; height:8px; border-radius:50%;
+  background:#ffd54f; box-shadow:0 0 8px rgba(255,213,79,0.7);
+  margin-left:6px; vertical-align:middle; cursor:help;
+  animation: lensUnsavedPulse 2.2s ease-in-out infinite;
+}
+@keyframes lensUnsavedPulse {
+  0%,100% { box-shadow: 0 0 4px rgba(255,213,79,0.5); opacity: 0.85; }
+  50%     { box-shadow: 0 0 10px rgba(255,213,79,0.95); opacity: 1; }
+}
 
 /* ── APP BODY ── */
 #app-body { flex:1; display:flex; overflow:hidden; }
@@ -1774,7 +1787,7 @@ body { background: #030f0c; }
   </div>
   <div id="banner-right">
     <div id="clock"></div>
-    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save fleet file with current ui_settings">&#x2B07; SAVE FILE</button>
+    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save fleet file with current ui_settings">&#x2B07; SAVE FILE</button><!-- v4.3.5: unsaved-changes dot, lit when localStorage ui_settings is newer than the JSON file --><span id="lens-unsaved-dot" class="lens-unsaved-dot" style="display:none" title=""></span>
   </div>
 </div>
 
@@ -2066,7 +2079,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3.4';
+const VERSION = '4.3.5';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2181,6 +2194,65 @@ function _allUnitKeys(f, m) { return Object.keys(((FLEET_DATA || {})[f] || {})[m
 // Build the spec-shape ui_settings object from current in-memory state.
 // Visible arrays list the VISIBLE items (inclusive), matching spec intent:
 // presence in array = shown. Empty/absent array = default (all visible).
+// v4.3.5 (Ship 6) — visibility-persistence autosave.
+// The recurring operator complaint: every time they reload the JSON, all their
+// fleet/unit/component visibility toggles are gone. Root cause: the toggle
+// handlers (cfgSelectAll, _scSyncState's downstream writers) mutate lensVisible /
+// lensHideUnits / lensHideComponents in memory but never write to localStorage,
+// and the JSON's ui_settings only updates when the operator manually clicks SAVE FILE.
+//
+// Fix:
+//   1. Every toggle calls _lensAutosaveUISettings() — debounced 400ms write of
+//      the current buildUISettings() output to localStorage, keyed by clientCode.
+//   2. On loadLensJSON, after applying json.ui_settings, check localStorage —
+//      if its savedAt is newer than the JSON's meta.lastSaved, overlay it
+//      (operator's in-session toggles from a previous browser session that
+//      were never saved to a file).
+//   3. exportFleetJSON clears the dirty flag and stamps localStorage with the
+//      file's lastSaved timestamp so future loads of THIS file don't get
+//      overlaid by stale localStorage state.
+//   4. Banner shows a small ● dot next to SAVE FILE when localStorage is ahead
+//      of the JSON — operator's visual cue that "you have unsaved tweaks."
+var _lensAutosaveTimer      = null;
+var _lensAutosaveDebounceMs = 400;
+var _lensAutosaveDirty      = false;
+
+function _lensAutosaveStorageKey() {
+  var cc = (lensMeta && lensMeta.clientCode) ||
+           (lensRawData && lensRawData.meta && lensRawData.meta.clientCode) ||
+           'DEFAULT';
+  // Normalise the client code to keep it shell/URL-safe.
+  return 'lens_ui_settings_' + String(cc).replace(/[^A-Z0-9_]/gi, '_');
+}
+
+function _lensAutosaveUISettings() {
+  if (!lensRawData) return; // no fleet loaded — nothing to persist
+  if (_lensAutosaveTimer) clearTimeout(_lensAutosaveTimer);
+  _lensAutosaveTimer = setTimeout(function() {
+    try {
+      var payload = {
+        ui_settings: buildUISettings(),
+        savedAt:     new Date().toISOString(),
+        clientCode:  (lensMeta && lensMeta.clientCode) || '',
+      };
+      localStorage.setItem(_lensAutosaveStorageKey(), JSON.stringify(payload));
+      _lensAutosaveDirty = true;
+      _updateUnsavedDot();
+    } catch (e) {
+      console.warn('[lens v4.3.5] autosave to localStorage failed:', e);
+    }
+  }, _lensAutosaveDebounceMs);
+}
+
+function _updateUnsavedDot() {
+  var dot = document.getElementById('lens-unsaved-dot');
+  if (!dot) return;
+  dot.style.display = _lensAutosaveDirty ? 'inline-block' : 'none';
+  dot.title = _lensAutosaveDirty
+    ? 'You have unsaved visibility changes — click SAVE FILE to persist them to the JSON'
+    : '';
+}
+
 function buildUISettings() {
   const out = { stale_threshold_days: (lensUISettings && lensUISettings.stale_threshold_days) || 90 };
   const vFleets = [], vModels = [], vUnits = [], vComps = {};
@@ -4212,6 +4284,27 @@ function loadLensJSON(json) {
   });
   // Hydrate ui_settings (spec §4.1 / §5.3). Absent key = defaults, all visible.
   try { applyUISettings(json.ui_settings); } catch(e) { console.warn('applyUISettings:', e); }
+  // v4.3.5 — overlay localStorage if it's NEWER than the JSON's meta.lastSaved.
+  // Operator workflow: toggle fleets off → close browser without saving → re-open
+  // SAME JSON → toggles still off. localStorage holds the latest in-session state;
+  // we apply it AFTER the JSON's ui_settings (so it overrides) but ONLY if its
+  // savedAt timestamp is newer (so an explicitly-saved JSON wins on the next open).
+  _lensAutosaveDirty = false;
+  try {
+    var lsKey      = _lensAutosaveStorageKey();
+    var lsRaw      = localStorage.getItem(lsKey);
+    var jsonSaved  = (lensMeta && lensMeta.lastSaved) ? new Date(lensMeta.lastSaved).getTime() : 0;
+    if (lsRaw) {
+      var lsParsed = JSON.parse(lsRaw);
+      var lsSaved  = lsParsed && lsParsed.savedAt ? new Date(lsParsed.savedAt).getTime() : 0;
+      if (lsSaved > jsonSaved && lsParsed.ui_settings) {
+        applyUISettings(lsParsed.ui_settings);
+        _lensAutosaveDirty = true;  // localStorage is ahead of file — operator should know
+        console.log('[lens v4.3.5] localStorage ui_settings overlay applied (LS savedAt=' + lsParsed.savedAt + ' > JSON lastSaved=' + (lensMeta && lensMeta.lastSaved || '—') + ')');
+      }
+    }
+  } catch (e) { console.warn('[lens v4.3.5] localStorage overlay failed:', e); }
+  _updateUnsavedDot();
   // Build ConMon oil-sample index. V5: masterData.conditionMonitoring; V4 Flat: root conditionMonitoring or oil_samples.
   try { const n = buildConMonIdx(_readConMon(json)); if (n > 0) console.log('conMonByUnit:', n, 'units indexed'); } catch(e) { console.warn('buildConMonIdx:', e); }
   // Compute capabilities for ADR gating (Chunk 5).
@@ -4270,6 +4363,18 @@ function exportFleetJSON() {
   // Mirror into in-memory lensMeta too (stays consistent with next save/reload)
   lensMeta = lensMeta || {};
   lensMeta.lastSaved = out.meta.lastSaved;
+  // v4.3.5 — file has been saved; clear the dirty flag and stamp localStorage
+  // with the same lastSaved timestamp so the next reload of THIS file doesn't
+  // mistakenly think localStorage is "ahead" (they're equal now).
+  _lensAutosaveDirty = false;
+  try {
+    localStorage.setItem(_lensAutosaveStorageKey(), JSON.stringify({
+      ui_settings: out.ui_settings,
+      savedAt:     out.meta.lastSaved,
+      clientCode:  (out.meta && out.meta.clientCode) || '',
+    }));
+  } catch (e) { console.warn('[lens v4.3.5] post-save localStorage sync failed:', e); }
+  _updateUnsavedDot();
 }
 
 document.addEventListener('DOMContentLoaded', function initLoadScreen() {
@@ -4467,6 +4572,8 @@ function scSetStaleThreshold(v) {
   lensUISettings.stale_threshold_days = n;
   // no immediate render consequence until sub5d wires ConMon badges —
   // value is preserved and will round-trip through exportFleetJSON.
+  // v4.3.5 — persist the threshold change too (it's part of ui_settings).
+  _lensAutosaveUISettings();
 }
 function scHydrateStaleThreshold() {
   var inp = document.getElementById('sc-stale-days');
@@ -4505,7 +4612,7 @@ function scSelectAll(val) {
   if (scTabCurrent === 'fleet') {
     if (!_scState) _scBuildState();
     Object.keys(fd).forEach(function(f) { _scSetFleet(f, val); });
-    _scSyncState();
+    _scSyncState();  // already triggers autosave via the v4.3.5 hook
   } else {
     Object.keys(fd).forEach(function(f) {
       if (!lensHideComponents[f]) lensHideComponents[f] = {};
@@ -4514,6 +4621,8 @@ function scSelectAll(val) {
         else     lensHideComponents[f][comp] = false;
       });
     });
+    // v4.3.5 — components-tab branch mutates lensHideComponents directly; persist.
+    _lensAutosaveUISettings();
   }
   _applyAll();
   scRenderTree();
@@ -4628,6 +4737,9 @@ function _scSyncState() {
       });
     });
   });
+  // v4.3.5 — every sync from _scState to canonical visibility state is a mutation.
+  // Hook autosave here so every checkbox / scSelectAll fleet-tab branch path persists.
+  _lensAutosaveUISettings();
 }
 function _scUnitVis(f, m, u) {
   return !!((_scState || {})[f] && (_scState[f][m] !== undefined) && _scState[f][m][u]);
@@ -5809,6 +5921,8 @@ function cfgSelectAll(fleet, val) {
   renderFleet(); renderFleetHealth();
   if (currentTab === 'vitals') renderVitals();
   if (currentTab === 'pulse') renderPulse();
+  // v4.3.5 — direct lensVisible mutation; persist.
+  _lensAutosaveUISettings();
 }
 function cfgCollapseAll() {
   document.querySelectorAll('.cfg-fleet-block').forEach(b => b.classList.add('collapsed'));
