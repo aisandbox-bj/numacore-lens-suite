@@ -1741,20 +1741,21 @@ body { background: #030f0c; }
       <div id="brand-sub">Asset Intelligence</div>
     </div>
   </div>
+  <!-- v4.3 A1: search/filter moved LEFT (into banner-meta), file save/upload moved FAR RIGHT (into banner-right) -->
   <div id="banner-meta">
-    <span id="lens-client-code" style="font-size:0.7rem;color:#3dc9a0;font-weight:700;letter-spacing:1px;"></span>
-    <span id="lens-comp-count" style="font-size:0.64rem;color:#2a7a5a;margin-left:8px;"></span>
-    <span id="lens-last-saved" style="font-size:0.59rem;color:#1a5a3a;margin-left:8px;"></span>
-    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save fleet file with current ui_settings">&#x2B07; SAVE FILE</button>
-  </div>
-  <div id="banner-right">
     <div class="search-wrap" id="unit-search-wrap">
       <span class="search-icon">&#x1F50D;</span>
       <input class="search-input" id="unit-search" type="text" placeholder="Search unit&#x2026;" autocomplete="off">
       <span class="search-clear" id="unit-search-clear" title="Clear">&#x2715;</span>
       <div class="search-dropdown" id="unit-search-drop"></div>
     </div>
+    <span id="lens-client-code" style="font-size:0.7rem;color:#3dc9a0;font-weight:700;letter-spacing:1px;margin-left:14px;"></span>
+    <span id="lens-comp-count" style="font-size:0.64rem;color:#2a7a5a;margin-left:8px;"></span>
+    <span id="lens-last-saved" style="font-size:0.59rem;color:#1a5a3a;margin-left:8px;"></span>
+  </div>
+  <div id="banner-right">
     <div id="clock"></div>
+    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save fleet file with current ui_settings">&#x2B07; SAVE FILE</button>
   </div>
 </div>
 
@@ -2046,7 +2047,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.2';
+const VERSION = '4.3';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2420,6 +2421,19 @@ function renderCanvasHero(fleet, model, unit) {
   });
   var smuStr = hasSMU ? smu.toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' hrs' : '\u2014';
 
+  // v4.3 A2: most-recent last_read date across visible comps (READ-ONLY against
+  // Intake-owned masterData.components[].last_read). Surfaced under the SMU value
+  // as "Last recorded: <date>". Falls back to em-dash if no parseable date.
+  var lastReadMs = null;
+  visible.forEach(function(c) {
+    if (!c.last_read) return;
+    var t = Date.parse(c.last_read);
+    if (isFinite(t) && (lastReadMs === null || t > lastReadMs)) lastReadMs = t;
+  });
+  var lastReadStr = (lastReadMs !== null)
+    ? new Date(lastReadMs).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
+    : '\u2014';
+
   // Health mix — NB comps excluded from colour bands (DR-003)
   var mix = { green:0, yellow:0, orange:0, red:0, nb:0 };
   visible.forEach(function(c) {
@@ -2483,7 +2497,8 @@ function renderCanvasHero(fleet, model, unit) {
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">SMU</div>' +
         '<div class="hmc-value">' + smuStr + '</div>' +
-        '<div class="hmc-sub">' + (hasSMU ? 'Current meter reading' : 'No SMU recorded') + '</div>' +
+        // v4.3 A2: replace "Current meter reading" with "Last recorded: <date>"
+        '<div class="hmc-sub">' + (hasSMU ? ('Last recorded: ' + lastReadStr) : 'No SMU recorded') + '</div>' +
       '</div>' +
       '<div class="hero-metric-card hero-health-card">' +
         '<div class="hmc-label">Health Mix</div>' +
@@ -2601,18 +2616,24 @@ function openConMonHistory(unit_id, groupKey, allSamples) {
 
   // v4.1 — Build sample-list HTML (right column) once. Each entry stamped with
   // data-cmh-idx so the graph can scroll-and-flash the matching card on click.
-  var listHtml = '<div class="cmh-timeline">';
+  // v4.3 B3: render order REVERSED so latest sample is at the TOP, oldest at the
+  // BOTTOM. We still build entries in graph-aligned order (i = 0..length-1, oldest
+  // -> newest) to keep data-cmh-idx in sync with the trend graph point indexes,
+  // then reverse the entry array before joining for display.
+  // v4.3 B4: stale flag is only shown on the LATEST sample (not on older ones).
+  var entries = [];
   sorted.forEach(function(s, i) {
     var colour  = CONMON_BAND_COLOUR[s.band] || CONMON_BAND_COLOUR.unknown;
     var coolant = s.is_coolant;
     var rnkStr  = (!coolant && typeof s.sample_rank === 'number') ? s.sample_rank.toFixed(1) : null;
     var dateStr = s.sample_date || 'Date unknown';
     var latest  = (i === sorted.length - 1);
-    var stale   = isSampleStale(s) ? ' · STALE' : '';
+    // v4.3 B4: only flag stale if THIS sample is the latest AND it's stale.
+    var stale   = (latest && isSampleStale(s)) ? ' · STALE' : '';
     var ltst    = latest ? ' · LATEST' : '';
     var bandLbl = coolant ? 'COOLANT'
       : (s.band || 'unknown').replace('_', ' ').toUpperCase();
-    listHtml +=
+    var entryHtml =
       '<div class="cmh-entry' + (latest ? ' cmh-latest' : '') + '" data-cmh-idx="' + i + '">' +
         '<div class="cmh-entry-header">' +
           '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
@@ -2620,19 +2641,21 @@ function openConMonHistory(unit_id, groupKey, allSamples) {
           (rnkStr ? '<span class="cmh-rank" style="color:' + colour + '">rank ' + rnkStr + '</span>' : '') +
         '</div>';
     if (Array.isArray(s.trends) && s.trends.length) {
-      listHtml += '<div class="cmh-trends">';
+      entryHtml += '<div class="cmh-trends">';
       s.trends.forEach(function(t) {
         var tc = CONMON_BAND_COLOUR[getBandFromRank(t.rank)] || CONMON_BAND_COLOUR.unknown;
-        listHtml += '<span class="cmh-trend-item" style="color:' + tc + '">' +
+        entryHtml += '<span class="cmh-trend-item" style="color:' + tc + '">' +
           (t.label || '—') +
           ' <span class="cmh-trend-rank">' + (typeof t.rank === 'number' ? t.rank.toFixed(1) : '—') + '</span>' +
           '</span>';
       });
-      listHtml += '</div>';
+      entryHtml += '</div>';
     }
-    listHtml += '</div>';
+    entryHtml += '</div>';
+    entries.push(entryHtml);
   });
-  listHtml += '</div>';
+  // v4.3 B3: reverse so latest (last in graph order) renders at TOP of list.
+  var listHtml = '<div class="cmh-timeline">' + entries.slice().reverse().join('') + '</div>';
 
   // v4.1 — Single-sample edge case: hide graph column, list takes full width.
   // (Per operator spec — a graph with one point is meaningless.)
@@ -2728,7 +2751,11 @@ function _renderConMonTrendSVG(sorted) {
     var dateStr = s.sample_date || 'Date unknown';
     var bandLbl = s.is_coolant ? 'COOLANT'
       : (s.band || 'unknown').replace('_', ' ').toUpperCase();
-    var stale = isSampleStale(s);
+    // v4.3 B4: stale flag only applies to the LATEST sample. Older samples
+    // are not flagged (they are old by definition; the operator only cares
+    // whether the most recent sample is stale).
+    var isLatestSample = (i === sorted.length - 1);
+    var stale = isLatestSample && isSampleStale(s);
     var rankTipStr = (rank === null) ? 'rank not recorded' : 'rank ' + rank.toFixed(1);
     var trendsTip = '';
     if (Array.isArray(s.trends) && s.trends.length) {
@@ -3421,6 +3448,18 @@ function renderHeroView(fleet, model, unit) {
   });
   var smuStr = hasSMU ? smu.toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' hrs' : '\u2014';
 
+  // v4.3 A2: most-recent last_read date across this unit's comps (READ-ONLY against
+  // Intake-owned masterData.components[].last_read). Surfaced under SMU value.
+  var lastReadMs = null;
+  comps.forEach(function(c) {
+    if (!c.last_read) return;
+    var t = Date.parse(c.last_read);
+    if (isFinite(t) && (lastReadMs === null || t > lastReadMs)) lastReadMs = t;
+  });
+  var lastReadStr = (lastReadMs !== null)
+    ? new Date(lastReadMs).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
+    : '\u2014';
+
   // Health mix — DR-003: NB components counted separately, excluded from colour bands
   var mix = { green:0, yellow:0, orange:0, red:0, nb:0 };
   comps.forEach(function(c) {
@@ -3477,10 +3516,10 @@ function renderHeroView(fleet, model, unit) {
     onClick: soonest ? function() { console.log('[hero stub] next PCR clicked', soonest.c.component); } : null
   }));
 
-  // Card 4: SMU
+  // Card 4: SMU — v4.3 A2: replace "Current meter reading" with "Last recorded: <date>"
   metricsEl.appendChild(mkCard({
     kind: 'smu', label: 'SMU', value: smuStr,
-    sub: hasSMU ? 'Current meter reading' : 'No SMU recorded'
+    sub: hasSMU ? ('Last recorded: ' + lastReadStr) : 'No SMU recorded'
   }));
 
   // Card 5: health mix — spans full width
@@ -6019,9 +6058,14 @@ function renderHeatmapBoth(fleet, model) {
   box-shadow:0 20px 60px rgba(0,0,0,0.85);
 }
 /* v4.1 — Side-by-side layout: graph LEFT, sample list RIGHT. Modal width 720-860 per operator spec. */
-#cmh-body.cmh-split { display:flex; gap:16px; flex:1; min-height:0; }
+/* v4.3 D2 — align-items:flex-start so the right-side sample list does NOT stretch
+   past the bottom of the left-side trend graph. max-height on .cmh-list-col caps
+   the list at approximately the graph's content height (SVG 240 + caption ~20 + padding)
+   so the popup is the same height regardless of sample count; the list scrolls internally
+   if needed. Tuned to the existing 240px chart; will be re-tuned alongside Ship 2's B5 (chart +30%). */
+#cmh-body.cmh-split { display:flex; gap:16px; flex:1; min-height:0; align-items:flex-start; }
 .cmh-graph-col { flex:1 1 50%; min-width:280px; display:flex; flex-direction:column; align-items:stretch; }
-.cmh-list-col  { flex:1 1 50%; min-width:280px; overflow-y:auto; padding-right:2px; }
+.cmh-list-col  { flex:1 1 50%; min-width:280px; overflow-y:auto; padding-right:2px; max-height:270px; }
 /* Responsive fallback — narrow viewports stack graph above list. */
 @media (max-width:640px) {
   #cm-history-modal { min-width:0; max-width:95vw; }
