@@ -740,7 +740,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.4';
+const VERSION = '8.5';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -772,6 +772,11 @@ const V5_FIELDS = [
   { value: 'changeout_date_erp',label: 'Predicted / ERP Changeout Date',    group: 'Component' },
   { value: 'util_rate',         label: 'Utilization Rate (fraction of 24h)', group: 'Utilization' },
   { value: 'unit_active',      label: 'Unit Active / Up-Down flag',         group: 'Utilization' },
+  // v8.5 (Chunk 11b / Ship 4) — unit-level idle percentages. Stored on
+  // masterData.units[]. Lens v4.3.3 reads these for the new Hero tiles.
+  // Value semantics: percentage 0-100 (e.g. 15.3 means 15.3% idling).
+  { value: 'idle_pct_life',     label: 'Idling % (lifetime)',               group: 'Utilization' },
+  { value: 'idle_pct_3mo',      label: 'Idling % (3-month window)',         group: 'Utilization' },
   { value: 'hist_remove_smu',     label: 'Replace SMU (machine hours at removal)',     group: 'History' },
   { value: 'hist_remove_date',    label: 'Machine Down Date (removal date)',            group: 'History' },
   { value: 'hist_realized_hours', label: 'Replaced Component Hours (actual life run)',  group: 'History' },
@@ -797,6 +802,10 @@ const AUTO_MAP_RULES = [
   [/predicted.*change|predicted.*date|change.*out.*date/i,   'changeout_date_erp'],
   [/utiliz.*rate/,                          'util_rate'],
   [/^up.?down$|^active$|^status.*unit/i,   'unit_active'],
+  // v8.5 — idle % auto-mapping. Tolerates "Idle %", "Idling % (life)",
+  // "idle_pct_life", "Idle Lifetime %", and the 3-month variants.
+  [/idl.*(life|lifetime)|life.*idl|^idle_pct_life$/i,                       'idle_pct_life'],
+  [/idl.*(3\s*m|3-?month|three\s*month|ttm|quarter)|^idle_pct_3mo$/i,       'idle_pct_3mo'],
   [/major\s*component|component\s*desc/, 'comp_name'],
   [/component\s*cost/,             'comp_cost'],
   [/^benchmark$/,                  'benchmark'],
@@ -1455,6 +1464,11 @@ function processMapping() {
   const compsMap = {};      // comp_id → component object
   const readingsArr = [];
   const utilMap = {};       // unit_id → util rate
+  // v8.5 (Ship 4) — per-unit idle percentages. First non-null value wins per
+  // unit_id, mirroring utilMap's first-wins behaviour. Both stored as percent
+  // (0-100), no conversion. Lens v4.3.3 reads these on the Hero panel.
+  const idleLifeMap = {};   // unit_id → idle % (lifetime)
+  const idle3MoMap  = {};   // unit_id → idle % (3-month window)
 
   dataRows.forEach(row => {
     // v8.4 (Chunk 5 / Slide 6) — Sort Field CAPS rule routed through
@@ -1474,6 +1488,12 @@ function processMapping() {
     const last_smu    = parseFloat(getVal(row, 'last_smu')) || 0;
     const last_date   = parseDate(getVal(row, 'last_read_date'));
     const util_rate   = parseFloat(getVal(row, 'util_rate')) || null;
+    // v8.5 (Ship 4) — parse unit-level idle percentages from this row. We don't
+    // use `|| null` here because we want to differentiate "0%" (valid) from
+    // "blank" (skip) — parseFloat('') is NaN which the isFinite check below
+    // rejects. Values are percentages (0-100), stored as-is.
+    const idle_pct_life_raw = parseFloat(getVal(row, 'idle_pct_life'));
+    const idle_pct_3mo_raw  = parseFloat(getVal(row, 'idle_pct_3mo'));
     const comp_name   = String(getVal(row, 'comp_name') || '').trim();
     // Up/Down flag: 'UP' = active, anything else = standby/inactive
     const upDownRaw   = String(getVal(row, 'unit_active') || '').trim().toUpperCase();
@@ -1513,6 +1533,14 @@ function processMapping() {
     // Convert to hrs_per_day for Schema v5 forecasting model (rate × days_in_month).
     if (util_rate && !utilMap[unit_id]) {
       utilMap[unit_id] = Math.round(util_rate * 24 * 100) / 100; // e.g. 0.75 → 18.0
+    }
+    // v8.5 (Ship 4) — idle %. First non-null value per unit wins. Stored as
+    // percentage (0-100), no conversion. Round to 1 dp for clean display.
+    if (isFinite(idle_pct_life_raw) && idleLifeMap[unit_id] == null) {
+      idleLifeMap[unit_id] = Math.round(idle_pct_life_raw * 10) / 10;
+    }
+    if (isFinite(idle_pct_3mo_raw) && idle3MoMap[unit_id] == null) {
+      idle3MoMap[unit_id] = Math.round(idle_pct_3mo_raw * 10) / 10;
     }
 
     // SMU reading
@@ -1605,6 +1633,15 @@ function processMapping() {
     rate_unit:  'hrs_per_day',
     notes:      `Imported via Intake v1 — source value × 24 converted to hrs/day`,
   }));
+
+  // v8.5 (Ship 4) — apply collected idle % maps to each unit. Done after the
+  // forEach loop so all rows have been considered (first-non-null wins per
+  // map). Lens v4.3.3 reads u.idle_pct_life and u.idle_pct_3mo for the new
+  // Hero tiles.
+  Object.keys(unitsMap).forEach(uid => {
+    if (idleLifeMap[uid] != null) unitsMap[uid].idle_pct_life = idleLifeMap[uid];
+    if (idle3MoMap[uid]  != null) unitsMap[uid].idle_pct_3mo  = idle3MoMap[uid];
+  });
 
   state.fleets   = Object.values(fleetsMap);
   state.units    = Object.values(unitsMap);
@@ -1998,6 +2035,11 @@ function buildFleetJSONv5() {
         sn_prefix:           u.sn_prefix || null,
         unit_variant_id:     null,
         notes:               u.notes || null,
+        // v8.5 (Ship 4) — unit-level idle percentages. Lens v4.3.3 reads these
+        // for the new Hero panel tiles. Persisted as percent (0-100), null when
+        // not provided in the source XLSX.
+        idle_pct_life:       (u.idle_pct_life ?? null),
+        idle_pct_3mo:        (u.idle_pct_3mo  ?? null),
       })),
       components: state.components.map(c => ({
         id:                   c.id,
@@ -2619,13 +2661,21 @@ function runFullUpdate() {
     const comp = String(getVal(row, 'comp_name') || '').trim();
     if (!unit) return;
     if (!xlUnitMap[unit]) {
+      // v8.5 (Ship 4) — idle % values captured here for both BUILD-style (new
+      // units in Pass 2) and existing-unit sync (Pass 1.5 below). Differentiate
+      // "0" (valid value) from blank — use isFinite check, not `|| null`, then
+      // round to 1 dp for display consistency.
+      const idleLifeRaw = parseFloat(getVal(row, 'idle_pct_life'));
+      const idle3MoRaw  = parseFloat(getVal(row, 'idle_pct_3mo'));
       xlUnitMap[unit] = {
-        smu:       parseFloat(getVal(row, 'last_smu'))   || null,
-        date:      parseDate(getVal(row, 'last_read_date')),
-        utilRate:  parseFloat(getVal(row, 'util_rate'))  || null,
-        upDown:    String(getVal(row, 'unit_active') || '').trim().toUpperCase(),
-        model:     String(getVal(row, 'model') || '').trim(),
-        fleetType: String(getVal(row, 'fleet_type') || '').trim(),
+        smu:          parseFloat(getVal(row, 'last_smu'))   || null,
+        date:         parseDate(getVal(row, 'last_read_date')),
+        utilRate:     parseFloat(getVal(row, 'util_rate'))  || null,
+        upDown:       String(getVal(row, 'unit_active') || '').trim().toUpperCase(),
+        model:        String(getVal(row, 'model') || '').trim(),
+        fleetType:    String(getVal(row, 'fleet_type') || '').trim(),
+        idleLife:     isFinite(idleLifeRaw) ? Math.round(idleLifeRaw * 10) / 10 : null,
+        idle3Mo:      isFinite(idle3MoRaw)  ? Math.round(idle3MoRaw  * 10) / 10 : null,
       };
     }
     if (comp) xlCompMap[`${unit.toUpperCase()}||${comp.toUpperCase()}`] = row;
@@ -2786,6 +2836,28 @@ function runFullUpdate() {
     }
   });
 
+  // ── Pass 1.5: Sync unit-level idle % onto existing masterData.units[] entries.
+  // v8.5 (Ship 4). Pass 1 iterates components, not units, so it never touches
+  // unit-level slices. This sub-pass walks each unit in xlUnitMap and updates
+  // the matching masterData.units[] entry. V5-only: V4-flat has no units[] slice.
+  if (!isV17 && fleetJSON.masterData && Array.isArray(fleetJSON.masterData.units)) {
+    fleetJSON.masterData.units.forEach(u => {
+      const key = String(u.id || u.unit_id || '').toUpperCase();
+      // xlUnitMap is keyed by the raw unit_id from the row (mixed case ok); try
+      // both case variants to be defensive against caller variance.
+      const data = xlUnitMap[u.id] || xlUnitMap[key] || xlUnitMap[String(u.id || '').toLowerCase()];
+      if (!data) return;
+      if (data.idleLife !== null && u.idle_pct_life !== data.idleLife) {
+        u.idle_pct_life = data.idleLife;
+        fieldUpdates++;
+      }
+      if (data.idle3Mo !== null && u.idle_pct_3mo !== data.idle3Mo) {
+        u.idle_pct_3mo = data.idle3Mo;
+        fieldUpdates++;
+      }
+    });
+  }
+
   // ── Pass 2: Add new units from XLSX not in JSON ─────────────────
   const existingUnitKeys = new Set(
     compArray.map(c => String(c.unit || c.unit_id || '').toUpperCase())
@@ -2859,6 +2931,10 @@ function runFullUpdate() {
         year: null, status: unitData.upDown === 'DOWN' ? 'standby' : 'active',
         expected_life_hours: null, site: null, sn_prefix: null,
         unit_variant_id: null, notes: null,
+        // v8.5 (Ship 4) — carry the new idle % fields onto newly-added units
+        // so the BUILD and UPDATE paths emit the same unit shape.
+        idle_pct_life: unitData.idleLife ?? null,
+        idle_pct_3mo:  unitData.idle3Mo  ?? null,
       });
       // Add utilization profile for V5
       if (unitData.utilRate) {
