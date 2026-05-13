@@ -761,11 +761,11 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div id="idlingXlsxStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
   </div>
 
-  <!-- STEP 3: Per-sheet target mapping -->
+  <!-- STEP 3: Per-target source configuration (v8.7 — 3-box UI) -->
   <div class="card" id="idlingStep3Card" style="display:none">
-    <div class="card-title">Step 3 — Assign Sheets to Target Fields</div>
-    <div class="card-sub">Each sheet in the XLSX maps to a target field on each unit. Auto-defaults: sheets named "Max" → Lifetime (<code>idle_pct_life</code>); "3m" → 3-month (<code>idle_pct_3mo</code>); "1y" or other → Ignore (change the dropdown to use a 1-year sheet for Lifetime instead).</div>
-    <table class="idling-map-table" id="idlingMappingTable"></table>
+    <div class="card-title">Step 3 — Configure Idling Sources</div>
+    <div class="card-sub">Fill in the boxes you have data for. Each box pulls from one sheet + column in your XLSX and writes to the matching JSON field. Auto-defaults try to match common Cat/Vitals export shapes — adjust if your headers differ. <em>If both 1-Year and Max are filled, Max wins (applied last) for the lifetime field.</em></div>
+    <div id="idlingBoxesContainer" style="display:flex;flex-direction:column;gap:12px;margin-top:8px"></div>
     <div class="btn-row" style="margin-top:14px">
       <button class="btn btn-gold" id="idlingPreviewBtn" onclick="renderIdlingPreview()">⊙ Preview Apply</button>
     </div>
@@ -803,7 +803,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.6';
+const VERSION = '8.7';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -4318,12 +4318,39 @@ function onFileSelectConmonPDF(e)  { if (e.target.files.length) loadConmonPdfs(A
 
 const IDLING_FATAL_CALLOUT_RX = /Insufficient|Missing|Invalid/i;
 
+// v8.7 (2026-05-13 late evening) — 3-box source config replaces the per-sheet
+// target mapping from v8.6. Operator: "3 boxes (3m / 1y / Max), each with a
+// selector box for Sheet and another for Field... also the selection to select
+// if it is in % or normal numbers". Each box is independent. Target field
+// mapping is fixed per box (3m → idle_pct_3mo, 1y → idle_pct_life, max →
+// idle_pct_life). If both 1y+max set, max wins (applied last in the write
+// order). Each box's sheet+column+format pickers are independent so the
+// operator can pull from different columns across sheets and handle both
+// percentage (0-100) and decimal (0-1) source values.
+const IDLING_TARGET_FIELD = {
+  '3m':  'idle_pct_3mo',
+  '1y':  'idle_pct_life',
+  'max': 'idle_pct_life',
+};
+const IDLING_BOX_LABELS = {
+  '3m':  '3-Month',
+  '1y':  '1-Year',
+  'max': 'Max / Lifetime',
+};
+const IDLING_BOX_KEYS = ['3m', '1y', 'max'];
+
 const idlingState = {
   fleetJSON:        null,     // parsed JSON object
   fleetFilename:    null,     // for download suffix
   workbook:         null,     // SheetJS workbook object
   workbookFilename: null,
-  sheetTargets:    {},        // sheetName → 'idle_pct_life' | 'idle_pct_3mo' | 'ignore'
+  // v8.7 — per-target box config. Each entry: { sheet, column, format }.
+  // sheet === '' means "ignore this box". format ∈ { 'percent', 'decimal' }.
+  boxes: {
+    '3m':  { sheet: '', column: '', format: 'percent' },
+    '1y':  { sheet: '', column: '', format: 'percent' },
+    'max': { sheet: '', column: '', format: 'percent' },
+  },
   preview:          null,     // { stats, writes, unmatchedRows } from renderIdlingPreview
 };
 
@@ -4365,49 +4392,139 @@ function loadIdlingXLSX(file) {
   r.readAsArrayBuffer(file);
 }
 
+// v8.7 — replaces the v8.6 per-sheet auto-target mapping. Auto-defaults:
+//   3m  box: pick a sheet whose name matches /^3\s*m|3-?month|3mo/i; column = a header containing "idle" (case-insensitive)
+//   max box: pick a sheet whose name matches /^max|lifetime/i;       column = a header containing "idle"
+//   1y  box: pick a sheet whose name matches /^1\s*y|1-?year|12\s*m/i; column = a header containing "idle"
+// Operator can override any selector. Format defaults to 'percent'.
 function _idlingDetectAndRenderMapping() {
   const wb = idlingState.workbook;
   if (!wb) return;
-  idlingState.sheetTargets = {};
-  // Auto-default sheet name → target field.
-  wb.SheetNames.forEach(function(name) {
-    if      (/^max/i.test(name))                                           idlingState.sheetTargets[name] = 'idle_pct_life';
-    else if (/^3\s*m|^3-?month|^three\s*month|^3mo/i.test(name))           idlingState.sheetTargets[name] = 'idle_pct_3mo';
-    else                                                                    idlingState.sheetTargets[name] = 'ignore';
+  const names = wb.SheetNames.slice();
+  // Reset boxes (preserve format choice if previously set).
+  IDLING_BOX_KEYS.forEach(function(k) {
+    idlingState.boxes[k].sheet  = '';
+    idlingState.boxes[k].column = '';
   });
-
-  const tbl = document.getElementById('idlingMappingTable');
-  let html = '<thead><tr><th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Sheet name</th>' +
-             '<th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Rows</th>' +
-             '<th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Target field</th></tr></thead><tbody>';
-  wb.SheetNames.forEach(function(name) {
-    const ws = wb.Sheets[name];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-    const dataRows = rows.length > 1 ? (rows.length - 1) : 0;
-    const safeName = name.replace(/'/g, "\\'");
-    html += '<tr>' +
-      '<td style="padding:6px 8px;color:var(--text);font-weight:600">' + esc(name) + '</td>' +
-      '<td style="padding:6px 8px;color:var(--text2)">' + dataRows + '</td>' +
-      '<td style="padding:6px 8px">' +
-        '<select style="background:#1a1a1a;color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:12px" onchange="_idlingSetSheetTarget(\'' + safeName + '\', this.value)">' +
-        '<option value="idle_pct_life"' + (idlingState.sheetTargets[name] === 'idle_pct_life' ? ' selected' : '') + '>Update idle_pct_life (Lifetime / Max / 1y)</option>' +
-        '<option value="idle_pct_3mo"'  + (idlingState.sheetTargets[name] === 'idle_pct_3mo'  ? ' selected' : '') + '>Update idle_pct_3mo (3-month)</option>' +
-        '<option value="ignore"'         + (idlingState.sheetTargets[name] === 'ignore'         ? ' selected' : '') + '>Ignore this sheet</option>' +
-        '</select>' +
-      '</td></tr>';
+  // Auto-pick sheet per box.
+  function pickSheet(rx) {
+    for (var i = 0; i < names.length; i++) { if (rx.test(names[i])) return names[i]; }
+    return '';
+  }
+  idlingState.boxes['3m'].sheet  = pickSheet(/^3\s*m|^3-?month|^three\s*month|^3mo/i);
+  idlingState.boxes['1y'].sheet  = pickSheet(/^1\s*y|^1-?year|^one\s*year|^12\s*m|^12-?month/i);
+  idlingState.boxes['max'].sheet = pickSheet(/^max|^lifetime|^life/i);
+  // Auto-pick column for each box that has a sheet selected.
+  IDLING_BOX_KEYS.forEach(function(k) {
+    var s = idlingState.boxes[k].sheet;
+    if (!s) return;
+    var cols = _idlingHeadersFor(s);
+    idlingState.boxes[k].column = _idlingAutoIdleColumn(cols);
   });
-  html += '</tbody>';
-  tbl.innerHTML = html;
+  _idlingRenderBoxes();
   document.getElementById('idlingStep3Card').style.display = '';
-  // Hide Step 4 until preview re-rendered
-  document.getElementById('idlingStep4Card').style.display = 'none';
-}
-
-function _idlingSetSheetTarget(sheet, value) {
-  idlingState.sheetTargets[sheet] = value;
-  // Invalidate any previous preview so the operator must re-preview before Apply.
   document.getElementById('idlingStep4Card').style.display = 'none';
   idlingState.preview = null;
+}
+
+// Read header row of a sheet, return array of raw header strings (empty for blank cells).
+function _idlingHeadersFor(sheetName) {
+  if (!idlingState.workbook) return [];
+  var ws = idlingState.workbook.Sheets[sheetName];
+  if (!ws) return [];
+  var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  if (!rows.length) return [];
+  return rows[0].map(function(h) { return (h == null ? '' : String(h)).trim(); });
+}
+
+// Heuristic: prefer headers containing 'idle' (case-insensitive); fallback to
+// first non-blank column. Returns the EXACT header string or '' if no columns.
+function _idlingAutoIdleColumn(headers) {
+  if (!headers || !headers.length) return '';
+  for (var i = 0; i < headers.length; i++) {
+    if (/idle/i.test(headers[i])) return headers[i];
+  }
+  // No "idle" header found — leave blank so operator must pick explicitly.
+  return '';
+}
+
+// Render the 3-box config UI. Each box: Sheet picker, Column picker (populates
+// from selected sheet's header row), Format radio. Target field is fixed per
+// box and shown as informational footer text.
+function _idlingRenderBoxes() {
+  const wb = idlingState.workbook;
+  if (!wb) return;
+  const container = document.getElementById('idlingBoxesContainer');
+  if (!container) return;
+  let html = '';
+  IDLING_BOX_KEYS.forEach(function(k) {
+    var box = idlingState.boxes[k];
+    var headers = box.sheet ? _idlingHeadersFor(box.sheet) : [];
+    var sheetOpts = '<option value="">— Ignore this box —</option>' +
+      wb.SheetNames.map(function(n) {
+        return '<option value="' + esc(n) + '"' + (box.sheet === n ? ' selected' : '') + '>' + esc(n) + '</option>';
+      }).join('');
+    var colOpts = '<option value="">— select sheet first —</option>';
+    if (headers.length) {
+      colOpts = '<option value="">— pick a column —</option>' +
+        headers.map(function(h, idx) {
+          if (!h) return '';
+          return '<option value="' + esc(h) + '"' + (box.column === h ? ' selected' : '') + '>' + esc(h) + '</option>';
+        }).filter(Boolean).join('');
+    }
+    var enabled  = !!box.sheet;
+    var fieldLbl = IDLING_TARGET_FIELD[k];
+    html += '<div class="idling-box" data-box="' + k + '" style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#0e0e10' + (enabled ? '' : ';opacity:0.7') + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
+        '<div style="font-size:13px;font-weight:700;color:var(--text);letter-spacing:0.5px">' + esc(IDLING_BOX_LABELS[k]) + '</div>' +
+        '<div style="font-size:10px;color:var(--text3);font-family:monospace">writes to: <code style="color:var(--gold)">' + fieldLbl + '</code></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center">' +
+        '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)"><span>Sheet</span>' +
+          '<select onchange="_idlingSetBoxSheet(\'' + k + '\', this.value)" style="background:#1a1a1a;color:var(--text);border:1px solid var(--border);padding:5px 8px;border-radius:4px;font-size:12px">' + sheetOpts + '</select>' +
+        '</label>' +
+        '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)"><span>Column</span>' +
+          '<select onchange="_idlingSetBoxColumn(\'' + k + '\', this.value)" ' + (enabled ? '' : 'disabled') + ' style="background:#1a1a1a;color:var(--text);border:1px solid var(--border);padding:5px 8px;border-radius:4px;font-size:12px">' + colOpts + '</select>' +
+        '</label>' +
+        '<div style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)"><span>Format</span>' +
+          '<div style="display:flex;gap:8px;font-size:11px;color:var(--text2);padding:5px 0">' +
+            '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="idling-format-' + k + '" value="percent" ' + (box.format === 'percent' ? 'checked' : '') + ' onchange="_idlingSetBoxFormat(\'' + k + '\', \'percent\')"> %&nbsp;(0-100)</label>' +
+            '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="idling-format-' + k + '" value="decimal" ' + (box.format === 'decimal' ? 'checked' : '') + ' onchange="_idlingSetBoxFormat(\'' + k + '\', \'decimal\')"> dec&nbsp;(0-1)</label>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function _idlingInvalidatePreview() {
+  document.getElementById('idlingStep4Card').style.display = 'none';
+  idlingState.preview = null;
+}
+
+function _idlingSetBoxSheet(k, value) {
+  if (!idlingState.boxes[k]) return;
+  idlingState.boxes[k].sheet = value || '';
+  // Auto-pick column on sheet change (helpful default; operator can override).
+  if (value) {
+    var headers = _idlingHeadersFor(value);
+    idlingState.boxes[k].column = _idlingAutoIdleColumn(headers);
+  } else {
+    idlingState.boxes[k].column = '';
+  }
+  _idlingInvalidatePreview();
+  _idlingRenderBoxes();
+}
+function _idlingSetBoxColumn(k, value) {
+  if (!idlingState.boxes[k]) return;
+  idlingState.boxes[k].column = value || '';
+  _idlingInvalidatePreview();
+}
+function _idlingSetBoxFormat(k, value) {
+  if (!idlingState.boxes[k]) return;
+  idlingState.boxes[k].format = (value === 'decimal') ? 'decimal' : 'percent';
+  _idlingInvalidatePreview();
 }
 
 // Normalisation for unit matching — uppercase, strip non-alphanumerics.
@@ -4479,43 +4596,75 @@ function renderIdlingPreview() {
     });
   }
 
-  const stats          = { matched: 0, unmatched: 0, noData: 0, perSheet: {} };
-  const writes         = [];     // [{unitKey, field, value, sourceSheet}]
+  const stats          = { matched: 0, unmatched: 0, noData: 0, perBox: {} };
+  const writes         = [];     // [{unitKey, field, value, sourceBox, sourceSheet, sourceColumn}]
   const unmatchedRows  = [];
 
-  wb.SheetNames.forEach(function(sheetName) {
-    const target = idlingState.sheetTargets[sheetName];
-    if (target === 'ignore') return;
-    const ws   = wb.Sheets[sheetName];
+  // v8.7 — iterate boxes (3m, 1y, max). Order matters: 3m → 1y → max. If both
+  // 1y and max target idle_pct_life, max wins because it's applied last in the
+  // write loop (operator-documented in the Step 3 sub-text).
+  IDLING_BOX_KEYS.forEach(function(boxKey) {
+    const box = idlingState.boxes[boxKey];
+    const target = IDLING_TARGET_FIELD[boxKey];
+    const boxLbl = IDLING_BOX_LABELS[boxKey];
+    if (!box.sheet) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, ignored: true };
+      return;
+    }
+    if (!box.column) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, error: 'No column selected (pick the idle-value column for sheet "' + box.sheet + '")' };
+      return;
+    }
+    const ws = wb.Sheets[box.sheet];
+    if (!ws) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, error: 'Sheet "' + box.sheet + '" not found in workbook' };
+      return;
+    }
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-    if (rows.length < 2) { stats.perSheet[sheetName] = { matched: 0, unmatched: 0, noData: 0, target: target }; return; }
-
-    // Detect columns by header name (case-insensitive). Tolerates column-order differences
-    // and silent column additions in future telematics exports.
-    const header = rows[0].map(function(h) { return String(h == null ? '' : h).trim().toLowerCase(); });
-    const colCallout = header.indexOf('callouts');
-    const colAssetId = header.indexOf('asset id');
-    const colSN      = header.indexOf('asset serial number');
-    const colIdle    = header.indexOf('idle %');
-
-    if (colAssetId < 0 || colIdle < 0) {
-      stats.perSheet[sheetName] = { matched: 0, unmatched: 0, noData: 0, target: target, error: 'Missing required columns (Asset ID and/or Idle %)' };
+    if (rows.length < 2) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, matched: 0, unmatched: 0, noData: 0, sheet: box.sheet, column: box.column, format: box.format };
       return;
     }
 
-    const sheetStats = { matched: 0, unmatched: 0, noData: 0, target: target };
+    // Header row — find column indices by exact header name (case-sensitive on
+    // the operator's pick, case-insensitive on Asset ID / SN / Callouts which
+    // are fixed names from Cat/Vitals exports). The operator-picked column for
+    // the idle value is matched EXACTLY against the header to handle exports
+    // with mixed-case or unusual names like "Idle Time %" or "Idling Pct".
+    const header     = rows[0].map(function(h) { return (h == null ? '' : String(h)).trim(); });
+    const headerLow  = header.map(function(h) { return h.toLowerCase(); });
+    const colCallout = headerLow.indexOf('callouts');
+    const colAssetId = headerLow.indexOf('asset id');
+    const colSN      = headerLow.indexOf('asset serial number');
+    const colIdle    = header.indexOf(box.column);
+
+    if (colAssetId < 0) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, error: 'Sheet "' + box.sheet + '" has no "Asset ID" column' };
+      return;
+    }
+    if (colIdle < 0) {
+      stats.perBox[boxKey] = { boxLbl: boxLbl, target: target, error: 'Column "' + box.column + '" not found in sheet "' + box.sheet + '"' };
+      return;
+    }
+
+    const boxStats = { boxLbl: boxLbl, target: target, matched: 0, unmatched: 0, noData: 0, sheet: box.sheet, column: box.column, format: box.format };
     for (let r = 1; r < rows.length; r++) {
       const row = rows[r];
       if (!row) continue;
       const assetId  = String(row[colAssetId] == null ? '' : row[colAssetId]).trim();
       const sn       = colSN      >= 0 ? String(row[colSN]      == null ? '' : row[colSN]).trim()      : '';
       const callout  = colCallout >= 0 ? String(row[colCallout] == null ? '' : row[colCallout]).trim() : '';
-      const idleRaw  = row[colIdle];
-      const idlePct  = (typeof idleRaw === 'number' && isFinite(idleRaw)) ? idleRaw : parseFloat(idleRaw);
+      const rawCell  = row[colIdle];
+      let   raw      = (typeof rawCell === 'number' && isFinite(rawCell)) ? rawCell : parseFloat(rawCell);
 
-      // No-data per operator spec (b): empty Idle % OR fatal callout keyword.
-      if (!isFinite(idlePct) || IDLING_FATAL_CALLOUT_RX.test(callout)) {
-        sheetStats.noData++;
+      // v8.7 — format normalisation. Decimal (0-1) → multiply by 100 to get
+      // percent (the stored convention). Percent (0-100) → use as-is.
+      if (isFinite(raw) && box.format === 'decimal') raw = raw * 100;
+
+      // No-data: empty Idle cell OR fatal callout keyword. v8.6 FIX-2 rule
+      // unchanged.
+      if (!isFinite(raw) || IDLING_FATAL_CALLOUT_RX.test(callout)) {
+        boxStats.noData++;
         continue;
       }
 
@@ -4523,26 +4672,28 @@ function renderIdlingPreview() {
       let unit = flocLookup[_idlingNormKey(assetId)];
       if (!unit && sn) unit = snLookup[_idlingNormKey(sn)];
       if (!unit) {
-        sheetStats.unmatched++;
-        unmatchedRows.push({ sheet: sheetName, assetId: assetId, sn: sn, idlePct: idlePct });
+        boxStats.unmatched++;
+        unmatchedRows.push({ box: boxLbl, sheet: box.sheet, assetId: assetId, sn: sn, idlePct: raw });
         continue;
       }
 
       writes.push({
         unitKey: _idlingNormKey(unit.floc || unit.id),
         field:   target,
-        value:   Math.round(idlePct * 10) / 10,
-        sourceSheet: sheetName,
-        displayFloc: unit.floc || unit.id,
-        displaySN:   unit.sn_prefix || '',
+        value:   Math.round(raw * 10) / 10,
+        sourceBox:    boxLbl,
+        sourceSheet:  box.sheet,
+        sourceColumn: box.column,
+        displayFloc:  unit.floc || unit.id,
+        displaySN:    unit.sn_prefix || '',
         displayModel: unit.model || '',
       });
-      sheetStats.matched++;
+      boxStats.matched++;
     }
-    stats.perSheet[sheetName] = sheetStats;
-    stats.matched   += sheetStats.matched;
-    stats.unmatched += sheetStats.unmatched;
-    stats.noData    += sheetStats.noData;
+    stats.perBox[boxKey] = boxStats;
+    stats.matched   += boxStats.matched;
+    stats.unmatched += boxStats.unmatched;
+    stats.noData    += boxStats.noData;
   });
 
   idlingState.preview = { stats: stats, writes: writes, unmatchedRows: unmatchedRows };
@@ -4550,21 +4701,29 @@ function renderIdlingPreview() {
   // ── Render Step 4 ────────────────────────────────────────────────
   document.getElementById('idlingStep4Card').style.display = '';
 
-  // Stats row
+  // v8.7 — stats per box (3m / 1y / max) instead of per sheet.
   const statsEl = document.getElementById('idlingStats');
   let statsHtml = '';
-  Object.keys(stats.perSheet).forEach(function(sheet) {
-    const s = stats.perSheet[sheet];
-    const targetLbl = s.target === 'idle_pct_life' ? 'Lifetime' : s.target === 'idle_pct_3mo' ? '3-month' : 'Ignored';
+  let anyConfigured = false;
+  IDLING_BOX_KEYS.forEach(function(boxKey) {
+    const s = stats.perBox[boxKey];
+    if (!s) return;
+    const targetLbl = s.target === 'idle_pct_life' ? 'Lifetime' : s.target === 'idle_pct_3mo' ? '3-month' : s.target;
+    const boxLbl = s.boxLbl || IDLING_BOX_LABELS[boxKey];
+    if (s.ignored) {
+      return; // skip — operator left this box blank
+    }
+    anyConfigured = true;
     if (s.error) {
-      statsHtml += '<div class="stat-pill"><div class="stat-num s-red">!</div><div class="stat-lbl">' + esc(sheet) + ' — ' + esc(s.error) + '</div></div>';
+      statsHtml += '<div class="stat-pill"><div class="stat-num s-red">!</div><div class="stat-lbl">' + esc(boxLbl) + ' — ' + esc(s.error) + '</div></div>';
       return;
     }
-    statsHtml += '<div class="stat-pill"><div class="stat-num s-green">' + s.matched + '</div><div class="stat-lbl">' + esc(sheet) + ' → ' + targetLbl + ' matched</div></div>';
-    if (s.unmatched) statsHtml += '<div class="stat-pill"><div class="stat-num s-amber">' + s.unmatched + '</div><div class="stat-lbl">' + esc(sheet) + ' unmatched</div></div>';
-    if (s.noData)    statsHtml += '<div class="stat-pill"><div class="stat-num">'         + s.noData    + '</div><div class="stat-lbl">' + esc(sheet) + ' no data (skipped)</div></div>';
+    const srcDesc = esc(s.sheet) + ' · ' + esc(s.column) + ' (' + (s.format === 'decimal' ? 'dec' : '%') + ')';
+    statsHtml += '<div class="stat-pill"><div class="stat-num s-green">' + s.matched + '</div><div class="stat-lbl">' + esc(boxLbl) + ' → ' + targetLbl + ' matched <span style="color:var(--text3);font-size:10px">[' + srcDesc + ']</span></div></div>';
+    if (s.unmatched) statsHtml += '<div class="stat-pill"><div class="stat-num s-amber">' + s.unmatched + '</div><div class="stat-lbl">' + esc(boxLbl) + ' unmatched</div></div>';
+    if (s.noData)    statsHtml += '<div class="stat-pill"><div class="stat-num">'         + s.noData    + '</div><div class="stat-lbl">' + esc(boxLbl) + ' no data (skipped)</div></div>';
   });
-  statsEl.innerHTML = statsHtml || '<div style="color:var(--text3);font-size:12px">No sheets selected for apply (all set to Ignore).</div>';
+  statsEl.innerHTML = statsHtml || '<div style="color:var(--text3);font-size:12px">No boxes configured — fill in at least one (Sheet + Column) above and re-click Preview Apply.</div>';
 
   // Unmatched detail (collapsed by default)
   const unmatchedEl = document.getElementById('idlingUnmatchedBox');
@@ -4572,12 +4731,12 @@ function renderIdlingPreview() {
     let h = '<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--text2);font-size:12px;padding:6px 0">' +
       '⚠ ' + unmatchedRows.length + ' row(s) not matched to any unit in the JSON — click to expand</summary>' +
       '<table style="width:100%;font-size:11px;margin-top:8px;border-collapse:collapse">' +
-      '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text3)">Sheet</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">Asset ID (XLSX)</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">SN (XLSX)</th><th style="text-align:right;padding:4px 8px;color:var(--text3)">Idle %</th></tr></thead><tbody>';
+      '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text3)">Box</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">Sheet</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">Asset ID (XLSX)</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">SN (XLSX)</th><th style="text-align:right;padding:4px 8px;color:var(--text3)">Idle %</th></tr></thead><tbody>';
     unmatchedRows.slice(0, 80).forEach(function(u) {
-      h += '<tr><td style="padding:3px 8px">' + esc(u.sheet) + '</td><td style="padding:3px 8px">' + esc(u.assetId) + '</td><td style="padding:3px 8px">' + esc(u.sn) + '</td><td style="text-align:right;padding:3px 8px">' + u.idlePct.toFixed(1) + '%</td></tr>';
+      h += '<tr><td style="padding:3px 8px">' + esc(u.box) + '</td><td style="padding:3px 8px">' + esc(u.sheet) + '</td><td style="padding:3px 8px">' + esc(u.assetId) + '</td><td style="padding:3px 8px">' + esc(u.sn) + '</td><td style="text-align:right;padding:3px 8px">' + u.idlePct.toFixed(1) + '%</td></tr>';
     });
     if (unmatchedRows.length > 80) {
-      h += '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:6px">… and ' + (unmatchedRows.length - 80) + ' more</td></tr>';
+      h += '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:6px">… and ' + (unmatchedRows.length - 80) + ' more</td></tr>';
     }
     h += '</tbody></table></details>';
     unmatchedEl.innerHTML = h;
@@ -4694,7 +4853,7 @@ function applyIdlingToJSON() {
   const dateStr = new Date().toISOString().split('T')[0];
   fleet.meta.notes = (fleet.meta.notes || '') +
     (fleet.meta.notes ? '\n' : '') +
-    'Idling import via Intake v8.6 FIX-2 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
+    'Idling import via Intake v8.7 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
 
   // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
   const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
@@ -4726,14 +4885,20 @@ function clearIdling() {
   idlingState.fleetFilename = null;
   idlingState.workbook      = null;
   idlingState.workbookFilename = null;
-  idlingState.sheetTargets  = {};
+  // v8.7 — reset box configs (preserve nothing — fresh start)
+  IDLING_BOX_KEYS.forEach(function(k) {
+    idlingState.boxes[k].sheet  = '';
+    idlingState.boxes[k].column = '';
+    idlingState.boxes[k].format = 'percent';
+  });
   idlingState.preview       = null;
-  document.getElementById('idlingJsonStatus').textContent = '';
-  document.getElementById('idlingXlsxStatus').textContent = '';
-  document.getElementById('idlingMappingTable').innerHTML = '';
-  document.getElementById('idlingStats').innerHTML        = '';
-  document.getElementById('idlingUnmatchedBox').innerHTML = '';
-  document.getElementById('idlingPreviewTable').innerHTML = '';
+  document.getElementById('idlingJsonStatus').textContent  = '';
+  document.getElementById('idlingXlsxStatus').textContent  = '';
+  var boxesEl = document.getElementById('idlingBoxesContainer');
+  if (boxesEl) boxesEl.innerHTML = '';
+  document.getElementById('idlingStats').innerHTML         = '';
+  document.getElementById('idlingUnmatchedBox').innerHTML  = '';
+  document.getElementById('idlingPreviewTable').innerHTML  = '';
   document.getElementById('idlingStep3Card').style.display = 'none';
   document.getElementById('idlingStep4Card').style.display = 'none';
   const step2 = document.getElementById('idlingStep2Card');
