@@ -2550,14 +2550,38 @@ function _ingestBomSheets(wb, sheetNames) {
       const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
       if (rows.length < 2) { skippedSheets.push(sheetName); return; }
       const hdrs = rows[0].map(h => String(h));
-      if (!firstHdrs) firstHdrs = hdrs;
+      if (!firstHdrs) {
+        // v8.10 FIX-3.1 (2026-05-13) — Trim trailing empty header cells. Some
+        // SAP/dealer BOMs have a worksheet <dimension> that extends beyond the
+        // visible header (e.g. ENGINE sheet in D9T-REX00527.xlsx is dimension
+        // A1:H76 but only A-D have headers — phantom columns from old
+        // formatting). SheetJS pads first-sheet rows to the dimension width,
+        // making firstHdrs.length = 8 instead of 4. Subsequent sheets only
+        // have 4-column data → row.slice(0, 8) returns only 4 elements →
+        // sheetName lands at index 4 not 8 → confirmBomImport reads
+        // row[sourceSheetIdx=8] = undefined → _sourceSheet never gets set on
+        // those rows → entire BOM falls into "Unmapped (no scope)" with only
+        // ENGINE's rows tagged. THIS WAS THE OPERATOR-FLAGGED BUG ("all
+        // materials dropped to Unmapped — from 1 sheet: ENGINE"). The trim
+        // ensures firstHdrs.length reflects only meaningful headers.
+        while (hdrs.length > 0 && (hdrs[hdrs.length - 1] === '' || hdrs[hdrs.length - 1] === 'undefined')) {
+          hdrs.pop();
+        }
+        firstHdrs = hdrs;
+      }
       // Concatenate with a hidden marker (last column) capturing sheet name.
-      // The column mapper ignores this column (it's beyond the visible headers);
-      // confirmBomImport reads it via index = firstHdrs.length.
+      // v8.10 FIX-3.1 — Pad each row to exactly firstHdrs.length BEFORE
+      // appending sheetName. Defense in depth: even if some sheet has fewer
+      // cells than firstHdrs.length (per-sheet column-count variance), the
+      // sheetName always lands at index = firstHdrs.length so the downstream
+      // confirmBomImport row[sourceSheetIdx] lookup is reliable.
       rows.slice(1).forEach(row => {
         if (row.some(c => c !== '')) {
-          const extended = row.slice(0, firstHdrs.length).concat([sheetName]);
-          allRaw.push(extended);
+          const padded = new Array(firstHdrs.length).fill('');
+          const lim = Math.min(row.length, firstHdrs.length);
+          for (let k = 0; k < lim; k++) padded[k] = row[k];
+          padded.push(sheetName);
+          allRaw.push(padded);
         }
       });
     } catch(_) { skippedSheets.push(sheetName); }
