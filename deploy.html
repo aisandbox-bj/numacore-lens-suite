@@ -1374,6 +1374,19 @@ function parseFleet() {
   // tab. Empty value = no restriction (degrade safely). Comma-separated lists ok.
   if (typeof deploy.config.iw39OrderTypes      !== 'string') deploy.config.iw39OrderTypes      = 'YBA2';
   if (typeof deploy.config.iw39ExcludeKeywords !== 'string') deploy.config.iw39ExcludeKeywords = 'Service';
+  // v8.10 FIX-4.1 (2026-05-13) — Advanced Excel-style description filter
+  // (operator review V2 slide 3). Each filter is {op, value} with op in
+  // {contains, not_contains, starts_with, ends_with}. All rules AND-combined.
+  // Migrates from the simpler iw39ExcludeKeywords string (each comma-separated
+  // keyword becomes a not_contains rule). The simple field remains in config
+  // for backward compat but is no longer read at filter time.
+  if (!Array.isArray(deploy.config.iw39DescriptionFilters)) {
+    const _legacy = String(deploy.config.iw39ExcludeKeywords || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    deploy.config.iw39DescriptionFilters = _legacy.length > 0
+      ? _legacy.map(v => ({ op: 'not_contains', value: v }))
+      : [{ op: 'not_contains', value: 'Service' }];
+  }
   // Seed built-in template if not yet present
   if (!deploy.config.templates.standard_pcr) {
     deploy.config.templates.standard_pcr = {
@@ -1474,6 +1487,12 @@ function ensurePD(id, templateId) {
       // sheets get remembered so the operator can still link/unlink them
       // without re-uploading the workbook.
       componentSheetMapMeta: { knownSheets: [] },
+      // v8.10 FIX-4.2 (2026-05-13) — Per-project hidden WO list. Operator
+      // can click ✕ next to any WO row to hide it from this project's view.
+      // Hidden WO numbers persist in the fleet JSON. Hide is filter-time
+      // only — the WO still exists in the IW39 source, just not surfaced
+      // on this project's Work Orders tab.
+      woHide: [],
     };
   }
   // Back-fill missing fields for older data
@@ -1481,6 +1500,7 @@ function ensurePD(id, templateId) {
   if (!p.customTasks) p.customTasks = [];
   if (!p.componentSheetMap) p.componentSheetMap = {};   // v8.10
   if (!p.componentSheetMapMeta) p.componentSheetMapMeta = { knownSheets: [] };   // v8.10 FIX-2.5
+  if (!Array.isArray(p.woHide)) p.woHide = [];          // v8.10 FIX-4.2
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   return p;
 }
@@ -2664,10 +2684,15 @@ function renderWorkOrders(id) {
   // comma-separated allow-list). Builds on v8.9 FIX-2 unit FLOC filter.
   const _orderTypes = String(deploy.config?.iw39OrderTypes || '')
     .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-  const _excludeKeywords = String(deploy.config?.iw39ExcludeKeywords || '')
-    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  // v8.10 FIX-4.1 (2026-05-13) — Advanced description filter rules.
+  // Each rule is {op, value}. Rules are AND-combined (row must pass every rule).
+  const _descFilters = Array.isArray(deploy.config?.iw39DescriptionFilters)
+    ? deploy.config.iw39DescriptionFilters.filter(r => r && r.value)
+    : [];
   const _statusToken = s => String(s || '').trim().split(/[\s,;|/]+/)[0].toUpperCase();
   const _OPEN_STATUSES = ['REL', 'CRTD'];
+  // v8.10 FIX-4.2 (2026-05-13) — Per-project hidden WO numbers (Set for O(1) lookup).
+  const _woHideSet = new Set((p.woHide || []).map(s => String(s).trim().toUpperCase()));
 
   const _fleetWideLoaded = Array.isArray(_fleetWideIW39) && _fleetWideIW39.length > 0;
   // v8.10 FIX-2.6 (2026-05-13) — Unit Sort Field for the WO filter must be
@@ -2689,11 +2714,15 @@ function renderWorkOrders(id) {
     if (_orderTypes.length > 0 && !_orderTypes.includes((wo.order_type || '').toUpperCase())) return false;
     // (c) Open status — first alphanumeric token of status string in REL/CRTD
     if (!_OPEN_STATUSES.includes(_statusToken(wo.status))) return false;
-    // (d) Description keyword exclusion (any match = exclude)
-    if (_excludeKeywords.length > 0) {
+    // (d) v8.10 FIX-4.1 — Advanced description rules (all AND-combined).
+    if (_descFilters.length > 0) {
       const dl = String(wo.description || '').toLowerCase();
-      if (_excludeKeywords.some(kw => dl.includes(kw))) return false;
+      for (let i = 0; i < _descFilters.length; i++) {
+        if (!_descriptionMatchesFilter(dl, _descFilters[i])) return false;
+      }
     }
+    // (e) v8.10 FIX-4.2 — Per-project manually-hidden WO numbers.
+    if (_woHideSet.size > 0 && _woHideSet.has(String(wo.wo_number || '').trim().toUpperCase())) return false;
     return true;
   };
 
@@ -2711,35 +2740,66 @@ function renderWorkOrders(id) {
 
   // Source indicator + actions
   const _orderTypesLbl    = _orderTypes.length      ? _orderTypes.join(', ')         : '(any)';
-  const _excludeKwsLbl    = _excludeKeywords.length ? _excludeKeywords.join(', ')    : '(none)';
+  const _descFiltersLbl   = _descFilters.length     ? `${_descFilters.length} rule${_descFilters.length === 1 ? '' : 's'}` : '(no description filter)';
   const _filteredOutCount = _sourcePool.length - wos.length;
+  const _hiddenCount      = _woHideSet.size;
   const _sourceBadge = _woSource === 'fleet'
     ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(76,175,80,0.10);color:var(--green);border:1px solid var(--green);margin-left:8px">⚙ Fleet-wide IW39 · filtered to ${esc(_unitId || 'unit')} · ${esc(_orderTypesLbl)} · open only</span>`
     : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(91,156,246,0.10);color:var(--blue);border:1px solid var(--border);margin-left:8px">📁 Per-project upload · ${esc(_orderTypesLbl)} · open only</span>` : '');
 
-  // Inline filter config (operator-editable, persists per fleet in deploy.config).
-  // Lives on the Work Orders tab toolbar per operator preference 2026-05-12.
+  // v8.10 FIX-4.1 (2026-05-13) — Inline filter config: order types text input
+  // + advanced description-filter chip-rules editor. Each rule is an Excel-style
+  // operator (contains / does-not-contain / starts-with / ends-with) plus a
+  // value. Rules AND-combined. + Add filter appends a new rule with default
+  // op=contains. ✕ removes a rule. Edits autosave onblur via the new
+  // iw39 update functions which write to deploy.config.iw39DescriptionFilters.
+  const _OPS = [
+    ['contains', 'contains'],
+    ['not_contains', 'does NOT contain'],
+    ['starts_with', 'starts with'],
+    ['ends_with', 'ends with'],
+  ];
+  const _renderRuleChips = () => {
+    if (_descFilters.length === 0) {
+      return `<span style="color:var(--faint);font-size:10px;font-style:italic">No description rules — all matching open WOs shown.</span>`;
+    }
+    return _descFilters.map((r, i) => {
+      const opOptions = _OPS.map(([v, lbl]) => `<option value="${v}" ${r.op === v ? 'selected' : ''}>${esc(lbl)}</option>`).join('');
+      return `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 4px 3px 8px;font-size:10px">
+        <span style="color:var(--muted)">Description</span>
+        <select class="gf-sel" style="font-size:10px;padding:2px 4px" onchange="iw39UpdateFilter(${i}, 'op', this.value, '${id}')">${opOptions}</select>
+        <input type="text" class="inline-inp" style="font-size:10px;padding:2px 6px;width:130px"
+               value="${esc(r.value || '')}"
+               placeholder="text to match"
+               onblur="iw39UpdateFilter(${i}, 'value', this.value, '${id}')"
+               onkeydown="if(event.key==='Enter') this.blur()">
+        <button onclick="iw39RemoveFilter(${i}, '${id}')" title="Remove this rule" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:11px;padding:2px 4px;line-height:1">✕</button>
+      </span>`;
+    }).join('');
+  };
+
   const _filterConfigBar = `
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:8px 14px;background:var(--deep);border:1px solid var(--border);border-radius:6px;margin-bottom:10px;font-size:11px">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:8px 14px;background:var(--deep);border:1px solid var(--border);border-radius:6px;margin-bottom:10px;font-size:11px">
       <span style="color:var(--muted);font-weight:600">WO filters (per fleet):</span>
       <label style="display:flex;align-items:center;gap:6px">
         <span style="color:var(--muted)">Order types:</span>
-        <input id="iw39OrderTypesInp" class="inline-inp" style="width:160px;font-family:monospace;text-transform:uppercase"
+        <input id="iw39OrderTypesInp" class="inline-inp" style="width:140px;font-family:monospace;text-transform:uppercase"
                value="${esc(deploy.config?.iw39OrderTypes || '')}"
                title="Comma-separated SAP Order Type codes to include (e.g. YBA2 or YBA2,YBA3). Empty = no restriction."
                onblur="updateIW39FilterConfig('iw39OrderTypes', this.value, '${id}')"
                onkeydown="if(event.key==='Enter') this.blur()">
       </label>
-      <label style="display:flex;align-items:center;gap:6px">
-        <span style="color:var(--muted)">Hide descriptions containing:</span>
-        <input id="iw39ExcludeKwInp" class="inline-inp" style="width:200px;font-family:inherit"
-               value="${esc(deploy.config?.iw39ExcludeKeywords || '')}"
-               title="Comma-separated keywords to exclude (case-insensitive substring match on Description). Empty = no exclusion. Default 'Service' covers SAP (PM) Service line items."
-               onblur="updateIW39FilterConfig('iw39ExcludeKeywords', this.value, '${id}')"
-               onkeydown="if(event.key==='Enter') this.blur()">
-      </label>
-      <span style="color:var(--faint);font-size:10px;margin-left:auto">Status: only REL + CRTD (open) shown. TECO/CLSD/CNCL hidden.</span>
-    </div>`;
+      <span style="color:var(--border2)">|</span>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${_renderRuleChips()}
+        <button onclick="iw39AddFilter('${id}')" style="background:transparent;border:1px dashed var(--border2);color:var(--muted);cursor:pointer;font-size:10px;padding:3px 8px;border-radius:4px;font-family:inherit" title="Add a new description filter rule">+ Add filter</button>
+      </div>
+      <span style="color:var(--faint);font-size:10px;margin-left:auto">Status: only REL + CRTD (open) shown.</span>
+    </div>
+    ${_hiddenCount > 0 ? `<div style="display:flex;align-items:center;gap:10px;padding:6px 14px;background:rgba(255,193,7,0.06);border:1px solid rgba(255,193,7,0.3);border-radius:4px;margin-bottom:10px;font-size:11px;color:var(--gold)">
+      ⚠ <strong>${_hiddenCount} WO${_hiddenCount === 1 ? '' : 's'} hidden</strong> on this project via per-row ✕
+      <button onclick="unhideAllWOs('${id}')" style="background:transparent;border:1px solid var(--gold);color:var(--gold);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;font-family:inherit;margin-left:auto">Show all</button>
+    </div>` : ''}`;
 
   el.innerHTML = `
     <div class="tab-toolbar">
@@ -2823,9 +2883,13 @@ function renderWorkOrders(id) {
     // v8.10 FIX-2.6 (2026-05-13) — Planned / Actual / Variance now center-aligned
     // per operator. Was right-aligned (operator screenshot showed yellow-arrow
     // call-outs on these three columns).
+    // v8.10 FIX-4.2 (2026-05-13) — Per-WO ✕ hide button appended to the row.
+    // Adds wo_number to deploy.projects[id].woHide (per-project list) and
+    // re-renders. Operator can restore via the "Show all" pill at the top.
+    const _woNumEsc = esc(wo.wo_number || '');
     return `
     <tr>
-      <td class="mono" style="font-weight:600">${esc(wo.wo_number||'')}</td>
+      <td class="mono" style="font-weight:600">${_woNumEsc}</td>
       <td style="min-width:160px">${esc(wo.description||'')}</td>
       <td>${sapBadge(wo.status)}</td>
       <td style="text-align:center">${planned ? fmtCost(planned) : '—'}</td>
@@ -2836,6 +2900,7 @@ function renderWorkOrders(id) {
       <td style="font-size:10px;color:var(--muted)">${esc(wo.floc||'')}</td>
       <td><input class="inline-inp" value="${esc(wo.notes||'')}" placeholder="Notes…"
         onchange="updateWONote('${id}',${wos.indexOf(wo)},this.value)"></td>
+      <td style="text-align:center;width:30px"><button onclick="hideWO('${id}','${_woNumEsc}')" title="Hide this WO from this project (can be restored from the top pill)" style="background:transparent;border:none;color:var(--faint);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--faint)'">✕</button></td>
     </tr>`; }).join('');
 
   el.innerHTML += `<div class="dtw"><table class="dt">
@@ -2843,6 +2908,7 @@ function renderWorkOrders(id) {
       <th>WO Number</th><th>Description</th><th>Status</th>
       <th style="text-align:center">Planned</th><th style="text-align:center">Actual</th><th style="text-align:center">Variance</th>
       <th>FLOC</th><th style="min-width:120px">Notes</th>
+      <th title="Hide this WO from this project">Hide</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>
@@ -3165,6 +3231,74 @@ function updateIW39FilterConfig(key, value, projId) {
   _markUnsaved();
   _updateIW39StatusPill();   // refresh header pill count
   if (projId) renderWorkOrders(projId);
+}
+
+// v8.10 FIX-4.1 (2026-05-13) — Advanced description filter operator helpers.
+// Each filter is {op, value} with op in {contains, not_contains, starts_with,
+// ends_with}. Stored at deploy.config.iw39DescriptionFilters (per-fleet).
+// _descriptionMatchesFilter: pure, returns true if `dl` (a LOWERCASED
+// description) passes the rule. Used in renderWorkOrders' _filterRow.
+function _descriptionMatchesFilter(dl, rule) {
+  if (!rule || !rule.value) return true;
+  const v = String(rule.value).toLowerCase().trim();
+  if (!v) return true;
+  switch (rule.op) {
+    case 'contains':     return dl.includes(v);
+    case 'not_contains': return !dl.includes(v);
+    case 'starts_with':  return dl.startsWith(v);
+    case 'ends_with':    return dl.endsWith(v);
+    default:             return dl.includes(v);   // fallback
+  }
+}
+function iw39AddFilter(projId) {
+  if (!deploy || !deploy.config) return;
+  if (!Array.isArray(deploy.config.iw39DescriptionFilters)) deploy.config.iw39DescriptionFilters = [];
+  deploy.config.iw39DescriptionFilters.push({ op: 'contains', value: '' });
+  _markUnsaved();
+  if (projId) renderWorkOrders(projId);
+}
+function iw39RemoveFilter(idx, projId) {
+  if (!deploy || !deploy.config || !Array.isArray(deploy.config.iw39DescriptionFilters)) return;
+  if (idx < 0 || idx >= deploy.config.iw39DescriptionFilters.length) return;
+  deploy.config.iw39DescriptionFilters.splice(idx, 1);
+  _markUnsaved();
+  if (projId) renderWorkOrders(projId);
+}
+function iw39UpdateFilter(idx, field, value, projId) {
+  if (!deploy || !deploy.config || !Array.isArray(deploy.config.iw39DescriptionFilters)) return;
+  if (idx < 0 || idx >= deploy.config.iw39DescriptionFilters.length) return;
+  if (field !== 'op' && field !== 'value') return;
+  const rule = deploy.config.iw39DescriptionFilters[idx];
+  const v = field === 'value' ? String(value || '').trim() : String(value || 'contains');
+  if (rule[field] === v) return;   // no-op
+  rule[field] = v;
+  _markUnsaved();
+  if (projId) renderWorkOrders(projId);
+}
+
+// v8.10 FIX-4.2 (2026-05-13) — Per-project WO hide list.
+// hideWO: adds a wo_number to deploy.projects[id].woHide (per-project).
+// unhideAllWOs: clears the list. Persists via _markUnsaved.
+function hideWO(projId, woNum) {
+  const p = pd(projId); if (!p) return;
+  const n = String(woNum || '').trim();
+  if (!n) return;
+  if (!Array.isArray(p.woHide)) p.woHide = [];
+  if (p.woHide.indexOf(n) === -1) {
+    p.woHide.push(n);
+    _markUnsaved();
+    toast(`WO ${n} hidden from this project`, 'info');
+    renderWorkOrders(projId);
+  }
+}
+function unhideAllWOs(projId) {
+  const p = pd(projId); if (!p) return;
+  if (!Array.isArray(p.woHide) || p.woHide.length === 0) return;
+  const n = p.woHide.length;
+  p.woHide = [];
+  _markUnsaved();
+  toast(`Restored ${n} hidden WO${n === 1 ? '' : 's'}`, 'info');
+  renderWorkOrders(projId);
 }
 
 // ─── Stock lookup helpers ───────────────────────────────────────────
