@@ -1169,7 +1169,7 @@ const ALIASES = {
   planned_cost: ['planned','planned cost','plan cost','planned value','budget'],
   actual_cost:  ['actual','actual cost','act cost','actual value'],
   floc:         ['floc','functional location','equipment','search term','asset','sort field'],
-  part_number:  ['part','vpn','part number','oem','manufacturer part'],
+  part_number:  ['part','vpn','part number','oem','manufacturer part','p/n'],   // v8.10 FIX-5.3 — operator's BOM column header is literally "P/N"
   sap_material: ['sap','material no','material number','matl','sap number','material'],
   qty:          ['qty','quantity','count','pcs'],
   unit_cost:    ['unit cost','unit price','price','net price'],
@@ -2033,24 +2033,70 @@ function renderMaterials(id) {
   };
 
   // Helper — renders a single BOM row in the inner table (same shape as v8.9).
+  // v8.10 FIX-5.2 (2026-05-13) — Per operator: centre all columns EXCEPT
+  // Line, Description, and Notes. Qty / Line Cost were previously right-
+  // aligned; Part No / SAP Material / SAP Status had no alignment. Now all
+  // centred for at-a-glance scannability. Line / Description / Notes stay
+  // left-aligned because they're free-text and read better that way.
+  // v8.10 FIX-5.1 (2026-05-13) — Each main BOM row may be followed by one or
+  // more italic alternative-material sub-rows. Alternatives come from the
+  // Component Snapshot's 12 variants for this row's component; the filter
+  // keeps ONLY variants that have a corresponding Inventory Master entry
+  // (i.e. that have a SAP material number). Variants without SAP entries
+  // are dropped per operator clarification — "do not show alternative
+  // materials that do not have SAP numbers". The variant whose VPN matches
+  // the main row's VPN is also skipped to avoid showing the main as its own
+  // alt. The reuses _computeBomStockStatus.lookups (already computed for
+  // the main stock badge — no extra inventory-lookup cost).
   const renderRow = (row) => {
     const realIdx = bom.indexOf(row);
-    return `
+    const mainRowHtml = `
       <tr class="${rowClass(row.sapStatus)}">
         <td>${esc(row.line_no || String(realIdx+1))}</td>
         <td>${esc(row.description || '')}</td>
-        <td class="mono">${esc(row.part_number || '')}</td>
-        <td class="mono">${esc(row.sap_material || '')}</td>
-        <td style="text-align:right">${esc(row.qty || '')}</td>
-        <td style="text-align:right">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
+        <td class="mono" style="text-align:center">${esc(row.part_number || '')}</td>
+        <td class="mono" style="text-align:center">${esc(row.sap_material || '')}</td>
+        <td style="text-align:center">${esc(row.qty || '')}</td>
+        <td style="text-align:center">${row.unit_cost ? fmtCost(parseFloat(row.unit_cost)*(parseFloat(row.qty)||1)) : '—'}</td>
         <td style="text-align:center">${_stockBadgeFor(row, realIdx)}</td>
-        <td>
+        <td style="text-align:center">
           <select class="gf-sel" style="font-size:10px;padding:2px 5px" onchange="updateBomStatus('${id}',${realIdx},this.value)">
             ${statusOpts(row.sapStatus)}
           </select>
         </td>
         <td><input class="inline-inp" value="${esc(row.notes||'')}" placeholder="Notes…" onchange="updateBomNote('${id}',${realIdx},this.value)"></td>
       </tr>`;
+    // v8.10 FIX-5.1 — append italic alt sub-rows for each Snapshot variant
+    // that has a real SAP entry in Inventory Master.
+    let altRowsHtml = '';
+    const _status = _computeBomStockStatus(id, row);
+    if (_status && Array.isArray(_status.lookups) && _status.lookups.length > 0) {
+      const _mainVpnNorm = _normVPN(row.part_number);
+      _status.lookups.forEach(l => {
+        if (!l.entry)                              return;  // no SAP match → skip per operator
+        if (!l.variant)                            return;
+        if (l.variant.vpnNorm === _mainVpnNorm)    return;  // same as main row → skip
+        const v = l.variant;
+        const e = l.entry;
+        const oh = e.tot_qty_oh || 0;
+        const po = e.open_po    || 0;
+        const stockTint = oh > 0 ? 'var(--green)' : (po > 0 ? 'var(--gold)' : 'var(--faint)');
+        const genLbl    = `${v.type} ${String(v.generation).padStart(2,'0')}${v.isCurrent ? ' (current)' : ''}`;
+        altRowsHtml += `
+        <tr style="font-style:italic;color:var(--muted);background:rgba(91,156,246,0.04)">
+          <td style="padding-left:24px;font-size:10px;color:var(--faint)">↳ alt</td>
+          <td style="font-size:11px"><span style="color:var(--blue);font-weight:600;font-style:normal">${esc(genLbl)}</span>${e.description ? ' — ' + esc(e.description) : ''}</td>
+          <td class="mono" style="text-align:center;font-size:11px">${esc(v.vpn)}</td>
+          <td class="mono" style="text-align:center;font-size:11px">${esc(e.material_raw || '')}</td>
+          <td style="text-align:center;font-size:10px;color:var(--faint)">—</td>
+          <td style="text-align:center;font-size:10px;color:var(--faint)">—</td>
+          <td style="text-align:center;font-size:10px;color:${stockTint};font-style:normal">${oh}OH · ${po}PO</td>
+          <td style="text-align:center;font-size:10px;color:var(--faint)">—</td>
+          <td style="font-size:10px;color:var(--faint)">${e.onhand_loc ? 'loc: ' + esc(e.onhand_loc) : ''}</td>
+        </tr>`;
+      });
+    }
+    return mainRowHtml + altRowsHtml;
   };
 
   // Renders one component group: outer summary row + inner expandable rows table.
@@ -2078,10 +2124,10 @@ function renderMaterials(id) {
           <table class="dt" style="margin:0">
             <thead><tr>
               <th>Line</th><th style="min-width:160px">Description</th>
-              <th>Part No. (VPN)</th><th>SAP Material No.</th>
-              <th>Qty</th><th>Line Cost</th>
-              <th title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
-              <th>SAP Status</th><th style="min-width:120px">Notes</th>
+              <th style="text-align:center">Part No. (VPN)</th><th style="text-align:center">SAP Material No.</th>
+              <th style="text-align:center">Qty</th><th style="text-align:center">Line Cost</th>
+              <th style="text-align:center" title="Stock status from Inventory Master + Component Snapshot cross-reference. Click any badge for detail.">Stock</th>
+              <th style="text-align:center">SAP Status</th><th style="min-width:120px">Notes</th>
             </tr></thead>
             <tbody>${visibleRows.map(renderRow).join('') || '<tr><td colspan="9" style="padding:14px;color:var(--faint);font-style:italic;text-align:center">No rows match the current filter</td></tr>'}</tbody>
           </table>
