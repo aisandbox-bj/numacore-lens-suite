@@ -4420,17 +4420,64 @@ function renderIdlingPreview() {
   const wb    = idlingState.workbook;
   const fleet = idlingState.fleetJSON;
   if (!wb || !fleet) { alert('Load a fleet JSON and an XLSX first.'); return; }
-  const units = (fleet.masterData && fleet.masterData.units) || [];
-  if (!units.length) { alert('Loaded JSON has no masterData.units[] — nothing to match against.'); return; }
 
-  // Build unit-lookup keyed by floc (primary) and sn_prefix (fallback).
+  // v8.6 FIX-2 (2026-05-13 late evening) — schema-aware lookup. The original
+  // v8.6 only supported V5 (masterData.units[]). Operator still works with
+  // V4 Flat files for some clients ("I am still using a V4 data schema doc")
+  // and the original strict check rejected them outright. V4 Flat has no
+  // units[] slice — units are derived from unique c.unit values on the root
+  // components[] array. Build synthetic unit objects from V4 components, with
+  // a hidden _v4Components reference so applyIdlingToJSON can write to every
+  // component on the matched unit (mirrors v8.3 FIX-2 util_rate per-component
+  // pattern for V4). Lens v4.3.5 FIX-1 reads idle back from V4 components by
+  // first-non-null per field across the unit's components.
+  const v5Units      = (fleet.masterData && Array.isArray(fleet.masterData.units)) ? fleet.masterData.units : [];
+  const v4Components = Array.isArray(fleet.components) ? fleet.components : [];
+  const isV5         = v5Units.length > 0;
+  const isV4Flat     = !isV5 && v4Components.length > 0;
+  if (!isV5 && !isV4Flat) {
+    alert('Loaded JSON has no usable unit data — neither masterData.units[] (V5) nor root components[] (V4 Flat).');
+    return;
+  }
+
+  // Build unit-lookup keyed by floc (primary) and sn (fallback). For V4 Flat
+  // each "unit" in the lookup is a synthetic object carrying a hidden
+  // _v4Components reference for the apply step.
   const flocLookup = {};
   const snLookup   = {};
-  units.forEach(function(u) {
-    if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
-    if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
-    if (u.sn_prefix) snLookup[_idlingNormKey(u.sn_prefix)] = u;
-  });
+  if (isV5) {
+    v5Units.forEach(function(u) {
+      if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
+      if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
+      if (u.sn_prefix) snLookup[_idlingNormKey(u.sn_prefix)] = u;
+    });
+  } else if (isV4Flat) {
+    v4Components.forEach(function(c) {
+      if (!c) return;
+      var flocStr = c.unit_floc || c.unit || c.unit_id || '';
+      var k       = _idlingNormKey(flocStr);
+      if (!k) return;
+      if (!flocLookup[k]) {
+        flocLookup[k] = {
+          id:            c.unit || c.unit_id || flocStr,
+          floc:          flocStr,
+          model:         c.model || '',
+          sn_prefix:     c.sn || c.serial_number || '',
+          idle_pct_life: (typeof c.idle_pct_life === 'number' && isFinite(c.idle_pct_life)) ? c.idle_pct_life : null,
+          idle_pct_3mo:  (typeof c.idle_pct_3mo  === 'number' && isFinite(c.idle_pct_3mo))  ? c.idle_pct_3mo  : null,
+          _v4Schema:     true,
+          _v4Components: [c],
+        };
+      } else {
+        flocLookup[k]._v4Components.push(c);
+        // First non-null wins for existing idle values across components.
+        if (flocLookup[k].idle_pct_life == null && typeof c.idle_pct_life === 'number' && isFinite(c.idle_pct_life)) flocLookup[k].idle_pct_life = c.idle_pct_life;
+        if (flocLookup[k].idle_pct_3mo  == null && typeof c.idle_pct_3mo  === 'number' && isFinite(c.idle_pct_3mo))  flocLookup[k].idle_pct_3mo  = c.idle_pct_3mo;
+      }
+      var snStr = c.sn || c.serial_number || '';
+      if (snStr) snLookup[_idlingNormKey(snStr)] = flocLookup[k];
+    });
+  }
 
   const stats          = { matched: 0, unmatched: 0, noData: 0, perSheet: {} };
   const writes         = [];     // [{unitKey, field, value, sourceSheet}]
@@ -4551,13 +4598,14 @@ function renderIdlingPreview() {
     if (w.field === 'idle_pct_life') byUnit[w.unitKey].lifeNew = w.value;
     if (w.field === 'idle_pct_3mo')  byUnit[w.unitKey].mo3New  = w.value;
   });
-  // Old values from the loaded JSON
-  units.forEach(function(u) {
-    const k = _idlingNormKey(u.floc || u.id);
-    if (byUnit[k]) {
-      byUnit[k].lifeOld = (typeof u.idle_pct_life === 'number') ? u.idle_pct_life : null;
-      byUnit[k].mo3Old  = (typeof u.idle_pct_3mo  === 'number') ? u.idle_pct_3mo  : null;
-    }
+  // Old values — iterate the lookup itself (which holds both V5 unit refs and
+  // V4 synthetic units, each with idle_pct_life / idle_pct_3mo populated).
+  // v8.6 FIX-2: replaces the old units.forEach which assumed V5.
+  Object.keys(flocLookup).forEach(function(k) {
+    if (!byUnit[k]) return;
+    var u = flocLookup[k];
+    byUnit[k].lifeOld = (typeof u.idle_pct_life === 'number') ? u.idle_pct_life : null;
+    byUnit[k].mo3Old  = (typeof u.idle_pct_3mo  === 'number') ? u.idle_pct_3mo  : null;
   });
   let pv = '<table style="width:100%;font-size:11px;border-collapse:collapse">' +
     '<thead style="position:sticky;top:0;background:#1a1a1a"><tr>' +
@@ -4593,23 +4641,52 @@ function applyIdlingToJSON() {
   }
 
   // Clone the JSON to avoid mutating the loaded reference.
-  const fleet = JSON.parse(JSON.stringify(idlingState.fleetJSON));
-  const units = (fleet.masterData && fleet.masterData.units) || [];
-
-  // Build the lookup again on the CLONED tree (different object references after JSON.parse).
-  const flocLookup = {};
-  units.forEach(function(u) {
-    if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
-    if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
-  });
+  const fleet        = JSON.parse(JSON.stringify(idlingState.fleetJSON));
+  // v8.6 FIX-2 — schema-aware write path. V5 writes to masterData.units[].
+  // V4 Flat writes idle field onto EVERY component on the matched unit
+  // (mirrors v8.3 FIX-2 util_rate per-component pattern). Lens v4.3.5 FIX-1
+  // reads back via first-non-null aggregation across the unit's components.
+  const v5Units      = (fleet.masterData && Array.isArray(fleet.masterData.units)) ? fleet.masterData.units : [];
+  const v4Components = Array.isArray(fleet.components) ? fleet.components : [];
+  const isV5         = v5Units.length > 0;
+  const isV4Flat     = !isV5 && v4Components.length > 0;
+  const schemaLabel  = isV5 ? 'V5 (masterData.units[])' : 'V4 Flat (per-component on root components[])';
 
   let written = 0;
-  preview.writes.forEach(function(w) {
-    const u = flocLookup[w.unitKey];
-    if (!u) return;  // shouldn't happen — we matched it in preview
-    u[w.field] = w.value;
-    written++;
-  });
+
+  if (isV5) {
+    // Build the lookup again on the CLONED tree (different object references after JSON.parse).
+    const flocLookup = {};
+    v5Units.forEach(function(u) {
+      if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
+      if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
+    });
+    preview.writes.forEach(function(w) {
+      const u = flocLookup[w.unitKey];
+      if (!u) return;  // shouldn't happen — we matched it in preview
+      u[w.field] = w.value;
+      written++;
+    });
+  } else if (isV4Flat) {
+    // V4 Flat: build a unit-key → components[] lookup on the cloned tree, then
+    // write the idle field onto each component for the matched unit. One
+    // "write" counts as one (unit, field) pair regardless of how many components
+    // it touches — keeps the operator-facing count meaningful.
+    const compsByUnit = {};
+    v4Components.forEach(function(c) {
+      if (!c) return;
+      var k = _idlingNormKey(c.unit_floc || c.unit || c.unit_id || '');
+      if (!k) return;
+      if (!compsByUnit[k]) compsByUnit[k] = [];
+      compsByUnit[k].push(c);
+    });
+    preview.writes.forEach(function(w) {
+      const arr = compsByUnit[w.unitKey];
+      if (!arr || !arr.length) return;
+      arr.forEach(function(c) { c[w.field] = w.value; });
+      written++;
+    });
+  }
 
   // Stamp meta with the import note (append, don't replace).
   fleet.meta = fleet.meta || {};
@@ -4617,7 +4694,7 @@ function applyIdlingToJSON() {
   const dateStr = new Date().toISOString().split('T')[0];
   fleet.meta.notes = (fleet.meta.notes || '') +
     (fleet.meta.notes ? '\n' : '') +
-    'Idling import via Intake v8.6 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX');
+    'Idling import via Intake v8.6 FIX-2 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
 
   // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
   const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');

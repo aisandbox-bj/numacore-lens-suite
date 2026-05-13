@@ -2518,17 +2518,49 @@ function _computeUnitUtilPct(comps) {
 // destructure-with-fallback at every call site.
 function _lookupUnitMeta(unitDisplay) {
   if (!lensRawData) return {};
+  var key = String(unitDisplay || '').toUpperCase();
+  // V5 path: masterData.units[]
   var unitsArr = (lensRawData.masterData && Array.isArray(lensRawData.masterData.units))
     ? lensRawData.masterData.units : [];
-  if (!unitsArr.length) return {};
-  var key = String(unitDisplay || '').toUpperCase();
-  var found = null;
   for (var i = 0; i < unitsArr.length; i++) {
     var u = unitsArr[i];
     var uid = String(u.id || u.floc || u.unit_id || '').toUpperCase();
-    if (uid === key) { found = u; break; }
+    if (uid === key) return u;
   }
-  return found || {};
+  // v4.3.5 FIX-1 (2026-05-13 late evening) — V4 Flat fallback. Operator still
+  // works with V4 Flat files for some clients. V4 Flat has no units[] slice;
+  // unit metadata is derived from the root components[] array. Intake v8.6
+  // FIX-2 writes idle_pct_life / idle_pct_3mo onto EVERY component on the
+  // matched unit (per-component override, mirrors v8.3 FIX-2 util_rate pattern).
+  // Here we aggregate first-non-null per field across the unit's components.
+  var v4Components = Array.isArray(lensRawData.components) ? lensRawData.components : [];
+  if (v4Components.length) {
+    var idleLife = null, idle3Mo = null, model = null, floc = null, snVal = null, found = false;
+    for (var j = 0; j < v4Components.length; j++) {
+      var c = v4Components[j];
+      if (!c) continue;
+      var ck = String(c.unit_floc || c.unit || c.unit_id || '').toUpperCase();
+      if (ck !== key) continue;
+      found = true;
+      if (idleLife === null && typeof c.idle_pct_life === 'number' && isFinite(c.idle_pct_life)) idleLife = c.idle_pct_life;
+      if (idle3Mo  === null && typeof c.idle_pct_3mo  === 'number' && isFinite(c.idle_pct_3mo))  idle3Mo  = c.idle_pct_3mo;
+      if (!model) model = c.model || null;
+      if (!floc)  floc  = c.unit_floc || c.unit || c.unit_id || null;
+      if (!snVal) snVal = c.sn || c.serial_number || null;
+      if (idleLife !== null && idle3Mo !== null && model && floc) break;
+    }
+    if (found) {
+      return {
+        id:            unitDisplay,
+        floc:          floc,
+        model:         model,
+        sn_prefix:     snVal,
+        idle_pct_life: idleLife,
+        idle_pct_3mo:  idle3Mo,
+      };
+    }
+  }
+  return {};
 }
 
 // v4.3.3 (Ship 4) — Active Projects count tile. Spec preference (from operator's
