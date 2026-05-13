@@ -2148,10 +2148,25 @@ function renderMaterials(id) {
     const _status = _computeBomStockStatus(id, row);
     if (_status && Array.isArray(_status.lookups) && _status.lookups.length > 0) {
       const _mainVpnNorm = _normVPN(row.part_number);
+      const _mainSapNorm = _normVPN(row.sap_material);
       _status.lookups.forEach(l => {
         if (!l.entry)                              return;  // no SAP match → skip per operator
         if (!l.variant)                            return;
-        if (l.variant.vpnNorm === _mainVpnNorm)    return;  // same as main row → skip
+        // v8.10 FIX-7.1 (2026-05-13) — When a BOM row has no Component
+        // Snapshot match, _computeBomStockStatus falls back to a direct
+        // sap_material lookup and synthesises a variant with type='DIRECT'.
+        // That synthetic variant is the SAME material as the main row (just
+        // resolved via the SAP key instead of via snapshot variants) — it's
+        // NOT an alternative. Operator-reported V3 review slide 1: BOLT /
+        // O-RING / etc. (parts not in Component Snapshot) were showing one
+        // "DIRECT 04 (current)" sub-row with VPN = SAP material — confusing.
+        // Skip DIRECT variants entirely. Also skip when variant matches the
+        // main row's SAP material (covers any edge case where a real snapshot
+        // variant happens to be the same SAP as the main row).
+        if (l.variant.type === 'DIRECT')           return;
+        if (l.variant.vpnNorm === _mainVpnNorm)    return;  // same as main row VPN → skip
+        if (_mainSapNorm && l.entry.material_raw &&
+            _normVPN(l.entry.material_raw) === _mainSapNorm) return;  // same SAP material → skip
         const v = l.variant;
         const e = l.entry;
         const oh = e.tot_qty_oh || 0;
@@ -2839,8 +2854,16 @@ function renderWorkOrders(id) {
     .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
   // v8.10 FIX-4.1 (2026-05-13) — Advanced description filter rules.
   // Each rule is {op, value}. Rules are AND-combined (row must pass every rule).
+  // v8.10 FIX-7.2 (2026-05-13) — Keep empty-value rules in the array so they
+  // render as empty chips in _renderRuleChips (operator-reported V3 review
+  // slide 2: clicking "+ Add filter" added a rule to the config but the
+  // empty-value rule was filtered out here before render, so no chip ever
+  // appeared — looked like the button just triggered a save with no effect).
+  // The filter-time matcher _descriptionMatchesFilter already short-circuits
+  // empty values as no-ops, so empty rules don't affect filtering output —
+  // they just need to render so the operator can type a value into them.
   const _descFilters = Array.isArray(deploy.config?.iw39DescriptionFilters)
-    ? deploy.config.iw39DescriptionFilters.filter(r => r && r.value)
+    ? deploy.config.iw39DescriptionFilters.filter(r => r && typeof r === 'object')
     : [];
   const _statusToken = s => String(s || '').trim().split(/[\s,;|/]+/)[0].toUpperCase();
   const _OPEN_STATUSES = ['REL', 'CRTD'];
