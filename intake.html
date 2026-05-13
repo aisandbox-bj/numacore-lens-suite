@@ -1220,11 +1220,15 @@ function onDrop(e, target) {
   e.preventDefault();
   getDropZone(target).classList.remove('dragover');
   if (target === 'conmonPDF') { const files = Array.from(e.dataTransfer.files); if (files.length) loadConmonPdfs(files); return; }
-  // v8.6 (Ship 5) — Idling tab file routing
-  if (target === 'idlingJSON') { loadIdlingFleetJSON(file); return; }
-  if (target === 'idlingXLSX') { loadIdlingXLSX(file); return; }
   const file = e.dataTransfer.files[0];
   if (!file) return;
+  // v8.6 FIX-1 — moved idling branches to AFTER `const file` declaration.
+  // Pre-FIX-1 they sat above the const, triggering TDZ ReferenceError on every
+  // drop into the Idling JSON / XLSX zones — drag-drop was effectively broken
+  // even though the click-to-browse path still worked (separate file-input
+  // onchange handler). Caught by operator live-test 2026-05-13 late evening.
+  if (target === 'idlingJSON') { loadIdlingFleetJSON(file); return; }
+  if (target === 'idlingXLSX') { loadIdlingXLSX(file); return; }
   if (target === 'update')     { loadUpdateFile(file); return; }
   if (target === 'json')       { loadJSONFile(file); return; }
   if (target === 'conmonJSON') { loadConmonFleetJSON(file); return; }
