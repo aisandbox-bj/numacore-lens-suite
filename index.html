@@ -617,7 +617,11 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
   border-radius:3px;font-size:0.63rem;font-weight:700;font-family:'Courier New',monospace;
   cursor:default;position:relative;transition:filter 0.15s;
 }
-.hm-cell:hover { filter:brightness(1.45);z-index:5; }
+/* v4.3.2 item 2 — Lift hovered cell's stacking context above the sticky
+   headers (.hm-unit-header z-index:20, .hm-corner z-index:30) so .hm-cell-tip
+   isn't clipped under field/row headers. Previously z-index:5; tooltip itself
+   already z-index:200 but was stuck inside the cell's stacking context. */
+.hm-cell:hover { filter:brightness(1.45);z-index:100; }
 .hm-cell:hover .hm-cell-tip { opacity:1;pointer-events:all; }
 .hc-green  { background:rgba(46,125,50,0.52);  color:#81c784;border:1px solid rgba(76,175,80,0.28); }
 .hc-yellow { background:rgba(245,127,23,0.42); color:#ffd54f;border:1px solid rgba(255,193,7,0.28); }
@@ -1541,7 +1545,9 @@ body { background: #030f0c; }
   min-width: 52px; cursor: default; position: relative; border-radius: 3px;
   transition: filter 0.15s;
 }
-.hm-cell:hover { filter: brightness(1.45); z-index: 5; }
+/* v4.3.2 item 2 — Same z-index lift as above (this is the duplicate-overridden
+   ruleset that wins via CSS cascade). Keeping both in sync defensively. */
+.hm-cell:hover { filter: brightness(1.45); z-index: 100; }
 .hm-cell:hover .hm-cell-tip { opacity: 1; pointer-events: all; }
 .hc-green  { background: rgba(76,175,80,0.25);  color: #81c784; }
 .hc-yellow { background: rgba(255,193,7,0.25);  color: #ffd54f; }
@@ -2051,7 +2057,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3.1';
+const VERSION = '4.3.2';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2613,14 +2619,19 @@ function renderConMonTile(unit_id) {
       // Flat indicator inherits the current severity colour (spec C1: "matches current severity colour").
       trendHtml = '<span class="cm-trend-arrow cm-trend-flat" style="color:' + colour + '" title="Stable (within dead-zone over last 4 samples)">&#x2014;</span>';
     }
+    // v4.3.2 item 3 — Reposition trend arrow from BEFORE the component name
+    // (where it was getting "hidden in the details" per operator) to AFTER the
+    // row-info block. .cm-row-info has flex:1, so the trend arrow now sits in
+    // a fixed-width column just before the chevron — all arrows align vertically
+    // across rows regardless of component-name length.
     html +=
       '<div class="cm-sample-row" data-gk="' + encodeURIComponent(gk) + '">' +
         '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
-        trendHtml +
         '<div class="cm-row-info">' +
           '<span class="cm-row-target">' + target + loc + '</span>' +
           '<span class="cm-row-meta">' + meta + '</span>' +
         '</div>' +
+        trendHtml +
         '<span class="cm-row-arrow">›</span>' +
       '</div>';
   });
@@ -6033,15 +6044,14 @@ function renderConMonHeatmap(fleet, model) {
         var stale   = isSampleStale(sample) ? ' · STALE' : '';
         var dateStr = sample.sample_date || '—';
         td.className = cls + ' hm-cm-clickable';  // v4.3.1 D1
-        // FIX-1: um.unit, label, dateStr, sample.scope JSON-derived. band is from a
-        // closed enum but escape defensively for parity.
-        td.innerHTML = rank +
-          '<div class="hm-cell-tip"><strong>' + esc(um.unit) + ' · ' + esc(label) + '</strong>' +
-          '<span class="tip-line">&#x1F4C5; ' + esc(dateStr) + esc(stale) + '</span>' +
-          '<span class="tip-line">&#x1F4CA; ' + esc(band.replace('_', ' ').toUpperCase()) + ' (rank ' + rank + ')</span>' +
-          '<span class="tip-line">&#x1F50D; Scope: ' + esc(sample.scope || '—') + '</span>' +
-          '<span class="tip-line" style="opacity:0.7;font-style:italic;">click for sample history</span>' +
-          '</div>';
+        // v4.3.2 item 1 — Cut the ConMon heatmap cell hover-bubble entirely
+        // (operator: it's noise once the cell is clickable). The rank value
+        // stays in the cell; click behaviour from D1 stays. Discoverability is
+        // carried by .hm-cm-clickable's cursor:pointer + brightness hover.
+        // Native browser title provides a minimal accessibility hint without
+        // the heavy custom tooltip.
+        td.innerHTML = rank;
+        td.title = um.unit + ' · ' + label + '  —  click for sample history';
         // v4.3.1 D1 — Heatmap cell click opens the SAME ConMon sample popup as the
         // unit-detail row click. Single source-of-truth function (openConMonHistory),
         // two entry points. Find all samples for THIS (unit, target+location) group
@@ -6138,9 +6148,12 @@ function renderHeatmapBoth(fleet, model) {
 .cm-row-arrow { font-size:0.85rem; color:#3dc9a0; opacity:0.4; flex-shrink:0; transition:opacity 0.15s; }
 .cm-sample-row:hover .cm-row-arrow { opacity:1; }
 /* v4.3.1 C1 — per-row trend arrow. Up=red (deteriorating), Down=green (improving),
-   Flat=current severity colour (set inline). Sits between the band-pill and the
-   row-info text. Hidden via 'unknown' token = no markup emitted. */
-.cm-trend-arrow { font-size:0.72rem; font-weight:700; flex-shrink:0; line-height:1; min-width:11px; text-align:center; }
+   Flat=current severity colour (set inline). Hidden via 'unknown' token = no markup emitted.
+   v4.3.2 item 3 — Repositioned in markup from before the band-pill→row-info gap to
+   AFTER row-info (just before the chevron). Bumped min-width 11 → 14 and added a
+   right margin so the arrow column sits a touch away from the chevron and aligns
+   vertically across rows regardless of component-name length. */
+.cm-trend-arrow { font-size:0.78rem; font-weight:700; flex-shrink:0; line-height:1; min-width:14px; text-align:center; margin-right:4px; }
 .cm-trend-up   { color:#e24b4a; }
 .cm-trend-down { color:#5dcaa5; }
 .cm-trend-flat { opacity:0.75; }
