@@ -291,6 +291,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   <button class="mode-btn active" onclick="setMode('build')" id="modeBtn-build">⊕ BUILD</button>
   <button class="mode-btn" onclick="setMode('update')" id="modeBtn-update">↻ UPDATE</button>
   <button class="mode-btn" onclick="setMode('conmon')" id="modeBtn-conmon">⊙ CONMON</button>
+  <button class="mode-btn" onclick="setMode('idling')" id="modeBtn-idling">⊘ IDLING</button>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ BUILD MODE -->
@@ -723,6 +724,68 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 </div><!-- /mode-conmon -->
 
+<!-- ═══════════════════════════════════════════════════════════════
+     v8.6 (Ship 5) — IDLING tab: Fleet Utilization XLSX → masterData.units[]
+     Mirrors the CONMON 4-card flow: Load JSON → Drop XLSX → Assign sheets →
+     Preview & Apply. Operator picks per-sheet target field (idle_pct_life,
+     idle_pct_3mo, or ignore). Auto-defaults: sheet "Max" → life, "3m" → 3mo.
+     ═══════════════════════════════════════════════════════════════ -->
+<div id="mode-idling" class="panel" style="display:none">
+
+  <div class="card">
+    <div class="card-title">Idling % Ingestion — Fleet Utilization XLSX</div>
+    <div class="card-sub">Drop a multi-sheet Fleet Utilization XLSX export (Cat MineStar / Vitals or equivalent). Each sheet represents a different time window — you pick which sheet feeds <code>idle_pct_life</code> and which feeds <code>idle_pct_3mo</code> on each unit's <code>masterData.units[]</code> entry. Lens v4.3.4 will then colour-code the Idle % tiles green / orange / red.</div>
+  </div>
+
+  <!-- STEP 1: Load Fleet JSON -->
+  <div class="card">
+    <div class="card-title">Step 1 — Load Fleet JSON</div>
+    <div class="card-sub">Load the existing fleet JSON that the idle values will be written into.</div>
+    <div class="drop-zone" id="dropZoneIdlingJSON" onclick="document.getElementById('fileInputIdlingJSON').click()" ondragover="onDragOver(event,'idlingJSON')" ondragleave="onDragLeave(event,'idlingJSON')" ondrop="onDrop(event,'idlingJSON')">
+      <div class="drop-icon">📄</div>
+      <p>Drop fleet.json here, or <span>browse for file</span></p>
+    </div>
+    <input type="file" id="fileInputIdlingJSON" accept=".json" style="display:none" onchange="onFileSelectIdlingJSON(event)">
+    <div id="idlingJsonStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
+  </div>
+
+  <!-- STEP 2: Drop XLSX -->
+  <div class="card" id="idlingStep2Card" style="opacity:0.5;pointer-events:none">
+    <div class="card-title">Step 2 — Drop Fleet Utilization XLSX</div>
+    <div class="card-sub">From your telematics export. Multi-sheet workbook expected (one sheet per time window, e.g. "Max" / "3m" / "1y"). Each sheet must have a header row with at minimum: <code>Asset ID</code>, <code>Asset Serial Number</code>, and <code>Idle %</code> columns. The <code>Callouts</code> column is read if present.</div>
+    <div class="drop-zone" id="dropZoneIdlingXLSX" onclick="document.getElementById('fileInputIdlingXLSX').click()" ondragover="onDragOver(event,'idlingXLSX')" ondragleave="onDragLeave(event,'idlingXLSX')" ondrop="onDrop(event,'idlingXLSX')">
+      <div class="drop-icon">⊘</div>
+      <p>Drop Fleet Utilization XLSX here, or <span>browse for file</span></p>
+    </div>
+    <input type="file" id="fileInputIdlingXLSX" accept=".xlsx,.xls" style="display:none" onchange="onFileSelectIdlingXLSX(event)">
+    <div id="idlingXlsxStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
+  </div>
+
+  <!-- STEP 3: Per-sheet target mapping -->
+  <div class="card" id="idlingStep3Card" style="display:none">
+    <div class="card-title">Step 3 — Assign Sheets to Target Fields</div>
+    <div class="card-sub">Each sheet in the XLSX maps to a target field on each unit. Auto-defaults: sheets named "Max" → Lifetime (<code>idle_pct_life</code>); "3m" → 3-month (<code>idle_pct_3mo</code>); "1y" or other → Ignore (change the dropdown to use a 1-year sheet for Lifetime instead).</div>
+    <table class="idling-map-table" id="idlingMappingTable"></table>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-gold" id="idlingPreviewBtn" onclick="renderIdlingPreview()">⊙ Preview Apply</button>
+    </div>
+  </div>
+
+  <!-- STEP 4: Preview + Apply -->
+  <div class="card" id="idlingStep4Card" style="display:none">
+    <div class="card-title">Step 4 — Preview & Apply</div>
+    <div class="card-sub">Review the match summary per sheet, expand the unmatched list if any units don't line up, then Apply to write the values into the JSON and download.</div>
+    <div class="stat-row" id="idlingStats"></div>
+    <div id="idlingUnmatchedBox"></div>
+    <div id="idlingPreviewTable" style="margin-top:10px;max-height:340px;overflow-y:auto"></div>
+    <div class="btn-row" style="margin-top:14px">
+      <button class="btn btn-gold" id="idlingApplyBtn" onclick="applyIdlingToJSON()">⬇ Apply &amp; Download Updated Fleet JSON</button>
+      <button class="btn btn-outline btn-sm" onclick="clearIdling()">↺ Clear / Start Over</button>
+    </div>
+  </div>
+
+</div><!-- /mode-idling -->
+
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -740,7 +803,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.5';
+const VERSION = '8.6';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -1084,9 +1147,12 @@ function setMode(mode) {
   document.getElementById('mode-build').style.display  = mode === 'build'  ? 'block' : 'none';
   document.getElementById('mode-update').style.display = mode === 'update' ? 'block' : 'none';
   document.getElementById('mode-conmon').style.display = mode === 'conmon' ? 'block' : 'none';
+  // v8.6 (Ship 5) — Idling tab for Fleet Utilization XLSX ingestion.
+  document.getElementById('mode-idling').style.display = mode === 'idling' ? 'block' : 'none';
   document.getElementById('modeBtn-build').classList.toggle('active',  mode === 'build');
   document.getElementById('modeBtn-update').classList.toggle('active', mode === 'update');
   document.getElementById('modeBtn-conmon').classList.toggle('active', mode === 'conmon');
+  document.getElementById('modeBtn-idling').classList.toggle('active', mode === 'idling');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1144,6 +1210,9 @@ function getDropZone(target) {
   if (target === 'json')       return document.getElementById('dropZoneJSON');
   if (target === 'conmonJSON') return document.getElementById('dropZoneConmonJSON');
   if (target === 'conmonPDF')  return document.getElementById('dropZoneConmonPDF');
+  // v8.6 (Ship 5) — Idling tab drop zones
+  if (target === 'idlingJSON') return document.getElementById('dropZoneIdlingJSON');
+  if (target === 'idlingXLSX') return document.getElementById('dropZoneIdlingXLSX');
   return document.getElementById('dropZone');
 }
 
@@ -1151,6 +1220,9 @@ function onDrop(e, target) {
   e.preventDefault();
   getDropZone(target).classList.remove('dragover');
   if (target === 'conmonPDF') { const files = Array.from(e.dataTransfer.files); if (files.length) loadConmonPdfs(files); return; }
+  // v8.6 (Ship 5) — Idling tab file routing
+  if (target === 'idlingJSON') { loadIdlingFleetJSON(file); return; }
+  if (target === 'idlingXLSX') { loadIdlingXLSX(file); return; }
   const file = e.dataTransfer.files[0];
   if (!file) return;
   if (target === 'update')     { loadUpdateFile(file); return; }
@@ -4226,6 +4298,368 @@ function extractConmonFields(full, p1, filename) {
 
 function onFileSelectConmonJSON(e) { if (e.target.files[0]) loadConmonFleetJSON(e.target.files[0]); }
 function onFileSelectConmonPDF(e)  { if (e.target.files.length) loadConmonPdfs(Array.from(e.target.files)); }
+
+// ═══════════════════════════════════════════════════════════════
+// v8.6 (Ship 5) — IDLING tab
+// Fleet Utilization XLSX → masterData.units[].idle_pct_life / idle_pct_3mo
+// Decision log (operator 2026-05-13 evening):
+//   - util_pct stays a render-time roll-up in Lens (no Intake field) — that's v8.5
+//   - idle_pct_life + idle_pct_3mo are the only stored idle fields
+//   - This tab is operator-flexible: pick which sheet feeds which field at apply time
+//   - "No data" = empty Idle % cell OR Callouts column contains
+//     Insufficient / Missing / Invalid keywords
+//   - Match Asset ID (XLSX col B) → unit.floc first, fall back to SN (col C)
+//     → unit.sn_prefix, both with non-alphanumerics stripped and uppercased
+// ═══════════════════════════════════════════════════════════════
+
+const IDLING_FATAL_CALLOUT_RX = /Insufficient|Missing|Invalid/i;
+
+const idlingState = {
+  fleetJSON:        null,     // parsed JSON object
+  fleetFilename:    null,     // for download suffix
+  workbook:         null,     // SheetJS workbook object
+  workbookFilename: null,
+  sheetTargets:    {},        // sheetName → 'idle_pct_life' | 'idle_pct_3mo' | 'ignore'
+  preview:          null,     // { stats, writes, unmatchedRows } from renderIdlingPreview
+};
+
+function onFileSelectIdlingJSON(e) { if (e.target.files[0]) loadIdlingFleetJSON(e.target.files[0]); }
+function onFileSelectIdlingXLSX(e) { if (e.target.files[0]) loadIdlingXLSX(e.target.files[0]); }
+
+function loadIdlingFleetJSON(file) {
+  const r = new FileReader();
+  r.onload = function(ev) {
+    try {
+      idlingState.fleetJSON     = JSON.parse(ev.target.result);
+      idlingState.fleetFilename = file.name;
+      const units = (idlingState.fleetJSON.masterData && idlingState.fleetJSON.masterData.units) || [];
+      document.getElementById('idlingJsonStatus').textContent =
+        '✓ Loaded: ' + file.name + ' · ' + units.length + ' units found in masterData.units[]';
+      const step2 = document.getElementById('idlingStep2Card');
+      step2.style.opacity = '1'; step2.style.pointerEvents = '';
+    } catch (err) {
+      document.getElementById('idlingJsonStatus').textContent = '✗ Could not parse JSON: ' + err.message;
+    }
+  };
+  r.readAsText(file);
+}
+
+function loadIdlingXLSX(file) {
+  const r = new FileReader();
+  r.onload = function(ev) {
+    try {
+      const data = new Uint8Array(ev.target.result);
+      idlingState.workbook         = XLSX.read(data, { type: 'array' });
+      idlingState.workbookFilename = file.name;
+      _idlingDetectAndRenderMapping();
+      document.getElementById('idlingXlsxStatus').textContent =
+        '✓ Loaded: ' + file.name + ' · ' + idlingState.workbook.SheetNames.length + ' sheet(s) detected';
+    } catch (err) {
+      document.getElementById('idlingXlsxStatus').textContent = '✗ Could not read XLSX: ' + err.message;
+    }
+  };
+  r.readAsArrayBuffer(file);
+}
+
+function _idlingDetectAndRenderMapping() {
+  const wb = idlingState.workbook;
+  if (!wb) return;
+  idlingState.sheetTargets = {};
+  // Auto-default sheet name → target field.
+  wb.SheetNames.forEach(function(name) {
+    if      (/^max/i.test(name))                                           idlingState.sheetTargets[name] = 'idle_pct_life';
+    else if (/^3\s*m|^3-?month|^three\s*month|^3mo/i.test(name))           idlingState.sheetTargets[name] = 'idle_pct_3mo';
+    else                                                                    idlingState.sheetTargets[name] = 'ignore';
+  });
+
+  const tbl = document.getElementById('idlingMappingTable');
+  let html = '<thead><tr><th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Sheet name</th>' +
+             '<th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Rows</th>' +
+             '<th style="text-align:left;padding:6px 8px;color:var(--text3);font-size:11px">Target field</th></tr></thead><tbody>';
+  wb.SheetNames.forEach(function(name) {
+    const ws = wb.Sheets[name];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+    const dataRows = rows.length > 1 ? (rows.length - 1) : 0;
+    const safeName = name.replace(/'/g, "\\'");
+    html += '<tr>' +
+      '<td style="padding:6px 8px;color:var(--text);font-weight:600">' + esc(name) + '</td>' +
+      '<td style="padding:6px 8px;color:var(--text2)">' + dataRows + '</td>' +
+      '<td style="padding:6px 8px">' +
+        '<select style="background:#1a1a1a;color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:12px" onchange="_idlingSetSheetTarget(\'' + safeName + '\', this.value)">' +
+        '<option value="idle_pct_life"' + (idlingState.sheetTargets[name] === 'idle_pct_life' ? ' selected' : '') + '>Update idle_pct_life (Lifetime / Max / 1y)</option>' +
+        '<option value="idle_pct_3mo"'  + (idlingState.sheetTargets[name] === 'idle_pct_3mo'  ? ' selected' : '') + '>Update idle_pct_3mo (3-month)</option>' +
+        '<option value="ignore"'         + (idlingState.sheetTargets[name] === 'ignore'         ? ' selected' : '') + '>Ignore this sheet</option>' +
+        '</select>' +
+      '</td></tr>';
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+  document.getElementById('idlingStep3Card').style.display = '';
+  // Hide Step 4 until preview re-rendered
+  document.getElementById('idlingStep4Card').style.display = 'none';
+}
+
+function _idlingSetSheetTarget(sheet, value) {
+  idlingState.sheetTargets[sheet] = value;
+  // Invalidate any previous preview so the operator must re-preview before Apply.
+  document.getElementById('idlingStep4Card').style.display = 'none';
+  idlingState.preview = null;
+}
+
+// Normalisation for unit matching — uppercase, strip non-alphanumerics.
+// Handles "EX-401" vs "EX401" vs "ex 401" — all match the same key.
+function _idlingNormKey(s) {
+  return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function renderIdlingPreview() {
+  const wb    = idlingState.workbook;
+  const fleet = idlingState.fleetJSON;
+  if (!wb || !fleet) { alert('Load a fleet JSON and an XLSX first.'); return; }
+  const units = (fleet.masterData && fleet.masterData.units) || [];
+  if (!units.length) { alert('Loaded JSON has no masterData.units[] — nothing to match against.'); return; }
+
+  // Build unit-lookup keyed by floc (primary) and sn_prefix (fallback).
+  const flocLookup = {};
+  const snLookup   = {};
+  units.forEach(function(u) {
+    if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
+    if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
+    if (u.sn_prefix) snLookup[_idlingNormKey(u.sn_prefix)] = u;
+  });
+
+  const stats          = { matched: 0, unmatched: 0, noData: 0, perSheet: {} };
+  const writes         = [];     // [{unitKey, field, value, sourceSheet}]
+  const unmatchedRows  = [];
+
+  wb.SheetNames.forEach(function(sheetName) {
+    const target = idlingState.sheetTargets[sheetName];
+    if (target === 'ignore') return;
+    const ws   = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+    if (rows.length < 2) { stats.perSheet[sheetName] = { matched: 0, unmatched: 0, noData: 0, target: target }; return; }
+
+    // Detect columns by header name (case-insensitive). Tolerates column-order differences
+    // and silent column additions in future telematics exports.
+    const header = rows[0].map(function(h) { return String(h == null ? '' : h).trim().toLowerCase(); });
+    const colCallout = header.indexOf('callouts');
+    const colAssetId = header.indexOf('asset id');
+    const colSN      = header.indexOf('asset serial number');
+    const colIdle    = header.indexOf('idle %');
+
+    if (colAssetId < 0 || colIdle < 0) {
+      stats.perSheet[sheetName] = { matched: 0, unmatched: 0, noData: 0, target: target, error: 'Missing required columns (Asset ID and/or Idle %)' };
+      return;
+    }
+
+    const sheetStats = { matched: 0, unmatched: 0, noData: 0, target: target };
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      const assetId  = String(row[colAssetId] == null ? '' : row[colAssetId]).trim();
+      const sn       = colSN      >= 0 ? String(row[colSN]      == null ? '' : row[colSN]).trim()      : '';
+      const callout  = colCallout >= 0 ? String(row[colCallout] == null ? '' : row[colCallout]).trim() : '';
+      const idleRaw  = row[colIdle];
+      const idlePct  = (typeof idleRaw === 'number' && isFinite(idleRaw)) ? idleRaw : parseFloat(idleRaw);
+
+      // No-data per operator spec (b): empty Idle % OR fatal callout keyword.
+      if (!isFinite(idlePct) || IDLING_FATAL_CALLOUT_RX.test(callout)) {
+        sheetStats.noData++;
+        continue;
+      }
+
+      // Match: Asset ID → floc first, fallback SN → sn_prefix. Both normalised.
+      let unit = flocLookup[_idlingNormKey(assetId)];
+      if (!unit && sn) unit = snLookup[_idlingNormKey(sn)];
+      if (!unit) {
+        sheetStats.unmatched++;
+        unmatchedRows.push({ sheet: sheetName, assetId: assetId, sn: sn, idlePct: idlePct });
+        continue;
+      }
+
+      writes.push({
+        unitKey: _idlingNormKey(unit.floc || unit.id),
+        field:   target,
+        value:   Math.round(idlePct * 10) / 10,
+        sourceSheet: sheetName,
+        displayFloc: unit.floc || unit.id,
+        displaySN:   unit.sn_prefix || '',
+        displayModel: unit.model || '',
+      });
+      sheetStats.matched++;
+    }
+    stats.perSheet[sheetName] = sheetStats;
+    stats.matched   += sheetStats.matched;
+    stats.unmatched += sheetStats.unmatched;
+    stats.noData    += sheetStats.noData;
+  });
+
+  idlingState.preview = { stats: stats, writes: writes, unmatchedRows: unmatchedRows };
+
+  // ── Render Step 4 ────────────────────────────────────────────────
+  document.getElementById('idlingStep4Card').style.display = '';
+
+  // Stats row
+  const statsEl = document.getElementById('idlingStats');
+  let statsHtml = '';
+  Object.keys(stats.perSheet).forEach(function(sheet) {
+    const s = stats.perSheet[sheet];
+    const targetLbl = s.target === 'idle_pct_life' ? 'Lifetime' : s.target === 'idle_pct_3mo' ? '3-month' : 'Ignored';
+    if (s.error) {
+      statsHtml += '<div class="stat-pill"><div class="stat-num s-red">!</div><div class="stat-lbl">' + esc(sheet) + ' — ' + esc(s.error) + '</div></div>';
+      return;
+    }
+    statsHtml += '<div class="stat-pill"><div class="stat-num s-green">' + s.matched + '</div><div class="stat-lbl">' + esc(sheet) + ' → ' + targetLbl + ' matched</div></div>';
+    if (s.unmatched) statsHtml += '<div class="stat-pill"><div class="stat-num s-amber">' + s.unmatched + '</div><div class="stat-lbl">' + esc(sheet) + ' unmatched</div></div>';
+    if (s.noData)    statsHtml += '<div class="stat-pill"><div class="stat-num">'         + s.noData    + '</div><div class="stat-lbl">' + esc(sheet) + ' no data (skipped)</div></div>';
+  });
+  statsEl.innerHTML = statsHtml || '<div style="color:var(--text3);font-size:12px">No sheets selected for apply (all set to Ignore).</div>';
+
+  // Unmatched detail (collapsed by default)
+  const unmatchedEl = document.getElementById('idlingUnmatchedBox');
+  if (unmatchedRows.length) {
+    let h = '<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--text2);font-size:12px;padding:6px 0">' +
+      '⚠ ' + unmatchedRows.length + ' row(s) not matched to any unit in the JSON — click to expand</summary>' +
+      '<table style="width:100%;font-size:11px;margin-top:8px;border-collapse:collapse">' +
+      '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text3)">Sheet</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">Asset ID (XLSX)</th><th style="text-align:left;padding:4px 8px;color:var(--text3)">SN (XLSX)</th><th style="text-align:right;padding:4px 8px;color:var(--text3)">Idle %</th></tr></thead><tbody>';
+    unmatchedRows.slice(0, 80).forEach(function(u) {
+      h += '<tr><td style="padding:3px 8px">' + esc(u.sheet) + '</td><td style="padding:3px 8px">' + esc(u.assetId) + '</td><td style="padding:3px 8px">' + esc(u.sn) + '</td><td style="text-align:right;padding:3px 8px">' + u.idlePct.toFixed(1) + '%</td></tr>';
+    });
+    if (unmatchedRows.length > 80) {
+      h += '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:6px">… and ' + (unmatchedRows.length - 80) + ' more</td></tr>';
+    }
+    h += '</tbody></table></details>';
+    unmatchedEl.innerHTML = h;
+  } else {
+    unmatchedEl.innerHTML = '';
+  }
+
+  // Per-unit preview table — show new vs old values for each unit that will be updated.
+  const previewEl = document.getElementById('idlingPreviewTable');
+  const byUnit = {};
+  writes.forEach(function(w) {
+    if (!byUnit[w.unitKey]) {
+      byUnit[w.unitKey] = {
+        floc: w.displayFloc, sn: w.displaySN, model: w.displayModel,
+        lifeNew: null, mo3New: null,
+      };
+    }
+    if (w.field === 'idle_pct_life') byUnit[w.unitKey].lifeNew = w.value;
+    if (w.field === 'idle_pct_3mo')  byUnit[w.unitKey].mo3New  = w.value;
+  });
+  // Old values from the loaded JSON
+  units.forEach(function(u) {
+    const k = _idlingNormKey(u.floc || u.id);
+    if (byUnit[k]) {
+      byUnit[k].lifeOld = (typeof u.idle_pct_life === 'number') ? u.idle_pct_life : null;
+      byUnit[k].mo3Old  = (typeof u.idle_pct_3mo  === 'number') ? u.idle_pct_3mo  : null;
+    }
+  });
+  let pv = '<table style="width:100%;font-size:11px;border-collapse:collapse">' +
+    '<thead style="position:sticky;top:0;background:#1a1a1a"><tr>' +
+      '<th style="text-align:left;padding:6px 8px;color:var(--text3)">Unit FLOC</th>' +
+      '<th style="text-align:left;padding:6px 8px;color:var(--text3)">Model / SN</th>' +
+      '<th style="text-align:right;padding:6px 8px;color:var(--text3)">Idle % (life)</th>' +
+      '<th style="text-align:right;padding:6px 8px;color:var(--text3)">Idle % (3-month)</th>' +
+    '</tr></thead><tbody>';
+  Object.keys(byUnit).sort().forEach(function(k) {
+    const b = byUnit[k];
+    const lifeCell = b.lifeNew !== null
+      ? '<span>' + (b.lifeOld != null ? '<span style="color:var(--text3)">' + b.lifeOld.toFixed(1) + '%</span> → ' : '') + '<b style="color:var(--text)">' + b.lifeNew.toFixed(1) + '%</b></span>'
+      : (b.lifeOld != null ? '<span style="color:var(--text3)">' + b.lifeOld.toFixed(1) + '% (unchanged)</span>' : '<span style="color:var(--text3)">—</span>');
+    const mo3Cell  = b.mo3New !== null
+      ? '<span>' + (b.mo3Old != null ? '<span style="color:var(--text3)">' + b.mo3Old.toFixed(1) + '%</span> → ' : '') + '<b style="color:var(--text)">' + b.mo3New.toFixed(1) + '%</b></span>'
+      : (b.mo3Old != null ? '<span style="color:var(--text3)">' + b.mo3Old.toFixed(1) + '% (unchanged)</span>' : '<span style="color:var(--text3)">—</span>');
+    pv += '<tr>' +
+      '<td style="padding:4px 8px;color:var(--text);font-weight:600">' + esc(b.floc) + '</td>' +
+      '<td style="padding:4px 8px;color:var(--text2)">' + esc(b.model) + (b.sn ? ' · ' + esc(b.sn) : '') + '</td>' +
+      '<td style="text-align:right;padding:4px 8px">' + lifeCell + '</td>' +
+      '<td style="text-align:right;padding:4px 8px">' + mo3Cell  + '</td>' +
+    '</tr>';
+  });
+  pv += '</tbody></table>';
+  previewEl.innerHTML = pv;
+}
+
+function applyIdlingToJSON() {
+  const preview = idlingState.preview;
+  if (!preview || !preview.writes.length) {
+    alert('Nothing to apply. Drop an XLSX, assign sheets, and click Preview first.');
+    return;
+  }
+
+  // Clone the JSON to avoid mutating the loaded reference.
+  const fleet = JSON.parse(JSON.stringify(idlingState.fleetJSON));
+  const units = (fleet.masterData && fleet.masterData.units) || [];
+
+  // Build the lookup again on the CLONED tree (different object references after JSON.parse).
+  const flocLookup = {};
+  units.forEach(function(u) {
+    if (u.floc) flocLookup[_idlingNormKey(u.floc)] = u;
+    if (u.id)   flocLookup[_idlingNormKey(u.id)]   = flocLookup[_idlingNormKey(u.id)] || u;
+  });
+
+  let written = 0;
+  preview.writes.forEach(function(w) {
+    const u = flocLookup[w.unitKey];
+    if (!u) return;  // shouldn't happen — we matched it in preview
+    u[w.field] = w.value;
+    written++;
+  });
+
+  // Stamp meta with the import note (append, don't replace).
+  fleet.meta = fleet.meta || {};
+  fleet.meta.lastSaved = new Date().toISOString();
+  const dateStr = new Date().toISOString().split('T')[0];
+  fleet.meta.notes = (fleet.meta.notes || '') +
+    (fleet.meta.notes ? '\n' : '') +
+    'Idling import via Intake v8.6 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX');
+
+  // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
+  const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
+  let fname;
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function') {
+    fname = window.NumaCoreLib.buildSaveFilename(clientCode, { fleetData: fleet, suffix: 'idling' });
+  } else {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    fname = clientCode + '_' + ts + '_idling.json';
+  }
+
+  // Trigger download.
+  const blob = new Blob([JSON.stringify(fleet, null, 2)], { type: 'application/json' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+
+  // Quiet toast (operator-locked: no confirm() prompts).
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.showToast === 'function') {
+    window.NumaCoreLib.showToast('Applied ' + written + ' idle value(s). Downloaded ' + fname, 'success', 3500);
+  }
+}
+
+function clearIdling() {
+  idlingState.fleetJSON     = null;
+  idlingState.fleetFilename = null;
+  idlingState.workbook      = null;
+  idlingState.workbookFilename = null;
+  idlingState.sheetTargets  = {};
+  idlingState.preview       = null;
+  document.getElementById('idlingJsonStatus').textContent = '';
+  document.getElementById('idlingXlsxStatus').textContent = '';
+  document.getElementById('idlingMappingTable').innerHTML = '';
+  document.getElementById('idlingStats').innerHTML        = '';
+  document.getElementById('idlingUnmatchedBox').innerHTML = '';
+  document.getElementById('idlingPreviewTable').innerHTML = '';
+  document.getElementById('idlingStep3Card').style.display = 'none';
+  document.getElementById('idlingStep4Card').style.display = 'none';
+  const step2 = document.getElementById('idlingStep2Card');
+  step2.style.opacity = '0.5'; step2.style.pointerEvents = 'none';
+  document.getElementById('fileInputIdlingJSON').value = '';
+  document.getElementById('fileInputIdlingXLSX').value = '';
+}
 
 function loadConmonFleetJSON(file) {
   const reader = new FileReader();

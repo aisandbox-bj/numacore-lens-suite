@@ -377,6 +377,9 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 .hmc-value.hmc-yellow { color: var(--band-elevated, #ffc107); }
 .hmc-value.hmc-orange { color: var(--band-high, #ff7043); }
 .hmc-value.hmc-red    { color: var(--band-very-high, #f44336); }
+/* v4.3.4 (Ship 5) — "No data" tile state: light grey + dimmed so the em-dash
+   placeholder is clearly distinct from a real low value. Operator-specified. */
+.hmc-value.hmc-no-data { color: #8a9aa3; opacity: 0.65; font-weight: 400; }
 .hero-health-card { grid-column: 1 / span 2; }
 .hmc-mix {
   display: flex; gap: 6px; align-items: center; margin-top: 4px;
@@ -2063,7 +2066,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3.3';
+const VERSION = '4.3.4';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2379,6 +2382,20 @@ function isSampleStale(sample) {
 // covariance(x,y) / variance(x). variance(x) for [0,1,2,3] is constant = 5.
 // Dead-zone of 0.5 rank-units per step matches the operator's visual sensitivity
 // (a rank shift smaller than half a band step over 4 samples reads as "flat").
+// v4.3.4 (Ship 5) — Idle % colour band classifier. Operator-decided thresholds:
+//   null / NaN → 'hmc-no-data' (light grey, dimmed)
+//   0% to <30% → 'hmc-green'   (healthy)
+//   30% to <50% → 'hmc-orange' (caution)
+//   50%+        → 'hmc-red'    (concerning)
+// Applied to the two Idling % tiles in renderCanvasHero. Util % stays uncoloured
+// (different metric — higher util = better, not worse — different thresholds).
+function _idleBandClass(pct) {
+  if (pct === null || pct === undefined || !isFinite(pct)) return 'hmc-no-data';
+  if (pct < 30) return 'hmc-green';
+  if (pct < 50) return 'hmc-orange';
+  return 'hmc-red';
+}
+
 function _componentTrend(samples) {
   if (!Array.isArray(samples) || samples.length <= 4) return 'unknown';
   var last4 = samples.slice(-4);
@@ -2646,9 +2663,10 @@ function renderCanvasHero(fleet, model, unit) {
         '<div class="hmc-sub">' + (worst ? worst.component : '\u2014') + '</div>' +
       '</div>' +
       // Row 2 \u2014 Idling % (life) | Active Projects (where SMU used to be)
+      // v4.3.4 (Ship 5) — operator-spec colour bands on idle tiles.
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Idling % (life)</div>' +
-        '<div class="hmc-value">' + idleLifeStr + '</div>' +
+        '<div class="hmc-value ' + _idleBandClass(idleLife) + '">' + idleLifeStr + '</div>' +
         '<div class="hmc-sub">' + (idleLife !== null ? 'lifetime average' : 'no data') + '</div>' +
       '</div>' +
       '<div class="hero-metric-card">' +
@@ -2657,9 +2675,10 @@ function renderCanvasHero(fleet, model, unit) {
         '<div class="hmc-sub">' + activeProjSub + '</div>' +
       '</div>' +
       // Row 3 \u2014 Idling % (3-month) | Next PCR
+      // v4.3.4 (Ship 5) — colour bands on idle tiles, same thresholds as life tile.
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Idling % (3-month)</div>' +
-        '<div class="hmc-value">' + idle3MoStr + '</div>' +
+        '<div class="hmc-value ' + _idleBandClass(idle3Mo) + '">' + idle3MoStr + '</div>' +
         '<div class="hmc-sub">' + (idle3Mo !== null ? 'last 3 months' : 'no data') + '</div>' +
       '</div>' +
       '<div class="hero-metric-card">' +
