@@ -15,6 +15,13 @@
  *   showToast()   — CPT v17:2299 (extended with severity)
  *   loadFleetFile()— synthesised from CPT:6136 + Deploy:1033 + Lens:3596
  *
+ * Version 1.5.1 — Lens v4.3.6 FIX-1: showToast bottom position raised
+ *   24px → 70px so it clears Lens's #legend pill (bottom:14px, right:18px).
+ *   Suite-wide visual change — every tool's toast now appears slightly higher
+ *   on screen. Operator-discovered 2026-05-13 during v4.3.6 reload-survival
+ *   test: the new restored-autosave toast was being visually camouflaged by
+ *   the legend (similar dark palette + overlapping bottom band). No API
+ *   change — internal CSS only.
  * Version 1.5.0 — Deploy v8.9 adds VPN normalisation for cross-referencing
  *   dealer-provided part numbers against Inventory Master + Component
  *   Snapshot cross-reference data:
@@ -46,7 +53,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.5.0';
+  var VERSION = '1.5.1';
   var DEFAULT_TZ = 'America/Edmonton';   // Mountain Time (Canada)
   var DEFAULT_CURRENCY = 'CAD';          // Canadian dollar — Chunk 3 (Slide 8) operator decision 2026-05-10
   var DEFAULT_LOCALE = 'en-CA';          // Canadian English — Chunk 3 (Slide 8) operator decision 2026-05-10
@@ -164,9 +171,15 @@
     if (!_toastEl) {
       _toastEl = document.createElement('div');
       _toastEl.id = '_numacoreToast';
+      // v1.5.1 — bottom raised 24px → 70px so the toast clears Lens's #legend
+      // pill (bottom:14px, top edge ~39px from screen bottom). Same dark-on-dark
+      // palette + overlapping bottom-band caused the v4.3.6 restored-autosave
+      // toast to be visually camouflaged by the legend on the operator's first
+      // live test. 70px leaves a 31px gap above the legend's top edge at rest;
+      // entry/exit slide animations (translateY 20→0→10) stay clear.
       _toastEl.style.cssText = [
         'position:fixed',
-        'bottom:24px',
+        'bottom:70px',
         'left:50%',
         'transform:translateX(-50%) translateY(20px)',
         'padding:10px 18px',
