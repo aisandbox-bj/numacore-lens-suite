@@ -4859,13 +4859,27 @@ function applyIdlingToJSON() {
     });
   }
 
-  // Stamp meta with the import note (append, don't replace).
+  // v8.7 FIX-2 (2026-05-14) — DO NOT stamp meta.lastSaved on Idling apply.
+  // Pre-FIX-2 code did `fleet.meta.lastSaved = new Date().toISOString();` which
+  // made the downloaded JSON appear newer than the operator's Lens-side
+  // localStorage state (Lens v4.3.5 visibility-persistence autosave). On
+  // reopening the post-Idling JSON in Lens, the overlay logic at L4332 (Lens)
+  // compares localStorage.savedAt > json.meta.lastSaved → if Intake bumped
+  // lastSaved to now, localStorage looked older → overlay skipped → operator
+  // lost their fleet-visibility toggles (the "fleet select gets reset" bug
+  // reported 2026-05-14 morning). Per slice-ownership rules in the manual:
+  // Intake owns components[] / componentHistory[] / oil_samples[] / parts of
+  // meta — but meta.lastSaved is the cross-tool save-timestamp owned by the
+  // last tool that performed a CANONICAL save (Lens SAVE FILE, Cadence save,
+  // Deploy save, or Intake BUILD/UPDATE which produce a new fleet shape).
+  // Idling is a metadata-only add — it should not advance the lastSaved
+  // clock. Use a separate field for tracking the Idling event.
   fleet.meta = fleet.meta || {};
-  fleet.meta.lastSaved = new Date().toISOString();
+  fleet.meta.lastIdlingUpdate = new Date().toISOString();
   const dateStr = new Date().toISOString().split('T')[0];
   fleet.meta.notes = (fleet.meta.notes || '') +
     (fleet.meta.notes ? '\n' : '') +
-    'Idling import via Intake v8.7 FIX-1 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
+    'Idling import via Intake v8.7 FIX-2 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
 
   // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
   const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');

@@ -377,7 +377,13 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 /* Header row */
 .gantt-axis { display:flex; align-items:center; height:28px; position:relative; margin-bottom:6px; margin-left:200px; border-bottom:1px solid var(--border); }
 .gantt-axis-label { position:absolute; font-size:9px; color:var(--faint); transform:translateX(-50%); white-space:nowrap; }
-.gantt-today-line { position:absolute; top:0; bottom:0; width:2px; background:var(--amber); opacity:.7; pointer-events:none; z-index:4; }
+/* v8.13 FIX-1 (2026-05-14) — TODAY line visibility: was 2px amber at opacity
+   0.7 / z-index 4 → operator-reported invisible against the dark theme. Now
+   3px gold at opacity 0.95 / z-index 30 with a soft glow so it sits clearly
+   above row content. Companion gantt-today-label below renders a small TODAY
+   tag at the top of the line. */
+.gantt-today-line { position:absolute; top:0; bottom:0; width:3px; background:var(--gold); opacity:.95; pointer-events:none; z-index:30; box-shadow:0 0 6px rgba(255,213,79,0.45); }
+.gantt-today-label { position:absolute; top:-1px; transform:translateX(-50%); background:var(--gold); color:#0f1117; font-size:9px; font-weight:700; padding:2px 7px; border-radius:3px; letter-spacing:0.08em; pointer-events:none; z-index:31; box-shadow:0 1px 4px rgba(0,0,0,0.4); white-space:nowrap; }
 .gantt-start-line { position:absolute; top:0; bottom:0; width:2px; background:var(--green); opacity:.55; pointer-events:none; z-index:4; }
 /* Gate rows */
 .gantt-row { display:flex; align-items:center; height:34px; border-bottom:1px solid rgba(255,255,255,.03); position:relative; }
@@ -4676,12 +4682,13 @@ function renderGantt(projId) {
     <div class="gantt-axis">
       ${axisTicks}
       <div class="gantt-today-line" style="left:calc(200px + ${todayPct}% * (100% - 200px) / 100)"></div>
+      <div class="gantt-today-label" style="left:calc(200px + ${todayPct}% * (100% - 200px) / 100)">TODAY</div>
       <div class="gantt-start-line" style="left:calc(200px + ${projStartPct}% * (100% - 200px) / 100)"></div>
       ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + ${projEndPct}% * (100% - 200px) / 100);top:0;bottom:0;width:2px;background:var(--red);opacity:.35;pointer-events:none;z-index:3"></div>` : ''}
     </div>
     ${shutdownWindowRow}
     ${rows}
-    <div style="position:absolute;left:calc(200px + ${todayPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:2px;background:var(--amber);opacity:.5;pointer-events:none;z-index:2"></div>
+    <div style="position:absolute;left:calc(200px + ${todayPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:3px;background:var(--gold);opacity:.85;pointer-events:none;z-index:30;box-shadow:0 0 6px rgba(255,213,79,0.35)"></div>
     <div style="position:absolute;left:calc(200px + ${projStartPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:2px;background:var(--green);opacity:.4;pointer-events:none;z-index:2"></div>
     ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + ${projEndPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:2px;background:var(--red);opacity:.3;pointer-events:none;z-index:2"></div>` : ''}
   `;
