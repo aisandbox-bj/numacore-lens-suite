@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.11 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.13 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -198,6 +198,24 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 .gate-row.gate-dragging { opacity:0.45; }
 .gate-row.gate-drop-above { box-shadow:inset 0 3px 0 0 var(--gold); }
 .gate-row.gate-drop-below { box-shadow:inset 0 -3px 0 0 var(--gold); }
+/* v8.13 — Persistent WO memory visuals. Carried-over rows survived from a
+   prior IW39 load → soft amber left-border + ↻ marker. Recently-closed
+   bucket renders above the open WO list when previously-tracked WOs have
+   transitioned to CLSD/TECO/CNCL on the latest load. */
+tr.wo-carried-over td:first-child { box-shadow:inset 3px 0 0 0 var(--gold); }
+tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; font-size:11px; color:var(--gold); cursor:help; }
+.wo-recently-closed-bucket { border:1px solid rgba(100,181,246,0.35); border-left:3px solid var(--blue); background:rgba(100,181,246,0.06); border-radius:6px; padding:8px 12px; margin-bottom:10px; font-size:11px; }
+.wo-recently-closed-bucket .wrcb-header { display:flex; align-items:center; gap:8px; color:var(--blue); font-weight:600; margin-bottom:6px; cursor:pointer; user-select:none; }
+.wo-recently-closed-bucket .wrcb-header:hover { color:var(--gold); }
+.wo-recently-closed-bucket .wrcb-list { display:none; margin-top:6px; }
+.wo-recently-closed-bucket.open .wrcb-list { display:block; }
+.wo-recently-closed-bucket .wrcb-row { display:grid; grid-template-columns:120px 1fr 100px 90px 70px; gap:10px; align-items:baseline; padding:5px 4px; border-bottom:1px dashed var(--border); font-size:11px; }
+.wo-recently-closed-bucket .wrcb-row:last-child { border-bottom:none; }
+.wo-recently-closed-bucket .wrcb-row .wrcb-num { font-family:monospace; font-weight:600; color:var(--txt2); }
+.wo-recently-closed-bucket .wrcb-row .wrcb-desc { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wo-recently-closed-bucket .wrcb-row .wrcb-transition { font-size:10px; color:var(--faint); font-family:monospace; }
+.wo-recently-closed-bucket .wrcb-row .wrcb-comp { font-size:10px; color:var(--muted); }
+.wo-recently-closed-bucket .wrcb-row .wrcb-days { font-size:10px; color:var(--faint); text-align:right; }
 /* v8.11 Item-2 — cancelled-project Gantt overlay. Operator-decided: greyed at
    original calendar position, history + gate completion state preserved. Bar
    colours fade; CANCELLED banner sits at the top of the Gantt for context. */
@@ -1098,7 +1116,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.11';  // single source of truth for tool version
+const VERSION = '8.13';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1534,6 +1552,19 @@ function ensurePD(id, templateId) {
       // only — the WO still exists in the IW39 source, just not surfaced
       // on this project's Work Orders tab.
       woHide: [],
+      // v8.13 — Persistent WO memory across IW39 reloads. Object map (O(1)
+      // lookup by WO number). Each entry: { first_seen_iso, last_seen_iso,
+      // last_status, description, component }. Drives the "carried-over"
+      // glow on rows that survive across loads + the "Recently closed"
+      // bucket when a previously-open WO transitions to CLSD/TECO/CNCL.
+      // knownWOsLastLoadIso advances only on real deltas (new WO or status
+      // change), so filter-change re-renders don't bump it.
+      // knownWOsLastFleetAsOf tracks the _iw39AsOf this project's knownWOs
+      // was last recorded against, so a fresh fleet-wide IW39 load triggers
+      // a refresh on first render of this project.
+      knownWOs:              {},
+      knownWOsLastLoadIso:   null,
+      knownWOsLastFleetAsOf: null,
     };
   }
   // Back-fill missing fields for older data
@@ -1541,6 +1572,9 @@ function ensurePD(id, templateId) {
   if (!p.componentSheetMap) p.componentSheetMap = {};   // v8.10
   if (!p.componentSheetMapMeta) p.componentSheetMapMeta = { knownSheets: [] };   // v8.10 FIX-2.5
   if (!Array.isArray(p.woHide)) p.woHide = [];          // v8.10 FIX-4.2
+  if (!p.knownWOs || typeof p.knownWOs !== 'object') p.knownWOs = {};       // v8.13 — back-fill on older fleet JSONs
+  if (typeof p.knownWOsLastLoadIso === 'undefined') p.knownWOsLastLoadIso = null;          // v8.13
+  if (typeof p.knownWOsLastFleetAsOf === 'undefined') p.knownWOsLastFleetAsOf = null;      // v8.13
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   // v8.11 Item-4 — Gates ↔ Gantt source-of-truth consolidation. Pre-v8.11,
   // Gantt-added "custom tasks" were stored in a separate p.customTasks[]
@@ -3060,6 +3094,107 @@ let _woFilter = 'all';
 // WO filtering is now purely by unit Sort Field (FLOC) at render time
 // in renderWorkOrders (FIX-2). The status filter chips (_woFilter) remain.
 
+// ─────────────────────────────────────────────
+// v8.13 — Persistent WO memory + Recently Closed bucket
+// ─────────────────────────────────────────────
+// Operator review V2 slide 3 items 3+4 (items 1+2 shipped in v8.10 FIX-4).
+// Together they turn the per-project WO tab into a project-level ledger
+// across IW39 snapshots — a record of work tracked over the project life.
+//
+// Data shape: deploy.projects[id].knownWOs is an object map keyed by WO
+// number, each value: { first_seen_iso, last_seen_iso, last_status,
+// description, component }. Companion fields:
+//   knownWOsLastLoadIso     — bumped only when a real delta is recorded
+//                              (new WO added OR a known WO's status changed)
+//   knownWOsLastFleetAsOf   — tracks the _iw39AsOf this project's knownWOs
+//                              was last recorded against (so a fresh
+//                              fleet-wide IW39 load triggers a per-project
+//                              refresh on next renderWorkOrders).
+//
+// "Carried over" semantic: a WO is carried-over if its first_seen_iso is
+// STRICTLY EARLIER than knownWOsLastLoadIso — i.e. it was added on a prior
+// load, not this one. WOs added this load have first_seen === last_load
+// → not carried over (correct: they're new this session).
+function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
+  const p = deploy.projects[projId];
+  if (!p) return false;
+  if (!p.knownWOs) p.knownWOs = {};
+  if (!Array.isArray(sourceWOs)) return false;
+  const nowIso = sourceAsOfIso || new Date().toISOString();
+  let changed = false;
+  sourceWOs.forEach(wo => {
+    const num = String(wo.wo_number || '').trim();
+    if (!num) return;
+    const newStatus = String(wo.status || '').trim();
+    if (!p.knownWOs[num]) {
+      changed = true;
+      p.knownWOs[num] = {
+        first_seen_iso: nowIso,
+        last_seen_iso:  nowIso,
+        last_status:    newStatus,
+        description:    String(wo.description || '').trim(),
+        component:      String(wo.component || '').trim()
+      };
+    } else {
+      const existing = p.knownWOs[num];
+      if (existing.last_status !== newStatus) changed = true;
+      existing.last_seen_iso = nowIso;
+      existing.last_status   = newStatus || existing.last_status;
+      if (wo.description) existing.description = String(wo.description).trim();
+      if (wo.component)   existing.component   = String(wo.component).trim();
+    }
+  });
+  if (changed) {
+    p.knownWOsLastLoadIso = nowIso;
+    if (typeof _markUnsaved === 'function') _markUnsaved();
+  }
+  return changed;
+}
+
+// v8.13 Item 4 — surface previously-tracked WOs that have closed since the
+// last load. "Previously open" = last_status was REL or CRTD. "Now closed"
+// = currently present in the source pool with status not in REL/CRTD
+// (typically TECO / CLSD / CNCL). Silent disappearance from the source
+// is ambiguous (could be SAP-side query change) — we only surface explicit
+// closed-transitions where the WO is still visible at the new status.
+function _recentlyClosedWOs(projId, currentSourcePool) {
+  const p = deploy.projects[projId];
+  if (!p || !p.knownWOs) return [];
+  const _OPEN = new Set(['REL', 'CRTD']);
+  const _tok  = s => String(s || '').trim().split(/[\s,;|/]+/)[0].toUpperCase();
+  // O(1) lookup of current pool by WO number
+  const currentMap = new Map();
+  if (Array.isArray(currentSourcePool)) {
+    currentSourcePool.forEach(w => {
+      const n = String(w.wo_number || '').trim();
+      if (n) currentMap.set(n, w);
+    });
+  }
+  const recent = [];
+  Object.keys(p.knownWOs).forEach(num => {
+    const k = p.knownWOs[num];
+    // Filter: was previously open
+    if (!_OPEN.has(_tok(k.last_status))) return;
+    const currentRow = currentMap.get(num);
+    if (!currentRow) return;                              // silent disappear — skip
+    if (_OPEN.has(_tok(currentRow.status))) return;       // still open — not a transition
+    // Closed transition detected
+    const daysSinceLastSeen = Math.max(0, Math.floor((Date.now() - new Date(k.last_seen_iso).getTime()) / 86400000));
+    recent.push({
+      wo_number:      num,
+      last_status:    _tok(k.last_status),
+      current_status: _tok(currentRow.status) || 'CLOSED',
+      description:    k.description || String(currentRow.description || '').trim(),
+      component:      k.component   || String(currentRow.component   || '').trim(),
+      days_since:     daysSinceLastSeen,
+      last_seen_iso:  k.last_seen_iso
+    });
+  });
+  // Sort newest-transitions-first (smallest days_since on top)
+  recent.sort((a, b) => a.days_since - b.days_since);
+  return recent;
+}
+
 function renderWorkOrders(id) {
   const p  = pd(id);
   const el = document.getElementById('woContent');
@@ -3135,6 +3270,54 @@ function renderWorkOrders(id) {
     _sourcePool = p.workOrders || [];
     _woSource = 'project';
   }
+  // v8.13 Item 1 — auto-record knownWOs on first render after a session
+  // reload (fleet JSON loaded with p.workOrders OR fleet-wide IW39 was
+  // committed while this project wasn't open). The fleet-wide path uses
+  // _iw39AsOf as a freshness fingerprint so re-renders against the same
+  // fleet-wide pool don't re-record (which would spuriously light up the
+  // carried-over glow on filter changes).
+  if (_woSource === 'fleet') {
+    const _currentAsOf = _iw39AsOf || '';
+    if (_currentAsOf && p.knownWOsLastFleetAsOf !== _currentAsOf) {
+      // Fresh fleet-wide load (or first-ever for this project) — record the
+      // unit-filtered subset so this project's knownWOs reflects what's
+      // visible TO this project specifically.
+      const _unitSubset = _unitId
+        ? _sourcePool.filter(w => String(w.floc || '').toUpperCase().includes(_unitId))
+        : _sourcePool;
+      _recordKnownWOs(id, _unitSubset, _currentAsOf);
+      p.knownWOsLastFleetAsOf = _currentAsOf;
+      if (typeof _markUnsaved === 'function') _markUnsaved();
+    }
+  } else if (_woSource === 'project') {
+    // Per-project upload path: explicit commit handler (confirmWoImport) already
+    // calls _recordKnownWOs. But if a fleet JSON loads with pre-existing
+    // p.workOrders and knownWOs is still empty (e.g. file pre-dates v8.13),
+    // auto-record on first render so we don't lose the baseline.
+    if ((!p.knownWOs || Object.keys(p.knownWOs).length === 0) && _sourcePool.length > 0) {
+      _recordKnownWOs(id, _sourcePool);
+    }
+  }
+
+  // v8.13 Item 4 — surface Recently Closed WOs (was previously open, now
+  // CLSD/TECO/CNCL on the latest source). Computed BEFORE the filter so we
+  // catch closed transitions that the open-only WO filter would otherwise
+  // hide silently.
+  const _recentlyClosed = _recentlyClosedWOs(id, _sourcePool);
+
+  // v8.13 Item 2 — capture the "prior known" set BEFORE row render so the
+  // carried-over glow can distinguish "added on this load" from "carried
+  // forward from a prior load". A WO is carried-over if its first_seen_iso
+  // is strictly earlier than knownWOsLastLoadIso (recorded above).
+  const _lastLoadMs = p.knownWOsLastLoadIso ? Date.parse(p.knownWOsLastLoadIso) : 0;
+  const _isCarriedOver = (woNum) => {
+    if (!_lastLoadMs) return false;
+    const k = p.knownWOs && p.knownWOs[woNum];
+    if (!k || !k.first_seen_iso) return false;
+    const t = Date.parse(k.first_seen_iso);
+    return isFinite(t) && t < _lastLoadMs;
+  };
+
   const wos = _sourcePool.filter(_filterRow);
   badge('wo', wos.length || 0);
 
@@ -3201,6 +3384,30 @@ function renderWorkOrders(id) {
       <button onclick="unhideAllWOs('${id}')" style="background:transparent;border:1px solid var(--gold);color:var(--gold);cursor:pointer;font-size:10px;padding:2px 8px;border-radius:3px;font-family:inherit;margin-left:auto">Show all</button>
     </div>` : ''}`;
 
+  // v8.13 Item 4 — Recently Closed bucket. Renders only if there are
+  // closed transitions to surface. Collapsible (starts collapsed); operator
+  // clicks the header to expand. Renders ABOVE the open WO list and before
+  // the empty-state branch so it's visible even when the open list filters
+  // to zero — closed transitions are themselves operator-actionable info.
+  const _recentlyClosedHtml = _recentlyClosed.length === 0 ? '' : `
+    <div class="wo-recently-closed-bucket" id="wrcb_${id}" onclick="this.classList.toggle('open')">
+      <div class="wrcb-header">
+        ✓ <span>Recently closed (${_recentlyClosed.length})</span>
+        <span style="color:var(--muted);font-weight:400;font-size:10px">— previously open, now closed/teco/cancelled on the latest IW39</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--muted)">click to expand ▾</span>
+      </div>
+      <div class="wrcb-list">
+        ${_recentlyClosed.map(r => `
+          <div class="wrcb-row">
+            <span class="wrcb-num">${esc(r.wo_number)}</span>
+            <span class="wrcb-desc" title="${esc(r.description)}">${esc(r.description) || '<span style="color:var(--faint);font-style:italic">no description</span>'}</span>
+            <span class="wrcb-transition">${esc(r.last_status)} → ${esc(r.current_status)}</span>
+            <span class="wrcb-comp">${esc(r.component) || '—'}</span>
+            <span class="wrcb-days">${r.days_since}d ago</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
   el.innerHTML = `
     <div class="tab-toolbar">
       <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} of ${_sourcePool.length} after filter)</span>` : ''}${_sourceBadge}</div>
@@ -3209,7 +3416,8 @@ function renderWorkOrders(id) {
         ${_woSource === 'fleet' ? `` : `<button class="btn-upload" onclick="document.getElementById('woIn').click()">📂 Upload IW39 (Excel)</button>`}
       </div>
     </div>
-    ${_filterConfigBar}`;
+    ${_filterConfigBar}
+    ${_recentlyClosedHtml}`;
 
   if (!wos.length) {
     if (_fleetWideLoaded) {
@@ -3287,9 +3495,17 @@ function renderWorkOrders(id) {
     // Adds wo_number to deploy.projects[id].woHide (per-project list) and
     // re-renders. Operator can restore via the "Show all" pill at the top.
     const _woNumEsc = esc(wo.wo_number || '');
+    // v8.13 Item 2 — carried-over glow. Row gets .wo-carried-over class if
+    // its first_seen_iso is earlier than knownWOsLastLoadIso (recorded on
+    // a prior IW39 load, not this one). ↻ marker also shows on the WO
+    // number cell so the operator can tell at a glance which WOs survived.
+    const _carryOver = _isCarriedOver(wo.wo_number);
+    const _carryMark = _carryOver
+      ? `<span class="wo-carry-marker" title="Carried over from a previous IW39 load">↻</span>`
+      : '';
     return `
-    <tr>
-      <td class="mono" style="font-weight:600">${_woNumEsc}</td>
+    <tr class="${_carryOver ? 'wo-carried-over' : ''}">
+      <td class="mono" style="font-weight:600">${_woNumEsc}${_carryMark}</td>
       <td style="min-width:160px">${esc(wo.description||'')}</td>
       <td>${sapBadge(wo.status)}</td>
       <td style="text-align:center">${planned ? fmtCost(planned) : '—'}</td>
@@ -3383,6 +3599,10 @@ function confirmWoImport() {
   });
 
   deploy.projects[selProjId].workOrders = wos;
+  // v8.13 Item 1 — Persistent WO memory. Record the freshly-imported WO set
+  // into p.knownWOs so subsequent renders can light up the "carried-over"
+  // glow and detect status transitions to CLSD/TECO/CNCL.
+  _recordKnownWOs(selProjId, wos);
   closeModal('modalWoMap');
   const _skipped = _totalBeforeFilter - wos.length;
   const _msg = _sortFilter
