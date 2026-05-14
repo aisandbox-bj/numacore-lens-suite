@@ -377,6 +377,9 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 .hmc-value.hmc-yellow { color: var(--band-elevated, #ffc107); }
 .hmc-value.hmc-orange { color: var(--band-high, #ff7043); }
 .hmc-value.hmc-red    { color: var(--band-very-high, #f44336); }
+/* v4.3.6 (Ship 11) — Util % "expected range" tile state. Operator-spec bands:
+   <40% orange, 40–70% blue (expected), >70% orange. See _utilBandClass. */
+.hmc-value.hmc-blue   { color: var(--band-expected, #4a9eff); }
 /* v4.3.4 (Ship 5) — "No data" tile state: light grey + dimmed so the em-dash
    placeholder is clearly distinct from a real low value. Operator-specified. */
 .hmc-value.hmc-no-data { color: #8a9aa3; opacity: 0.65; font-weight: 400; }
@@ -2079,7 +2082,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3.5';
+const VERSION = '4.3.6';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2239,7 +2242,7 @@ function _lensAutosaveUISettings() {
       _lensAutosaveDirty = true;
       _updateUnsavedDot();
     } catch (e) {
-      console.warn('[lens v4.3.5] autosave to localStorage failed:', e);
+      console.warn('[lens v4.3.6] autosave to localStorage failed:', e);
     }
   }, _lensAutosaveDebounceMs);
 }
@@ -2459,13 +2462,27 @@ function isSampleStale(sample) {
 //   0% to <30% → 'hmc-green'   (healthy)
 //   30% to <50% → 'hmc-orange' (caution)
 //   50%+        → 'hmc-red'    (concerning)
-// Applied to the two Idling % tiles in renderCanvasHero. Util % stays uncoloured
-// (different metric — higher util = better, not worse — different thresholds).
+// Applied to the two Idling % tiles in renderCanvasHero. Util % uses its own
+// _utilBandClass helper (v4.3.6) — different shape (U-curve vs monotonic).
 function _idleBandClass(pct) {
   if (pct === null || pct === undefined || !isFinite(pct)) return 'hmc-no-data';
   if (pct < 30) return 'hmc-green';
   if (pct < 50) return 'hmc-orange';
   return 'hmc-red';
+}
+
+// v4.3.6 (Ship 11) — Util % colour band classifier. Operator-decided thresholds:
+//   null / NaN  → 'hmc-no-data' (light grey, dimmed)
+//   <40%        → 'hmc-orange'  (under-utilised)
+//   40% to 70%  → 'hmc-blue'    (expected range)
+//   >70%        → 'hmc-orange'  (over-utilised — component stress)
+// Note the U-shape: both extremes use orange. Differs from _idleBandClass
+// (monotonic — higher idle = worse). Util % has an expected mid-band.
+function _utilBandClass(pct) {
+  if (pct === null || pct === undefined || !isFinite(pct)) return 'hmc-no-data';
+  if (pct < 40) return 'hmc-orange';
+  if (pct <= 70) return 'hmc-blue';
+  return 'hmc-orange';
 }
 
 function _componentTrend(samples) {
@@ -2791,9 +2808,11 @@ function renderCanvasHero(fleet, model, unit) {
         (nextPCRSub ? '<div class="hmc-sub">' + nextPCRSub + '</div>' : '') +
       '</div>' +
       // Row 4 \u2014 Util % | Components
+      // v4.3.6 (Ship 11) \u2014 operator-spec colour bands on Util % tile: <40 orange,
+      // 40\u201370 blue (expected), >70 orange, null grey. _utilBandClass is U-shaped.
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Util %</div>' +
-        '<div class="hmc-value">' + utilPctStr + '</div>' +
+        '<div class="hmc-value ' + _utilBandClass(utilPct) + '">' + utilPctStr + '</div>' +
         '<div class="hmc-sub">' + utilPctSub + '</div>' +
       '</div>' +
       '<div class="hero-metric-card">' +
@@ -3721,194 +3740,6 @@ function goBack(){
 
 // crumb back btn wired up after DOM ready (see init)
 
-// ═══════ v3.5 sub5c — HERO VIEW ═══════════════════════════════
-// Replaces the radial orb at unit-level with a centred hero image
-// + pinned metric cards. Falls back to a styled orb when the fleet
-// + model combination has no image in MODEL_IMAGE / FLEET_FALLBACK.
-function renderHeroView(fleet, model, unit) {
-  var comps = (FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit]) || [];
-  var wrap = document.getElementById('hero-image-wrap');
-  var img  = document.getElementById('hero-img');
-  var fb   = document.getElementById('hero-fallback');
-  var fbLabel = document.getElementById('hero-fallback-label');
-  var metricsEl = document.getElementById('hero-metrics');
-  if (!wrap || !img || !fb || !metricsEl) return;
-
-  // ── Hero image ─────────────────────────────────────────────
-  var url = (typeof getUnitImage === 'function') ? getUnitImage(fleet, model) : null;
-  if (url) {
-    img.src = url;
-    img.alt = fleet + ' ' + model;
-    img.style.display = 'block';
-    fb.style.display = 'none';
-    // Recover gracefully if the file is missing on disk
-    img.onerror = function() {
-      img.style.display = 'none';
-      fb.style.display = 'flex';
-      if (fbLabel) fbLabel.textContent = 'Image file not found';
-    };
-  } else {
-    img.style.display = 'none';
-    img.removeAttribute('src');
-    fb.style.display = 'flex';
-    if (fbLabel) fbLabel.textContent = fleet + ' \u00b7 ' + model;
-  }
-
-  // ── Metrics ────────────────────────────────────────────────
-  var total = comps.length;
-
-  // Worst component (highest pct) — DR-003: skip NB (no benchmark) components
-  var worst = null;
-  comps.forEach(function(c) {
-    if (c.pct === null) return; // no benchmark
-    if (!worst || c.pct > worst.pct) worst = c;
-  });
-  var worstColor = worst ? getColor(worst.pct) : 'green';
-  var worstPct   = worst ? (worst.pct * 100).toFixed(0) + '%' : '\u2014';
-
-  // Soonest PCR date
-  function parseDate(s) {
-    if (!s) return null;
-    var t = Date.parse(s);
-    return isFinite(t) ? t : null;
-  }
-  var soonest = null;
-  comps.forEach(function(c) {
-    var t = parseDate(c.pred_changeout);
-    if (t === null) return;
-    if (!soonest || t < soonest.t) soonest = { t: t, c: c };
-  });
-  var nextPCRDate = soonest ? new Date(soonest.t).toLocaleDateString('en-CA',
-                     { year:'numeric', month:'short', day:'numeric' }) : '\u2014';
-  var nextPCRComp = soonest ? soonest.c.component : '';
-  var nextPCRDays = soonest ? Math.round((soonest.t - Date.now()) / 86400000) : null;
-  var nextPCRSub  = soonest
-    ? (nextPCRComp + (nextPCRDays !== null ? ' \u00b7 ' + (nextPCRDays >= 0 ? 'in ' + nextPCRDays + 'd' : (Math.abs(nextPCRDays)+'d ago')) : ''))
-    : '';
-
-  // Current SMU (max last_smu — all comps on a unit share the same SMU clock)
-  var smu = 0; var hasSMU = false;
-  comps.forEach(function(c) {
-    if (typeof c.last_smu === 'number' && isFinite(c.last_smu)) { smu = Math.max(smu, c.last_smu); hasSMU = true; }
-  });
-  var smuStr = hasSMU ? smu.toLocaleString('en-CA', { maximumFractionDigits: 0 }) + ' hrs' : '\u2014';
-
-  // v4.3 A2: most-recent last_read date across this unit's comps (READ-ONLY against
-  // Intake-owned masterData.components[].last_read). Surfaced under SMU value.
-  var lastReadMs = null;
-  comps.forEach(function(c) {
-    if (!c.last_read) return;
-    var t = Date.parse(c.last_read);
-    if (isFinite(t) && (lastReadMs === null || t > lastReadMs)) lastReadMs = t;
-  });
-  var lastReadStr = (lastReadMs !== null)
-    ? new Date(lastReadMs).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })
-    : '\u2014';
-
-  // v4.3.3 (Ship 4) — Idle %, Util %, Active Projects for the new tiles.
-  // Mirrors renderCanvasHero's computation block. _lookupUnitMeta reads
-  // masterData.units[] (Intake v8.5 populates idle_pct_life/_3mo there).
-  // _computeUnitUtilPct medianises non-zero/non-null util_rate across
-  // this unit's components. _countActiveProjectsForUnit counts non-complete
-  // entries in workingData.projects[] for this unit.
-  var _unitMeta2 = _lookupUnitMeta(unit);
-  var idleLife2  = (typeof _unitMeta2.idle_pct_life === 'number' && isFinite(_unitMeta2.idle_pct_life))
-    ? _unitMeta2.idle_pct_life : null;
-  var idle3Mo2   = (typeof _unitMeta2.idle_pct_3mo === 'number' && isFinite(_unitMeta2.idle_pct_3mo))
-    ? _unitMeta2.idle_pct_3mo : null;
-  var idleLifeStr2 = (idleLife2 !== null) ? idleLife2.toFixed(1) + '%' : '—';
-  var idle3MoStr2  = (idle3Mo2  !== null) ? idle3Mo2.toFixed(1)  + '%' : '—';
-  var utilPct2     = _computeUnitUtilPct(comps);
-  var utilPctStr2  = (utilPct2 !== null) ? utilPct2.toFixed(1) + '%' : '—';
-  var utilCount2   = comps.filter(function(c) {
-    return typeof c.util_rate === 'number' && isFinite(c.util_rate) && c.util_rate !== 0;
-  }).length;
-  var utilPctSub2  = (utilPct2 !== null)
-    ? 'median of ' + utilCount2 + ' component' + (utilCount2 === 1 ? '' : 's')
-    : 'no util data';
-  var activeProj2     = _countActiveProjectsForUnit(unit);
-  var activeProjStr2  = String(activeProj2);
-  var activeProjSub2  = activeProj2 === 0
-    ? 'none active'
-    : (activeProj2 === 1 ? '1 active project' : activeProj2 + ' active projects');
-
-  // Health mix — DR-003: NB components counted separately, excluded from colour bands
-  var mix = { green:0, yellow:0, orange:0, red:0, nb:0 };
-  comps.forEach(function(c) {
-    if (c.pct === null) { mix.nb++; return; }
-    mix[getColor(c.pct)]++;
-  });
-
-  function mkCard(opts) {
-    var c = document.createElement('div');
-    c.className = 'hero-metric-card';
-    if (opts.clickable) c.setAttribute('data-clickable', 'true');
-    if (opts.kind) c.setAttribute('data-kind', opts.kind);
-    if (opts.cls) c.className += ' ' + opts.cls;
-    // FIX-1: escape JSON-derived strings in label/value/sub. opts.html stays raw
-    // (caller-constructed HTML for the mix pills — no JSON content).
-    var inner = '<div class="hmc-label">' + esc(opts.label) + '</div>';
-    inner += '<div class="hmc-value' + (opts.valueClass ? ' ' + opts.valueClass : '') + '">' + esc(opts.value) + '</div>';
-    if (opts.sub) inner += '<div class="hmc-sub">' + esc(opts.sub) + '</div>';
-    if (opts.html) inner += opts.html;
-    c.innerHTML = inner;
-    if (opts.onClick) c.addEventListener('click', opts.onClick);
-    return c;
-  }
-
-  metricsEl.innerHTML = '';
-  // Card 1: component count — click-through stub (scrolls to components grid)
-  metricsEl.appendChild(mkCard({
-    kind: 'total', label: 'Components', value: total,
-    sub: total === 1 ? '1 tracked item' : total + ' tracked items',
-    clickable: true,
-    onClick: function() {
-      var g = document.getElementById('components-grid');
-      if (g && g.scrollIntoView) g.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      console.log('[hero stub] components card clicked', fleet, model, unit);
-    }
-  }));
-
-  // Card 2: worst health — click-through stub
-  metricsEl.appendChild(mkCard({
-    kind: 'worst', label: 'Worst Health',
-    value: worstPct,
-    valueClass: 'hmc-' + worstColor,
-    sub: worst ? worst.component : '\u2014',
-    clickable: !!worst,
-    onClick: worst ? function() { console.log('[hero stub] worst health clicked', worst.component); } : null
-  }));
-
-  // Card 3: next PCR — click-through stub
-  metricsEl.appendChild(mkCard({
-    kind: 'next', label: 'Next PCR',
-    value: nextPCRDate,
-    sub: nextPCRSub,
-    clickable: !!soonest,
-    onClick: soonest ? function() { console.log('[hero stub] next PCR clicked', soonest.c.component); } : null
-  }));
-
-  // Card 4: SMU — v4.3 A2: replace "Current meter reading" with "Last recorded: <date>"
-  metricsEl.appendChild(mkCard({
-    kind: 'smu', label: 'SMU', value: smuStr,
-    sub: hasSMU ? ('Last recorded: ' + lastReadStr) : 'No SMU recorded'
-  }));
-
-  // Card 5: health mix — spans full width
-  var mixHtml = '<div class="hmc-mix">' +
-    '<div class="hmc-mix-pill" style="color:var(--band-normal,#4caf50)"><span class="mix-dot" style="background:currentColor"></span>' + mix.green + '</div>' +
-    '<div class="hmc-mix-pill" style="color:var(--band-elevated,#ffc107)"><span class="mix-dot" style="background:currentColor"></span>' + mix.yellow + '</div>' +
-    '<div class="hmc-mix-pill" style="color:var(--band-high,#ff7043)"><span class="mix-dot" style="background:currentColor"></span>' + mix.orange + '</div>' +
-    '<div class="hmc-mix-pill" style="color:var(--band-very-high,#f44336)"><span class="mix-dot" style="background:currentColor"></span>' + mix.red + '</div>' +
-    (mix.nb > 0 ? '<div class="hmc-mix-pill" style="color:#78909c;border-color:rgba(120,144,156,0.25)"><span class="mix-dot" style="background:#546e7a"></span>' + mix.nb + ' NB</div>' : '') +
-    '</div>'; // DR-003: NB pill shown only when at least one component has no benchmark
-  metricsEl.appendChild(mkCard({
-    kind: 'mix', cls: 'hero-health-card',
-    label: 'Health Mix', value: total + (total === 1 ? ' component' : ' components'),
-    html: mixHtml
-  }));
-}
-
 // Blueprint
 function renderBlueprint(fleet,model,unit){
   const svg=document.getElementById('blueprint-svg'); svg.innerHTML='';
@@ -4332,10 +4163,18 @@ function loadLensJSON(json) {
       if (lsSaved > jsonSaved && lsParsed.ui_settings) {
         applyUISettings(lsParsed.ui_settings);
         _lensAutosaveDirty = true;  // localStorage is ahead of file — operator should know
-        console.log('[lens v4.3.5] localStorage ui_settings overlay applied (LS savedAt=' + lsParsed.savedAt + ' > JSON lastSaved=' + (lensMeta && lensMeta.lastSaved || '—') + ')');
+        // v4.3.6 (Ship 11) — visible toast so the operator knows why the gold dot
+        // is lit on load. fmtDate from numacore_lib v1.5.0; falls back to raw ISO.
+        try {
+          var _whenStr = (window.NumaCoreLib && NumaCoreLib.fmtDate)
+            ? NumaCoreLib.fmtDate(lsParsed.savedAt, 'short')
+            : lsParsed.savedAt;
+          showToast('Restored unsaved visibility changes from ' + _whenStr, 'info', 2400);
+        } catch (_) { /* toast is non-essential — never let it block load */ }
+        console.log('[lens v4.3.6] localStorage ui_settings overlay applied (LS savedAt=' + lsParsed.savedAt + ' > JSON lastSaved=' + (lensMeta && lensMeta.lastSaved || '—') + ')');
       }
     }
-  } catch (e) { console.warn('[lens v4.3.5] localStorage overlay failed:', e); }
+  } catch (e) { console.warn('[lens v4.3.6] localStorage overlay failed:', e); }
   _updateUnsavedDot();
   // Build ConMon oil-sample index. V5: masterData.conditionMonitoring; V4 Flat: root conditionMonitoring or oil_samples.
   try { const n = buildConMonIdx(_readConMon(json)); if (n > 0) console.log('conMonByUnit:', n, 'units indexed'); } catch(e) { console.warn('buildConMonIdx:', e); }
@@ -4405,7 +4244,7 @@ function exportFleetJSON() {
       savedAt:     out.meta.lastSaved,
       clientCode:  (out.meta && out.meta.clientCode) || '',
     }));
-  } catch (e) { console.warn('[lens v4.3.5] post-save localStorage sync failed:', e); }
+  } catch (e) { console.warn('[lens v4.3.6] post-save localStorage sync failed:', e); }
   _updateUnsavedDot();
 }
 
