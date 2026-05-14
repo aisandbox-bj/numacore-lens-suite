@@ -102,7 +102,14 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .tree-row.unit{height:32px;background:rgba(56,139,253,.028)}
 .tree-row.component{height:29px;background:rgba(255,255,255,.018)}
 .tree-row.hidden{display:none!important}
-.tree-row.changed .comp-label::after{content:' ✱';color:#e3b341;font-size:9px;font-weight:700}
+/* v18.5 — per-component-row state icons. Retired the legacy .changed asterisk
+   in favour of explicit P (linked to active project) and Lock (orphan / manual
+   override) markers, each with their own tooltip wired in renderTree(). The
+   .changed class itself is still set at L1870 + L2351 but no longer styled. */
+.comp-flag{display:inline-block;margin-left:6px;cursor:help;vertical-align:baseline}
+.comp-flag.flag-proj{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;color:#7dd3fc;font-size:11px;letter-spacing:-0.02em}
+.comp-flag.flag-lock{color:#e3b341;vertical-align:-1px}
+.comp-flag:hover{filter:brightness(1.3)}
 .toggle{width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#484f58;font-size:10px;flex-shrink:0;border-radius:4px;transition:all .1s}
 .toggle:hover{background:#21262d;color:#8b949e}
 .toggle.expanded::before{content:'▼';font-size:8px}
@@ -1237,7 +1244,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.4';             // single source of truth for version-scoped keys
+const VERSION  = '18.5';             // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1809,6 +1816,14 @@ function renderTree() {
   const tb = document.getElementById('treeBody');
   tb.innerHTML = '';
   const frag = document.createDocumentFragment();
+  // v18.5 — precompute linked-id → project map for P-icon tooltips. Once per render.
+  // P fires when a component is in any project's linkedIds. Lock fires when the
+  // component has a file-resident override entry AND is NOT currently project-linked.
+  const _linkedIdToProj = new Map();
+  (state.projects || []).forEach(p => {
+    if (Array.isArray(p.linkedIds)) p.linkedIds.forEach(id => _linkedIdToProj.set(id, p));
+  });
+  const _fileOverrideIds = state.fileOverrideIds || new Set();
   rowMeta.forEach(row => {
     const vis = isVisible(row);
     const h   = rowH(row.type);
@@ -1864,6 +1879,26 @@ function renderTree() {
           dateTag = ` | ${_mn[_d.getUTCMonth()]}-${String(_d.getUTCFullYear()).slice(2)}`;
         }
         labelInner = `${row.label}<span class="unit-smu-tag">${maxRec.last_smu.toLocaleString()}${dateTag}</span>`;
+      }
+    }
+    // v18.5 — P / Lock state icons for component rows. Mutually exclusive:
+    //   P    → component is in an active project's linkedIds (Cause 2: by design)
+    //   Lock → has a file-resident override entry but NOT currently linked (orphan / manual drag)
+    // Native title="" tooltips for v1 (zero new JS). Right-click reset action deferred to v18.6.
+    if (row.type === 'component' && rec) {
+      const _linkedProj = _linkedIdToProj.get(rec.id);
+      if (_linkedProj) {
+        const _name = String(_linkedProj.name || _linkedProj.id || '').replace(/"/g, '&quot;');
+        const _id   = String(_linkedProj.id   || '').replace(/"/g, '&quot;');
+        const _ttl  = (_name && _id && _name !== _id)
+          ? `Linked to project: ${_name} (${_id}). Solid date is held by this project.`
+          : `Linked to project: ${_name || _id || '(unnamed)'}. Solid date is held by this project.`;
+        labelInner += `<span class="comp-flag flag-proj" title="${_ttl}">P</span>`;
+      } else if (_fileOverrideIds.has(rec.id)) {
+        const _sd  = rec.changeout_date || '—';
+        const _od  = rec.original_date  || '—';
+        const _ttl = `Manual override — solid held at ${_sd}; shadow says ${_od}. Right-click row → Reset to baseline (coming in v18.6).`;
+        labelInner += `<span class="comp-flag flag-lock" title="${_ttl}"><svg width="9" height="10" viewBox="0 0 9 10" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="4.5" width="6" height="5" rx="0.5"/><path d="M3 4.5V3a1.5 1.5 0 113 0v1.5"/></svg></span>`;
       }
     }
     div.innerHTML = `${tog}<span class="${cls}" style="${style};padding-left:4px">${labelInner}</span>`;
@@ -6480,6 +6515,12 @@ function _initFromJSON(json) {
       .map(o => (o.id !== undefined) ? o.id : o.component_id)
       .filter(x => x !== undefined)
   );
+  // v18.5 — stash the file-loaded override-IDs set on state so the tree render can
+  // distinguish "has an override entry" from "shadow ≠ solid". Lock icon eligibility
+  // is based on override-entry membership (not visible-divergence), which catches the
+  // ~400 "invisible orphans" that happen to coincide with the recomputed shadow today
+  // but will visibly diverge as SMU advances.
+  state.fileOverrideIds = new Set(_overrideIds);
   const _linkedIds = new Set(
     (state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : [])
   );
