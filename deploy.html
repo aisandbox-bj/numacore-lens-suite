@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.10 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.11 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -185,10 +185,28 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
    GATES TAB
 ══════════════════════════════════════════════════ */
 .gate-list { display:flex; flex-direction:column; gap:7px; }
-.gate-row { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:11px 13px; display:flex; align-items:flex-start; gap:11px; transition:border-color .2s; }
+.gate-row { background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:11px 13px; display:flex; align-items:flex-start; gap:11px; transition:border-color .2s, box-shadow .15s, opacity .15s; }
 .gate-row.in_progress { border-color:#5a3a00; }
 .gate-row.complete { border-color:#1d5030; }
 .gate-row.blocked { border-color:#4a1a1a; }
+/* v8.11 Item-3 — drag-reorder visuals. Handle is the only draggable element;
+   row is the drop target. Existing ▲/▼ buttons stay as keyboard-accessible
+   fallback (per scoping doc: "less essential but free"). */
+.gate-drag-handle { display:flex; align-items:center; justify-content:center; width:16px; align-self:stretch; cursor:grab; color:var(--faint); user-select:none; font-size:12px; letter-spacing:-2px; border-radius:4px; transition:background .15s, color .15s; flex-shrink:0; }
+.gate-drag-handle:hover { color:var(--gold); background:var(--deep); }
+.gate-drag-handle:active { cursor:grabbing; }
+.gate-row.gate-dragging { opacity:0.45; }
+.gate-row.gate-drop-above { box-shadow:inset 0 3px 0 0 var(--gold); }
+.gate-row.gate-drop-below { box-shadow:inset 0 -3px 0 0 var(--gold); }
+/* v8.11 Item-2 — cancelled-project Gantt overlay. Operator-decided: greyed at
+   original calendar position, history + gate completion state preserved. Bar
+   colours fade; CANCELLED banner sits at the top of the Gantt for context. */
+#ganttContainer.gantt-cancelled .gantt-bar,
+#ganttContainer.gantt-cancelled .gantt-diamond { opacity:0.42; filter:saturate(0.4); }
+#ganttContainer.gantt-cancelled .gantt-lbl-txt { color:var(--faint); }
+.gantt-cancelled-banner { display:flex; align-items:center; gap:10px; padding:8px 14px; margin-bottom:10px; background:rgba(244,67,54,0.08); border:1px solid rgba(244,67,54,0.35); border-radius:6px; color:#ff8a80; font-size:12px; font-weight:600; }
+.gantt-cancelled-banner .gcb-icon { font-size:14px; }
+.gantt-cancelled-banner .gcb-meta { color:var(--muted); font-weight:500; font-size:11px; margin-left:auto; }
 .gate-num { width:20px; height:20px; border-radius:50%; background:var(--deep); border:1px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:var(--faint); flex-shrink:0; margin-top:2px; }
 .gate-body { flex:1; min-width:0; }
 .gate-name-inp { font-size:13px; font-weight:600; color:var(--txt); background:transparent; border:none; border-bottom:1px dashed transparent; width:100%; outline:none; font-family:inherit; padding:0 0 2px; cursor:pointer; }
@@ -277,6 +295,15 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 .gate-add-row { display:flex; gap:8px; align-items:center; padding:10px 14px; margin-top:10px; border:1px dashed var(--border2); border-radius:6px; background:rgba(91,156,246,0.04); }
 .gate-add-row input { flex:1; background:var(--deep); color:var(--txt); border:1px solid var(--border2); border-radius:4px; padding:6px 8px; font-size:12px; box-sizing:border-box; }
 .gate-add-row .mbtn { white-space:nowrap; }
+/* v8.11 Item-1 — Gates-tab header showing client + current template, with an
+   inline button into the Templates editor (Config overlay). Makes the per-fleet
+   nature of templates obvious; operator no longer has to dig into ⚙ Config. */
+.gates-tab-header { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 12px; margin-bottom:10px; background:var(--deep); border:1px solid var(--border); border-radius:6px; font-size:11px; color:var(--muted); }
+.gates-tab-header .gth-meta { display:flex; gap:18px; align-items:center; flex-wrap:wrap; min-width:0; }
+.gates-tab-header .gth-meta strong { color:var(--txt2); font-weight:600; }
+.gates-tab-header .gth-meta .gth-sep { color:var(--faint); opacity:0.6; }
+.gates-tab-header .gth-tpl-btn { padding:5px 11px; border-radius:4px; border:1px solid var(--border2); background:transparent; color:var(--gold); font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap; }
+.gates-tab-header .gth-tpl-btn:hover { border-color:var(--gold); background:rgba(255,193,7,0.08); }
 
 /* v8.6 FIX-1 — make Action card affordances visible (were faint/easy to miss) */
 .ac-edit { color:var(--blue); font-size:14px; cursor:pointer; padding:3px 7px; border-radius:3px; margin-left:auto; opacity:0.85; }
@@ -996,7 +1023,14 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
       <div id="cfgPanelTemplates">
         <div class="cfg-section-hdr">
           <span>Step List Templates</span>
-          <button class="hdr-btn" onclick="newTemplate()" style="padding:4px 10px;font-size:11px">+ New Template</button>
+          <div style="display:flex;gap:7px;align-items:center">
+            <!-- v8.11 Item-1 — Import/Export templates as JSON. Operator can
+                 hand-tune a template for one client, export, import for another. -->
+            <button class="hdr-btn" onclick="exportSelectedTemplate()" id="tplExportBtn" style="padding:4px 10px;font-size:11px" title="Export the selected template as JSON">⤓ Export</button>
+            <button class="hdr-btn" onclick="document.getElementById('tplImportFile').click()" style="padding:4px 10px;font-size:11px" title="Import a template from a JSON file">⤒ Import</button>
+            <input type="file" id="tplImportFile" accept="application/json,.json" style="display:none" onchange="importTemplateFromFile(event)">
+            <button class="hdr-btn" onclick="newTemplate()" style="padding:4px 10px;font-size:11px">+ New Template</button>
+          </div>
         </div>
         <p style="font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.6">
           Templates define the readiness steps for a project.
@@ -1064,7 +1098,7 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.10';  // single source of truth for tool version
+const VERSION = '8.11';  // single source of truth for tool version
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1340,7 +1374,11 @@ function parseFleet() {
       const lenB = Array.isArray(b) ? b.length : (b && typeof b === 'object' ? Object.keys(b).length : 0);
       return lenA >= lenB ? a : b;
     };
-    const _depFields = ['bom','componentSnapshot','componentSheetMap','gates','customTasks','workOrders','actions','notes'];
+    // v8.11 — customTasks dropped from the dep list. Item-4 consolidation
+    // merged Gantt-added tasks into p.gates so the Gates tab and Gantt share
+    // one source of truth. Legacy fleet files with customTasks are migrated
+    // on load (see ensurePD) so this drop is safe.
+    const _depFields = ['bom','componentSnapshot','componentSheetMap','gates','workOrders','actions','notes'];
     let _mergedProjects = 0, _mergedFields = 0;
     Object.keys(_dualShapeFromPD).forEach(pid => {
       const fromPD = _dualShapeFromPD[pid];
@@ -1470,7 +1508,10 @@ function ensurePD(id, templateId) {
         status: 'not_started', owner: '', targetDate: '', completedDate: '', notes: '',
         planStart: '', planEnd: ''
       })),
-      customTasks:  [],
+      // v8.11 — customTasks: [] removed from new-project init. All gates +
+      // Gantt-added tasks now share p.gates[] (Item 4 consolidation). Legacy
+      // v8.10-or-earlier projects with active customTasks are migrated in
+      // ensurePD on next load.
       bom:          [],
       workOrders:   [],
       actions:      [],
@@ -1497,11 +1538,36 @@ function ensurePD(id, templateId) {
   }
   // Back-fill missing fields for older data
   const p = deploy.projects[id];
-  if (!p.customTasks) p.customTasks = [];
   if (!p.componentSheetMap) p.componentSheetMap = {};   // v8.10
   if (!p.componentSheetMapMeta) p.componentSheetMapMeta = { knownSheets: [] };   // v8.10 FIX-2.5
   if (!Array.isArray(p.woHide)) p.woHide = [];          // v8.10 FIX-4.2
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
+  // v8.11 Item-4 — Gates ↔ Gantt source-of-truth consolidation. Pre-v8.11,
+  // Gantt-added "custom tasks" were stored in a separate p.customTasks[]
+  // array that the Gates tab never read. Operator's stated need ("for now
+  // they have to be the same") + verbatim bug ("when I add a task, it is
+  // not added under gates") → migrate any customTasks into p.gates on load.
+  // Idempotent: empty/missing customTasks is a no-op.
+  if (Array.isArray(p.customTasks) && p.customTasks.length > 0) {
+    p.customTasks.forEach(ct => {
+      p.gates.push({
+        id:            ct.id || ('gx_' + uid()),
+        name:          ct.name || '',
+        type:          ct.type || 'task',
+        status:        ct.status || 'not_started',
+        owner:         ct.owner || '',
+        targetDate:    ct.targetDate || '',
+        completedDate: ct.completedDate || '',
+        notes:         ct.notes || '',
+        planStart:     ct.planStart || '',
+        planEnd:       ct.planEnd   || ''
+      });
+    });
+    console.log('[deploy v8.11] Migrated ' + p.customTasks.length + ' customTask(s) into p.gates for project ' + id);
+    if (typeof _markUnsaved === 'function') _markUnsaved();
+  }
+  // Strip the legacy field so v8.11+ never re-emits it.
+  if ('customTasks' in p) delete p.customTasks;
   return p;
 }
 
@@ -1654,12 +1720,58 @@ function handleToggle(id) {
     renderSidebar();
     if (selProjId === id) renderProjHeader(id);
     renderOverview();
+    if (selProjId === id && curTab === 'gantt') renderGantt(id);   // re-render so cancelled overlay appears
     _markUnsaved();
   } else {
-    // Open activation modal
+    // v8.11 Item-2 — reactivation path. A project with an existing
+    // activatedDate but activated=false has been cancelled and is now being
+    // reactivated. Operator-decided 2026-05-13: prompt for "keep original
+    // dates" vs "reschedule from today". Skip the template-pick modal
+    // because the project already has a template + gates.
+    const p  = deploy.projects[id];
+    const fp = fleetProjects.find(x => x.id === id);
+    if (p && p.activatedDate) {
+      const origStart = (fp && fp.start) ? fp.start : p.activatedDate;
+      const keepOrig  = confirm(
+        'Reactivate "' + ((fp && fp.name) ? fp.name : id) + '"?\n\n' +
+        '• OK  = keep ORIGINAL dates (' + (fmtDate(origStart) || '—') + ' start)\n' +
+        '• Cancel = RESCHEDULE all gates from today\n\n' +
+        'Gate completion state is preserved either way.'
+      );
+      // Optional date shift on reschedule path. Project window itself is
+      // managed by Cadence — we only shift gate planStart/planEnd here.
+      if (!keepOrig && Array.isArray(p.gates) && p.gates.length > 0) {
+        const todayDate = new Date(); todayDate.setHours(0,0,0,0);
+        const oldStart  = (origStart && !isNaN(Date.parse(origStart))) ? new Date(origStart) : todayDate;
+        oldStart.setHours(0,0,0,0);
+        const delta = todayDate.getTime() - oldStart.getTime();
+        if (delta !== 0) {
+          p.gates.forEach(function(g) {
+            if (g.planStart) {
+              const t = Date.parse(g.planStart);
+              if (!isNaN(t)) g.planStart = new Date(t + delta).toISOString().split('T')[0];
+            }
+            if (g.planEnd) {
+              const t = Date.parse(g.planEnd);
+              if (!isNaN(t)) g.planEnd = new Date(t + delta).toISOString().split('T')[0];
+            }
+          });
+        }
+      }
+      p.activated     = true;
+      p.activatedDate = todayStr();
+      renderSidebar();
+      if (selProjId === id) renderProjHeader(id);
+      renderOverview();
+      if (selProjId === id && curTab === 'gantt') renderGantt(id);
+      _markUnsaved();
+      toast(keepOrig ? 'Project reactivated (original dates kept)' : 'Project reactivated and rescheduled from today', 'success');
+      return;
+    }
+    // Open activation modal (first-time activation path — unchanged from v8.10)
     _pendingActivateId = id;
-    const p = fleetProjects.find(x => x.id === id);
-    document.getElementById('actProjName').textContent = `${p.unit} — ${p.name}`;
+    const _fp = fp;
+    document.getElementById('actProjName').textContent = `${_fp.unit} — ${_fp.name}`;
     document.getElementById('actNotes').value = '';
     populateTemplateSel('actTemplate');
     openModal('modalActivate');
@@ -1779,9 +1891,33 @@ function renderGates(id) {
     return;
   }
   const lastIdx = p.gates.length - 1;
+  // v8.11 Item-1 — visible client + current-template header. Resolves the
+  // operator's "where do I save/edit the templates?" question by making the
+  // per-fleet nature of templates obvious AND giving a one-click jump into
+  // the editor without having to dig into ⚙ Config.
+  const _clientName = (fleetData && fleetData.meta && fleetData.meta.clientName) || '—';
+  const _tpl        = (p.templateId && typeof getTemplate === 'function') ? getTemplate(p.templateId) : null;
+  const _tplName    = (_tpl && _tpl.name) || '—';
+  const _headerHtml = `
+    <div class="gates-tab-header">
+      <div class="gth-meta">
+        <span>📋 Templates for: <strong>${esc(_clientName)}</strong></span>
+        <span class="gth-sep">·</span>
+        <span>Using: <strong>${esc(_tplName)}</strong></span>
+      </div>
+      <button class="gth-tpl-btn" onclick="openTemplatesFromGates('${id}')" title="Edit or switch templates for ${esc(_clientName)}">Edit Templates →</button>
+    </div>`;
   // v8.6 — per-row controls: move up / move down / delete + an add-gate row at the bottom.
-  el.innerHTML = p.gates.map((g, i) => `
-    <div class="gate-row ${g.status==='not_started'||g.status==='na'?'':g.status}" id="gr_${g.id}">
+  el.innerHTML = _headerHtml + p.gates.map((g, i) => `
+    <div class="gate-row ${g.status==='not_started'||g.status==='na'?'':g.status}" id="gr_${g.id}"
+         ondragover="_gateDragOver(event)"
+         ondragenter="_gateDragEnter(event,'${g.id}')"
+         ondragleave="_gateDragLeave(event,'${g.id}')"
+         ondrop="_gateDrop(event,'${id}','${g.id}')">
+      <div class="gate-drag-handle" title="Drag to reorder this gate"
+           draggable="true"
+           ondragstart="_gateDragStart(event,'${id}','${g.id}',${i})"
+           ondragend="_gateDragEnd(event)">⋮⋮</div>
       <div class="gate-num">${i+1}</div>
       <div class="gate-body">
         <input class="gate-name-inp" value="${esc(g.name)}" title="Click to rename"
@@ -1847,6 +1983,94 @@ function moveGate(projId, gateId, delta) {
   renderGateStrip(projId);
   if (typeof renderGantt === 'function') renderGantt(projId);
   _markUnsaved();
+}
+
+// ─────────────────────────────────────────────
+// v8.11 Item-3 — HTML5 drag-reorder for the Gates tab.
+// Only the .gate-drag-handle initiates a drag (keeps text inputs inside the
+// row natively selectable). The whole .gate-row is the drop target; cursor
+// position above/below the row midpoint determines insertion side. Existing
+// ▲/▼ buttons remain as a keyboard-accessible alternative. Persisted to
+// p.gates[] (single source of truth from Item-4) and re-renders all three
+// views (Gates tab, gate strip, Gantt) on drop.
+// ─────────────────────────────────────────────
+let _gateDragState = null;
+
+function _gateDragStart(e, projId, gateId, srcIdx) {
+  _gateDragState = { projId, gateId, srcIdx };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', gateId);   // some browsers require non-empty data
+  const row = e.currentTarget.closest('.gate-row');
+  if (row) {
+    row.classList.add('gate-dragging');
+    // Show the whole row as the drag preview, not just the handle glyph
+    if (e.dataTransfer.setDragImage) e.dataTransfer.setDragImage(row, 20, row.offsetHeight / 2);
+  }
+}
+
+function _gateDragOver(e) {
+  if (!_gateDragState) return;
+  e.preventDefault();           // required to allow drop
+  e.dataTransfer.dropEffect = 'move';
+}
+
+function _gateDragEnter(e, gateId) {
+  if (!_gateDragState || _gateDragState.gateId === gateId) return;
+  const row = e.currentTarget;
+  const rect = row.getBoundingClientRect();
+  const above = (e.clientY - rect.top) < (rect.height / 2);
+  row.classList.remove('gate-drop-above', 'gate-drop-below');
+  row.classList.add(above ? 'gate-drop-above' : 'gate-drop-below');
+}
+
+function _gateDragLeave(e, gateId) {
+  const row = e.currentTarget;
+  // Only clear if we're truly leaving the row (not entering a child element)
+  if (!row.contains(e.relatedTarget)) {
+    row.classList.remove('gate-drop-above', 'gate-drop-below');
+  }
+}
+
+function _gateDrop(e, projId, targetGateId) {
+  e.preventDefault();
+  if (!_gateDragState) return;
+  const row = e.currentTarget;
+  const rect = row.getBoundingClientRect();
+  const above = (e.clientY - rect.top) < (rect.height / 2);
+  const draggedId = _gateDragState.gateId;
+  _gateDragState = null;
+  row.classList.remove('gate-drop-above', 'gate-drop-below');
+  if (draggedId === targetGateId) return;
+
+  const p = deploy.projects[projId];
+  if (!p) return;
+  const srcIdx = p.gates.findIndex(g => g.id === draggedId);
+  const tgtIdx = p.gates.findIndex(g => g.id === targetGateId);
+  if (srcIdx < 0 || tgtIdx < 0) return;
+
+  // Splice-out then splice-in. If we removed an entry BEFORE the target, the
+  // target's index shifts left by 1 — account for that before applying the
+  // above/below offset so 'drop on row N above' lands at N (post-remove).
+  const [moved] = p.gates.splice(srcIdx, 1);
+  let insertAt = (srcIdx < tgtIdx) ? tgtIdx - 1 : tgtIdx;
+  if (!above) insertAt += 1;
+  insertAt = Math.max(0, Math.min(p.gates.length, insertAt));
+  p.gates.splice(insertAt, 0, moved);
+
+  renderGates(projId);
+  renderGateStrip(projId);
+  if (typeof renderGantt === 'function') renderGantt(projId);
+  _markUnsaved();
+  toast('Gate reordered');
+}
+
+function _gateDragEnd(e) {
+  // Cleanup if drop didn't fire (drag cancelled / dropped outside any row).
+  document.querySelectorAll('.gate-row.gate-dragging').forEach(r => r.classList.remove('gate-dragging'));
+  document.querySelectorAll('.gate-row.gate-drop-above, .gate-row.gate-drop-below').forEach(r => {
+    r.classList.remove('gate-drop-above', 'gate-drop-below');
+  });
+  _gateDragState = null;
 }
 
 // v8.6 — append a new gate to the project's gate list.
@@ -4061,6 +4285,17 @@ function renderGantt(projId) {
     container.innerHTML = `<div class="empty"><span class="empty-icon">🔒</span>Activate this project to view the Gantt chart.</div>`;
     return;
   }
+  // v8.11 Item-2 — cancelled-project rendering. Distinguish "never activated"
+  // (no activatedDate → keep the old "Activate to view" empty state) from
+  // "previously activated, now deactivated" (has activatedDate → render the
+  // Gantt with a grey overlay so the operator keeps history + completion
+  // state visible).
+  const _wasEverActive   = !!p.activatedDate;
+  const _isCancelled     = _wasEverActive && !p.activated;
+  if (!p.activated && !_wasEverActive) {
+    container.innerHTML = `<div class="empty"><span class="empty-icon">🔒</span>Activate this project to view the Gantt chart.</div>`;
+    return;
+  }
 
   const today     = new Date(); today.setHours(0,0,0,0);
   const projStart = (fp.start && !isNaN(Date.parse(fp.start))) ? new Date(fp.start) : new Date(today.getTime() + PREP_LEAD_MS);
@@ -4083,14 +4318,32 @@ function renderGantt(projId) {
     }
   });
 
-  // Timeline bounds: zoom=1 shows today→projEnd (full picture incl. shutdown window)
-  //                  zoom=5 tightens to today→projStart (prep focus only)
-  const fullSpan = Math.max(projEnd   - today, 14 * MS_PER_DAY) * 1.08;
-  const prepSpan = Math.max(projStart - today, MIN_SPAN_MS) * 1.12;
-  const showSpan = fullSpan - (fullSpan - prepSpan) * ((ganttZoomLevel - 1) / 4);
-  const tStart   = new Date(today.getTime() - showSpan * 0.04);
-  const tEnd     = new Date(today.getTime() + showSpan);
-  const tSpan    = tEnd - tStart;
+  // v8.11 Item-2 — Project-anchored timeline (was today-anchored pre-v8.11).
+  // Operator's verbatim: "I want the Gantt to stay as is (project start date
+  // stays visible, even if in the past) with TODAY line moving across the
+  // screen. This shows that we are on track or behind."
+  //
+  // Math: timeline window is centred on the project, with configurable lead
+  // (before projStart) + trail (after projEnd) buffer driven by the zoom
+  // slider. Zoom=1 → widest (28d lead, 21d trail = max context). Zoom=5 →
+  // tightest (just projStart → projEnd, no buffer). Project bars sit at
+  // their absolute calendar positions and DO NOT MOVE as days pass; only
+  // the TODAY line moves. Open question deferred to v8.13: when Cadence
+  // shifts projStart/projEnd, the bars will follow but gates with explicit
+  // planStart stay fixed → may drift outside the new window. See v8.11
+  // Backlog.md for the continuity work.
+  const MAX_LEAD_MS  = 28 * MS_PER_DAY;
+  const MAX_TRAIL_MS = 21 * MS_PER_DAY;
+  const MIN_LEAD_MS  = 0;
+  const MIN_TRAIL_MS = 0;
+  const zoomFrac     = Math.max(0, Math.min(1, (ganttZoomLevel - 1) / 4));   // 0 at z=1, 1 at z=5
+  const lead         = MAX_LEAD_MS  - (MAX_LEAD_MS  - MIN_LEAD_MS)  * zoomFrac;
+  const trail        = MAX_TRAIL_MS - (MAX_TRAIL_MS - MIN_TRAIL_MS) * zoomFrac;
+  const tStart       = new Date(projStart.getTime() - lead);
+  const tEnd         = new Date(projEnd.getTime()   + trail);
+  // Floor span at 14 days so degenerate projects (projEnd ≤ projStart) still
+  // render a sensible axis.
+  const tSpan        = Math.max(tEnd - tStart, 14 * MS_PER_DAY);
 
   const pct = (d) => Math.max(0, Math.min(100, (d - tStart) / tSpan * 100));
 
@@ -4180,11 +4433,26 @@ function renderGantt(projId) {
       </div>`;
   };
 
-  const rows = p.gates.map((g, i) => makeGanttRow(g, i, false)).join('') +
-    (p.customTasks||[]).map((g, i) => makeGanttRow(g, i, true)).join('');
+  // v8.11 Item-4 — single source of truth. All rows render from p.gates;
+  // customTasks no longer exists post-migration. isCustom flag now means
+  // "user-added (deletable via Gantt right-click)" vs "template gate
+  // (g01..g12, delete only via Gates tab with strong confirmation)".
+  const isUserAdded = (id) => !/^g\d+$/.test(id);
+  const rows = p.gates.map((g, i) => makeGanttRow(g, i, isUserAdded(g.id))).join('');
 
   const projEndPct = pct(projEnd);
-  container.innerHTML = `
+  // v8.11 Item-2 — cancelled-project banner + container class. Bars + diamonds
+  // get faded via CSS so completion state stays visible; banner anchors the
+  // context ("when was this last active?").
+  container.classList.toggle('gantt-cancelled', _isCancelled);
+  const _cancelledBanner = _isCancelled
+    ? `<div class="gantt-cancelled-banner">
+         <span class="gcb-icon">⛔</span>
+         <span>CANCELLED — project is deactivated. Bars + completion state are preserved at their original calendar positions.</span>
+         <span class="gcb-meta">Last activated: ${esc(p.activatedDate || '—')}</span>
+       </div>`
+    : '';
+  container.innerHTML = _cancelledBanner + `
     <div class="gantt-axis">
       ${axisTicks}
       <div class="gantt-today-line" style="left:calc(200px + ${todayPct}% * (100% - 200px) / 100)"></div>
@@ -4213,9 +4481,9 @@ function ganttDragStart(e, mode, projId, gateIdx, isCustom, gateId) {
   if (!meta) return;
 
   const p    = deploy.projects[projId];
-  const gate = isCustom
-    ? p.customTasks?.find(t => t.id === gateId)
-    : p.gates[gateIdx];
+  // v8.11 Item-4 — single source of truth: always look up in p.gates. isCustom
+  // is preserved as the "user-added vs template" hint for downstream rules.
+  const gate = p.gates.find(g => g.id === gateId) || p.gates[gateIdx];
   const bar  = e.currentTarget.closest ? e.currentTarget.closest('.gantt-bar') : e.currentTarget;
   if (mode === 'resize') { e.stopPropagation(); }
 
@@ -4277,9 +4545,9 @@ function ganttDragEnd() {
   document.removeEventListener('mouseup',   ganttDragEnd);
 
   if (_newStart && _newEnd) {
-    const gate = isCustom
-      ? deploy.projects[projId]?.customTasks?.find(t => t.id === gateId)
-      : deploy.projects[projId]?.gates[gateIdx];
+    // v8.11 Item-4 — single source of truth: always look up in p.gates.
+    const _proj = deploy.projects[projId];
+    const gate = _proj?.gates.find(g => g.id === gateId) || _proj?.gates[gateIdx];
     if (gate) {
       gate.planStart = new Date(_newStart).toISOString().split('T')[0];
       gate.planEnd   = new Date(_newEnd).toISOString().split('T')[0];
@@ -4833,7 +5101,8 @@ function saveSession() {
 function toggleGanttType(projId, gateId) {
   const p = deploy.projects[projId];
   if (!p) return;
-  const gate = p.gates.find(g => g.id === gateId) || p.customTasks?.find(g => g.id === gateId);
+  // v8.11 Item-4 — single source of truth: p.gates only.
+  const gate = p.gates.find(g => g.id === gateId);
   if (!gate) return;
   gate.type = (gate.type === 'milestone') ? 'task' : 'milestone';
   _markUnsaved();
@@ -4876,32 +5145,48 @@ document.addEventListener('click', () => {
 // ─────────────────────────────────────────────
 // CUSTOM TASKS (project-specific Gantt rows)
 // ─────────────────────────────────────────────
+// v8.11 Item-4 — addCustomTask now pushes into p.gates (was p.customTasks pre-
+// consolidation). Same id-prefix convention as addGate so Gantt + Gates tab
+// see the same entries. Renders BOTH views so the new row appears in the
+// Gates list immediately + on the Gantt. Resolves operator verbatim
+// "when I add a task, it is not added under gates".
 function addCustomTask(projId, type) {
   const name = prompt('Task name:');
   if (!name?.trim()) return;
   const p = ensurePD(projId);
-  if (!p.customTasks) p.customTasks = [];
-  p.customTasks.push({
-    id: 'ct_' + uid(),
-    name: name.trim(),
-    type,
-    durationDays: 5,
-    planStart: todayStr(),
-    planEnd:   new Date(Date.now() + 5 * MS_PER_DAY).toISOString().split('T')[0],
-    status:    'not_started',
-    owner:     '',
-    notes:     ''
+  p.gates.push({
+    id:            'gx_' + uid(),
+    name:          name.trim(),
+    type,                                  // 'task' | 'milestone'
+    durationDays:  5,
+    planStart:     todayStr(),
+    planEnd:       new Date(Date.now() + 5 * MS_PER_DAY).toISOString().split('T')[0],
+    status:        'not_started',
+    owner:         '',
+    targetDate:    '',
+    completedDate: '',
+    notes:         ''
   });
   _markUnsaved();
+  if (typeof renderGates === 'function')     renderGates(projId);
+  if (typeof renderGateStrip === 'function') renderGateStrip(projId);
   renderGantt(projId);
   toast('Task added', 'success');
 }
 
+// v8.11 Item-4 — deleteCustomTask now filters p.gates (was p.customTasks). The
+// Gantt's right-click "Delete Task" remains gated to user-added rows via the
+// isCustom flag in ganttCtxMenu (template gates are deleted via the Gates
+// tab with strong confirmation; that path is unchanged).
 function deleteCustomTask(projId, taskId) {
   const p = deploy.projects[projId];
-  if (!p?.customTasks) return;
-  p.customTasks = p.customTasks.filter(t => t.id !== taskId);
+  if (!p?.gates) return;
+  const before = p.gates.length;
+  p.gates = p.gates.filter(t => t.id !== taskId);
+  if (p.gates.length === before) return;   // nothing matched — silent no-op
   _markUnsaved();
+  if (typeof renderGates === 'function')     renderGates(projId);
+  if (typeof renderGateStrip === 'function') renderGateStrip(projId);
   renderGantt(projId);
   toast('Task deleted');
 }
@@ -4910,7 +5195,8 @@ function deleteCustomTask(projId, taskId) {
 function openGateModal(projId, gateId) {
   const p = deploy.projects[projId];
   if (!p) return;
-  const gate = p.gates?.find(g => g.id === gateId) || p.customTasks?.find(g => g.id === gateId);
+  // v8.11 Item-4 — single source of truth: p.gates only.
+  const gate = p.gates?.find(g => g.id === gateId);
   if (!gate) return;
 
   const isCustom = !p.gates?.find(g => g.id === gateId);
@@ -4938,9 +5224,9 @@ function saveGateModal() {
   const p         = deploy.projects[projId];
   if (!p) return;
 
-  const gate = isCustom
-    ? p.customTasks?.find(g => g.id === gateId)
-    : p.gates?.find(g => g.id === gateId);
+  // v8.11 Item-4 — single source of truth: p.gates only (isCustom no longer
+  // affects lookup; it now indicates "user-added vs template" only).
+  const gate = p.gates?.find(g => g.id === gateId);
   if (!gate) return;
 
   gate.name      = document.getElementById('mgName').value.trim()  || gate.name;
@@ -5084,7 +5370,98 @@ function newTemplate() {
   _cfgSelTplId = id;
   renderCfgTemplates();
   _markUnsaved();
-  toast('Template created', 'success');
+  const _cn = (fleetData && fleetData.meta && fleetData.meta.clientName) || 'this fleet';
+  toast('Template created in ' + _cn + ' fleet', 'success');
+}
+
+// v8.11 Item-1 — surface the Templates editor from inside the Gates tab.
+// Operator was finding it buried under ⚙ Config. The button on the Gates
+// tab calls this, which opens the config overlay and pre-selects the
+// project's current template so they land on the right editor pane.
+function openTemplatesFromGates(projId) {
+  const p = projId ? deploy.projects[projId] : null;
+  if (typeof openConfig === 'function') openConfig();
+  if (typeof showCfgPanel === 'function') showCfgPanel('templates');
+  if (p && p.templateId && deploy.config && deploy.config.templates && deploy.config.templates[p.templateId]) {
+    _cfgSelTplId = p.templateId;
+    if (typeof renderCfgTemplates === 'function')   renderCfgTemplates();
+    if (typeof renderCfgStepEditor === 'function')  renderCfgStepEditor(p.templateId);
+  }
+}
+
+// v8.11 Item-1 — Export the currently-selected template to a downloadable JSON
+// file. Operator can hand-tune a template for one client, export, and import
+// into another client's fleet for organic evolution across clients. Filename
+// embeds the client code + template name + date for clean filing.
+function exportSelectedTemplate() {
+  if (!_cfgSelTplId) { toast('Select a template first (click one in the list above)', 'error'); return; }
+  const tpl = deploy.config && deploy.config.templates && deploy.config.templates[_cfgSelTplId];
+  if (!tpl) { toast('Selected template not found', 'error'); return; }
+  // Payload: name + steps + version marker. builtIn stripped on import side.
+  const payload = {
+    schema:    'numacore.deploy.template.v1',
+    exportedAt: new Date().toISOString(),
+    name:      tpl.name || 'Template',
+    steps:     Array.isArray(tpl.steps) ? tpl.steps.map(s => ({
+      id:           s.id || ('step_' + uid()),
+      name:         s.name || '',
+      type:         s.type || 'task',
+      durationDays: (typeof s.durationDays === 'number' && s.durationDays > 0) ? s.durationDays : 5
+    })) : []
+  };
+  const safeName = (payload.name || 'Template').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
+  const cc       = (fleetData && fleetData.meta && fleetData.meta.clientCode) || 'CLIENT';
+  const stamp    = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const filename = cc + '_template_' + safeName + '_' + stamp + '.json';
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  toast('Template exported: ' + filename, 'success');
+}
+
+// v8.11 Item-1 — Import a template from a JSON file. Generates a fresh ID so
+// imports never clobber an existing template. Validation: must have a name
+// (string) and steps (array) — anything else is rejected with a clear error.
+function importTemplateFromFile(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = '';   // allow re-selecting the same file later
+  if (!file) return;
+  const rdr = new FileReader();
+  rdr.onload = function(loadEv) {
+    let data;
+    try { data = JSON.parse(loadEv.target.result); }
+    catch (e) { toast('Import failed: not valid JSON', 'error'); return; }
+    if (!data || typeof data !== 'object') { toast('Import failed: empty payload', 'error'); return; }
+    if (typeof data.name !== 'string' || !data.name.trim()) { toast('Import failed: missing template name', 'error'); return; }
+    if (!Array.isArray(data.steps)) { toast('Import failed: missing steps array', 'error'); return; }
+    const id  = 'tpl_' + uid();
+    const tpl = {
+      name:     data.name.trim() + ' (imported)',
+      builtIn:  false,
+      steps:    data.steps.map(function(s) {
+        return {
+          id:           (s && s.id) || ('step_' + uid()),
+          name:         (s && typeof s.name === 'string') ? s.name : '',
+          type:         (s && s.type === 'milestone') ? 'milestone' : 'task',
+          durationDays: (s && typeof s.durationDays === 'number' && s.durationDays > 0) ? s.durationDays : 5
+        };
+      })
+    };
+    if (!deploy.config) deploy.config = {};
+    if (!deploy.config.templates) deploy.config.templates = {};
+    deploy.config.templates[id] = tpl;
+    _cfgSelTplId = id;
+    if (typeof renderCfgTemplates === 'function')  renderCfgTemplates();
+    if (typeof renderCfgStepEditor === 'function') renderCfgStepEditor(id);
+    _markUnsaved();
+    const _cn = (fleetData && fleetData.meta && fleetData.meta.clientName) || 'this fleet';
+    toast('Template imported into ' + _cn + ' fleet (' + tpl.steps.length + ' step' + (tpl.steps.length === 1 ? '' : 's') + ')', 'success');
+  };
+  rdr.onerror = function() { toast('Import failed: could not read file', 'error'); };
+  rdr.readAsText(file);
 }
 
 function setDefaultTemplate(id) {
