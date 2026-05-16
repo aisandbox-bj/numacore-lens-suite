@@ -1318,7 +1318,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.5';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.6';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1347,6 +1347,7 @@ function _doSave() {
       // Only store records where the date was actually changed
       componentDates: state.data
         .filter(r => r.changeout_date !== r.original_date)
+        .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
         .map(r => ({ id: r.id, changeout_date: r.changeout_date })),
       decisionLog: state.decisionLog,
       visibleMonths: state.visibleMonths,
@@ -1432,6 +1433,36 @@ function _clearSave() {
 // Single source of truth for clearing a file-resident override entry.
 // Caller is responsible for follow-up _scheduleSave() + render().
 // Returns true on success, false on no-op (unknown id / no override / no record).
+// v18.5.6 — Detect today-clamp artefacts (Cause 3 per Manual Tab 13).
+//
+// THE BUG WE'RE FIXING: today-clamp at L6763 (in _initFromJSON) snaps any
+// component with shadow < today to changeout_date = today. This is correct
+// runtime UX (overdue diamonds should appear AT TODAY rather than floating
+// off the left of the timeline). But the save-path filters at L1349 / L7157
+// / L7332 wrote EVERY changeout_date !== original_date case to the file's
+// componentDateOverrides[] slot — including today-clamp results. On the next
+// load, those persisted entries landed in state.fileOverrideIds → showed up
+// in the audit as "orphans" → operator clears them → they get re-persisted
+// the next day as today-clamp fires fresh against new TODAY → infinite
+// accumulation. Operator-reported 2026-05-16: cleared 1,151 orphans, saved,
+// reopened, 301 NEW orphans appeared.
+//
+// FIX: exclude today-clamp signatures from the save-path filters AND from
+// the orphan nudge count. Today-clamp still fires at load time (Cause 3
+// behaviour preserved — overdue diamonds still snap to TODAY visually),
+// but the result is never persisted. On every load it's recreated fresh
+// from the recompute output. No file pollution.
+//
+// SIGNATURE: changeout_date is today's date AND original_date is in the
+// past. This catches today-clamp results uniquely — if operator deliberately
+// drags to TODAY and shadow is in the FUTURE (legitimate override), the
+// filter does NOT fire (original_date < today is false).
+function _isTodayClampedOverride(r) {
+  if (!r || !r.changeout_date || !r.original_date) return false;
+  const _today = new Date().toISOString().split('T')[0];
+  return r.changeout_date === _today && r.original_date < _today;
+}
+
 function _resetOverride(id) {
   if (!state.fileOverrideIds || !state.fileOverrideIds.has(id)) return false;
   const rec = state.data.find(r => r.id === id);
@@ -1488,7 +1519,8 @@ function _orphanSaveCheck() {
   const orphanCount = (state.data || []).filter(r =>
     r.original_date && r.changeout_date &&
     r.changeout_date !== r.original_date &&
-    !linkedIds.has(r.id)
+    !linkedIds.has(r.id) &&
+    !_isTodayClampedOverride(r)   // v18.5.6 — exclude today-clamp artefacts from orphan nudge (Cause 3)
   ).length;
   if (orphanCount === 0) return;
   // Defer slightly so the "Fleet data saved" success toast appears first.
@@ -7155,6 +7187,7 @@ function buildJSONSnapshot() {
   // wrapping key differs — V5 'componentDateOverrides' vs V4 'componentDates').
   const _ownedDateOverrides = state.data
     .filter(r => r.changeout_date !== r.original_date)
+    .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
     .map(r => ({ id: r.id, changeout_date: r.changeout_date }));
   const _ownedUiPrefs = {
     projects:      state.projects,
@@ -7330,6 +7363,7 @@ function _ownedSliceForShell() {
   // both V5 and V4-Flat shapes so embedding works in either schema.
   const _ownedDateOverrides = state.data
     .filter(r => r.changeout_date !== r.original_date)
+    .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
     .map(r => ({ id: r.id, changeout_date: r.changeout_date }));
   const _ownedUiPrefs = {
     projects:      state.projects,
