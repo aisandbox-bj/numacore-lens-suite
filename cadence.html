@@ -1357,7 +1357,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.8';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.9';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1767,7 +1767,62 @@ function trackActivity(type) {
 // and persists across filter changes / re-renders within the session. Cleared on page reload.
 let _auditFilter = 'all';
 let _auditSelected = new Set();
-let _auditCollapsed = new Set();   // v18.5.5 — unit names whose component rows are collapsed/hidden
+// v18.5.9 — Override Audit collapse keys follow Cadence Schedule convention:
+// f:<fleet> · m:<fleet>:<model> · u:<fleet>:<model>:<unit>. Empty set = everything
+// expanded (default). _auditCollapsed.has(key) = that level's children hidden.
+let _auditCollapsed = new Set();
+
+// v18.5.9 — Build a 4-level hierarchy (fleet → model → unit → component) of every
+// component currently in state.fileOverrideIds, with rollup counts (linked/orphan/total)
+// at each non-leaf level. Mirrors buildHierarchy() in the Schedule tree but rooted at
+// override-affected components rather than the full data set. The unit-level
+// totalCompsOnUnit stat is the FULL component count on that unit (not just
+// override-affected ones) so the audit can show "X of Y components have overrides".
+function _buildAuditHierarchy() {
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const linkedIdToProj = new Map();
+  (state.projects || []).forEach(p => {
+    if (Array.isArray(p.linkedIds)) p.linkedIds.forEach(id => linkedIdToProj.set(id, p));
+  });
+  const totalCompsByUnit = new Map();
+  (state.data || []).forEach(d => {
+    const u = d.unit || '(no unit)';
+    totalCompsByUnit.set(u, (totalCompsByUnit.get(u) || 0) + 1);
+  });
+  const h = { fleets: {} };
+  [...(state.fileOverrideIds || [])].forEach(id => {
+    const rec = state.data.find(r => r.id === id);
+    if (!rec) return;
+    const fleet = rec.fleet || '(no fleet)';
+    const model = rec.model || '(no model)';
+    const unit  = rec.unit  || '(no unit)';
+    if (!h.fleets[fleet]) h.fleets[fleet] = { name: fleet, models: {} };
+    if (!h.fleets[fleet].models[model]) h.fleets[fleet].models[model] = { name: model, fleet, units: {} };
+    if (!h.fleets[fleet].models[model].units[unit]) {
+      h.fleets[fleet].models[model].units[unit] = {
+        name: unit, fleet, model, comps: [],
+        totalCompsOnUnit: totalCompsByUnit.get(unit) || 0
+      };
+    }
+    h.fleets[fleet].models[model].units[unit].comps.push({
+      rec, isLinked: linkedIds.has(id), proj: linkedIdToProj.get(id) || null
+    });
+  });
+  Object.values(h.fleets).forEach(f => {
+    f.linked = 0; f.orphan = 0; f.total = 0;
+    Object.values(f.models).forEach(m => {
+      m.linked = 0; m.orphan = 0; m.total = 0;
+      Object.values(m.units).forEach(u => {
+        u.linked = u.comps.filter(c => c.isLinked).length;
+        u.total  = u.comps.length;
+        u.orphan = u.total - u.linked;
+        m.linked += u.linked; m.orphan += u.orphan; m.total += u.total;
+      });
+      f.linked += m.linked; f.orphan += m.orphan; f.total += m.total;
+    });
+  });
+  return h;
+}
 
 function renderOverrideAudit() {
   const wrap = document.getElementById('auditTableWrap');
@@ -1780,77 +1835,105 @@ function renderOverrideAudit() {
     _updateAuditSummaryInConfig();
     return;
   }
-  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
-  const linkedIdToProj = new Map();
-  (state.projects || []).forEach(p => {
-    if (Array.isArray(p.linkedIds)) p.linkedIds.forEach(id => linkedIdToProj.set(id, p));
+  const h = _buildAuditHierarchy();
+  const filterMatch = (c) => {
+    if (_auditFilter === 'linked') return c.isLinked;
+    if (_auditFilter === 'orphan') return !c.isLinked;
+    return true;
+  };
+  // Precompute filter-match counts at each level so we can skip groups that have
+  // zero matches under the current filter (preserves v18.5.5 behaviour: filter
+  // hides empty groups; rollups remain against the FULL override set).
+  const matchCount = { fleet: {}, model: {}, unit: {} };
+  let visibleCount = 0;
+  let totalLinked = 0, totalOrphan = 0;
+  Object.values(h.fleets).forEach(f => {
+    let fM = 0;
+    Object.values(f.models).forEach(m => {
+      let mM = 0;
+      Object.values(m.units).forEach(u => {
+        const uM = u.comps.filter(filterMatch).length;
+        matchCount.unit['u:' + f.name + ':' + m.name + ':' + u.name] = uM;
+        mM += uM;
+        u.comps.forEach(c => { if (c.isLinked) totalLinked++; else totalOrphan++; });
+      });
+      matchCount.model['m:' + f.name + ':' + m.name] = mM;
+      fM += mM;
+    });
+    matchCount.fleet['f:' + f.name] = fM;
+    visibleCount += fM;
   });
-  const allRows = [...state.fileOverrideIds]
-    .map(id => {
-      const rec = state.data.find(r => r.id === id);
-      if (!rec) return null;
-      return { rec, isLinked: linkedIds.has(id), proj: linkedIdToProj.get(id) };
-    })
-    .filter(Boolean);
-  const totalLinked = allRows.filter(r => r.isLinked).length;
-  const totalOrphan = allRows.length - totalLinked;
-  let viewRows = allRows;
-  if (_auditFilter === 'linked') viewRows = allRows.filter(r => r.isLinked);
-  else if (_auditFilter === 'orphan') viewRows = allRows.filter(r => !r.isLinked);
-  // Group view rows by unit
-  const groups = new Map();
-  viewRows.forEach(r => {
-    const u = r.rec.unit || '(no unit)';
-    if (!groups.has(u)) groups.set(u, { unit: u, rows: [] });
-    groups.get(u).rows.push(r);
-  });
-  // Compute roll-up counts per unit (against the FULL override set, not filter-restricted)
-  groups.forEach((g, u) => {
-    const allOnUnit = allRows.filter(r => (r.rec.unit || '(no unit)') === u);
-    g.overridesOnUnit = allOnUnit.length;
-    g.linkedOnUnit = allOnUnit.filter(r => r.isLinked).length;
-    g.orphanOnUnit = g.overridesOnUnit - g.linkedOnUnit;
-    g.totalCompsOnUnit = (state.data || []).filter(d => (d.unit || '(no unit)') === u).length;
-  });
-  // Sort groups (unit ascending) + sort component rows within each group
-  const sortedGroups = [...groups.values()].sort((a, b) => (a.unit || '').localeCompare(b.unit || ''));
-  sortedGroups.forEach(g => g.rows.sort((a, b) => (a.rec.component || '').localeCompare(b.rec.component || '')));
-  countEl.textContent = `Showing ${viewRows.length.toLocaleString()} of ${state.fileOverrideIds.size.toLocaleString()} entries · ${totalLinked.toLocaleString()} linked · ${totalOrphan.toLocaleString()} orphan`;
+  countEl.textContent = `Showing ${visibleCount.toLocaleString()} of ${state.fileOverrideIds.size.toLocaleString()} entries · ${totalLinked.toLocaleString()} linked · ${totalOrphan.toLocaleString()} orphan`;
   const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   let html = '<table class="audit-tbl"><thead><tr>'
     + '<th class="checkbox-cell"></th>'
-    + '<th>Unit</th><th>Component</th><th>Shadow</th><th>Solid</th><th>Status</th><th></th>'
+    + '<th>Hierarchy</th><th>Shadow</th><th>Solid</th><th>Status</th><th></th>'
     + '</tr></thead><tbody>';
-  sortedGroups.forEach(g => {
-    const unitEsc = _esc(g.unit);
-    const isCollapsed = _auditCollapsed.has(g.unit);
-    const chev = isCollapsed ? '&#9654;' : '&#9660;';   // ▶ collapsed · ▼ expanded
-    html += `<tr class="audit-group-row" data-unit="${unitEsc}" title="Click to ${isCollapsed ? 'expand' : 'collapse'}">`
-      + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-unit="${unitEsc}"></td>`
-      + `<td><span class="audit-grp-chev">${chev}</span><strong>${unitEsc}</strong></td>`
-      + `<td colspan="5"><span class="audit-group-rollup">${g.overridesOnUnit} of ${g.totalCompsOnUnit} components &middot; ${g.linkedOnUnit} linked &middot; ${g.orphanOnUnit} orphan</span></td>`
+  const sortedFleets = Object.values(h.fleets).sort((a, b) => a.name.localeCompare(b.name));
+  sortedFleets.forEach(f => {
+    const fKey = 'f:' + f.name;
+    if (matchCount.fleet[fKey] === 0) return;   // filter hides empty fleet
+    const fCollapsed = _auditCollapsed.has(fKey);
+    const fChev = fCollapsed ? '&#9654;' : '&#9660;';
+    const fEsc = _esc(f.name);
+    const fKeyEsc = _esc(fKey);
+    html += `<tr class="audit-group-row audit-grp-fleet" data-key="${fKeyEsc}" data-level="fleet" data-fleet="${fEsc}" title="Click to ${fCollapsed ? 'expand' : 'collapse'}">`
+      + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-level="fleet" data-fleet="${fEsc}"></td>`
+      + `<td style="padding-left:6px"><span class="audit-grp-chev">${fChev}</span><strong style="color:#e3b341">${fEsc}</strong></td>`
+      + `<td colspan="4"><span class="audit-group-rollup">${f.total.toLocaleString()} override${f.total === 1 ? '' : 's'} &middot; ${f.linked.toLocaleString()} linked &middot; ${f.orphan.toLocaleString()} orphan</span></td>`
       + `</tr>`;
-    if (isCollapsed) return;   // v18.5.5 — hide component rows when collapsed
-    g.rows.forEach(r => {
-      const projLabel = r.proj ? (r.proj.name || r.proj.id || '').substring(0, 18) : '';
-      const status = r.isLinked
-        ? `<span class="audit-badge linked" title="Linked to project: ${_esc(r.proj?.name||r.proj?.id||'')}">P ${_esc(projLabel)}</span>`
-        : '<span class="audit-badge orphan">orphan</span>';
-      const checked = _auditSelected.has(r.rec.id) ? ' checked' : '';
-      html += `<tr class="audit-component-row" data-id="${r.rec.id}" data-unit="${unitEsc}">`
-        + `<td class="checkbox-cell"><input type="checkbox" class="audit-row-cb" data-id="${r.rec.id}"${checked}></td>`
-        + `<td></td>`
-        + `<td>${_esc(r.rec.component)}</td>`
-        + `<td>${_esc(r.rec.original_date)}</td>`
-        + `<td>${_esc(r.rec.changeout_date)}</td>`
-        + `<td>${status}</td>`
-        + `<td><button class="audit-reset-btn" data-id="${r.rec.id}">Reset</button></td>`
-        + '</tr>';
+    if (fCollapsed) return;
+    const sortedModels = Object.values(f.models).sort((a, b) => a.name.localeCompare(b.name));
+    sortedModels.forEach(m => {
+      const mKey = 'm:' + f.name + ':' + m.name;
+      if (matchCount.model[mKey] === 0) return;
+      const mCollapsed = _auditCollapsed.has(mKey);
+      const mChev = mCollapsed ? '&#9654;' : '&#9660;';
+      const mEsc = _esc(m.name);
+      const mKeyEsc = _esc(mKey);
+      html += `<tr class="audit-group-row audit-grp-model" data-key="${mKeyEsc}" data-level="model" data-fleet="${fEsc}" data-model="${mEsc}" title="Click to ${mCollapsed ? 'expand' : 'collapse'}">`
+        + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-level="model" data-fleet="${fEsc}" data-model="${mEsc}"></td>`
+        + `<td style="padding-left:22px"><span class="audit-grp-chev">${mChev}</span><strong>${mEsc}</strong></td>`
+        + `<td colspan="4"><span class="audit-group-rollup">${m.total.toLocaleString()} override${m.total === 1 ? '' : 's'} &middot; ${m.linked.toLocaleString()} linked &middot; ${m.orphan.toLocaleString()} orphan</span></td>`
+        + `</tr>`;
+      if (mCollapsed) return;
+      const sortedUnits = Object.values(m.units).sort((a, b) => a.name.localeCompare(b.name));
+      sortedUnits.forEach(u => {
+        const uKey = 'u:' + f.name + ':' + m.name + ':' + u.name;
+        if (matchCount.unit[uKey] === 0) return;
+        const uCollapsed = _auditCollapsed.has(uKey);
+        const uChev = uCollapsed ? '&#9654;' : '&#9660;';
+        const uEsc = _esc(u.name);
+        const uKeyEsc = _esc(uKey);
+        html += `<tr class="audit-group-row audit-grp-unit" data-key="${uKeyEsc}" data-level="unit" data-fleet="${fEsc}" data-model="${mEsc}" data-unit="${uEsc}" title="Click to ${uCollapsed ? 'expand' : 'collapse'}">`
+          + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-level="unit" data-fleet="${fEsc}" data-model="${mEsc}" data-unit="${uEsc}"></td>`
+          + `<td style="padding-left:38px"><span class="audit-grp-chev">${uChev}</span><strong>${uEsc}</strong></td>`
+          + `<td colspan="4"><span class="audit-group-rollup">${u.total.toLocaleString()} of ${u.totalCompsOnUnit.toLocaleString()} components &middot; ${u.linked.toLocaleString()} linked &middot; ${u.orphan.toLocaleString()} orphan</span></td>`
+          + `</tr>`;
+        if (uCollapsed) return;
+        const sortedComps = u.comps.filter(filterMatch).sort((a, b) => (a.rec.component || '').localeCompare(b.rec.component || ''));
+        sortedComps.forEach(c => {
+          const r = c.rec;
+          const projLabel = c.proj ? (c.proj.name || c.proj.id || '').substring(0, 18) : '';
+          const status = c.isLinked
+            ? `<span class="audit-badge linked" title="Linked to project: ${_esc(c.proj?.name || c.proj?.id || '')}">P ${_esc(projLabel)}</span>`
+            : '<span class="audit-badge orphan">orphan</span>';
+          const checked = _auditSelected.has(r.id) ? ' checked' : '';
+          html += `<tr class="audit-component-row" data-id="${r.id}" data-fleet="${fEsc}" data-model="${mEsc}" data-unit="${uEsc}">`
+            + `<td class="checkbox-cell"><input type="checkbox" class="audit-row-cb" data-id="${r.id}"${checked}></td>`
+            + `<td style="padding-left:56px">${_esc(r.component)}</td>`
+            + `<td>${_esc(r.original_date)}</td>`
+            + `<td>${_esc(r.changeout_date)}</td>`
+            + `<td>${status}</td>`
+            + `<td><button class="audit-reset-btn" data-id="${r.id}">Reset</button></td>`
+            + '</tr>';
+        });
+      });
     });
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
-  // Wire per-row Reset buttons
+  // Per-row Reset buttons
   wrap.querySelectorAll('.audit-reset-btn').forEach(btn => {
     btn.onclick = () => {
       const id = Number(btn.dataset.id);
@@ -1863,7 +1946,7 @@ function renderOverrideAudit() {
       }
     };
   });
-  // Wire per-row checkboxes
+  // Per-row checkboxes
   wrap.querySelectorAll('.audit-row-cb').forEach(cb => {
     cb.onchange = () => {
       const id = Number(cb.dataset.id);
@@ -1872,29 +1955,31 @@ function renderOverrideAudit() {
       _updateClearSelectedBtn();
     };
   });
-  // Wire per-machine (group) checkboxes — select/deselect all visible component rows on that unit.
-  // Note: stopPropagation so clicking the checkbox doesn't ALSO trigger the row-collapse toggle.
+  // Group-level (fleet / model / unit) checkboxes — propagate to all visible-leaf
+  // component rows under the group. stopPropagation so the checkbox click doesn't
+  // also fire the row-collapse toggle.
   wrap.querySelectorAll('.audit-grp-cb').forEach(grpCb => {
     grpCb.onclick = e => e.stopPropagation();
     grpCb.onchange = () => {
-      const unit = grpCb.dataset.unit;
-      const targetState = grpCb.checked;
-      wrap.querySelectorAll(`.audit-component-row[data-unit="${unit}"] .audit-row-cb`).forEach(rcb => {
-        rcb.checked = targetState;
+      const sel = _auditGroupCompSelector(grpCb);
+      const target = grpCb.checked;
+      wrap.querySelectorAll(`${sel} .audit-row-cb`).forEach(rcb => {
+        rcb.checked = target;
         const id = Number(rcb.dataset.id);
-        if (targetState) _auditSelected.add(id); else _auditSelected.delete(id);
+        if (target) _auditSelected.add(id); else _auditSelected.delete(id);
       });
       grpCb.indeterminate = false;
+      _updateGroupCheckboxes(wrap);
       _updateClearSelectedBtn();
     };
   });
-  // v18.5.5 — wire machine-row click to toggle collapse state (skip if click landed on checkbox)
+  // Group-row click → toggle collapse on that level (skip if click landed on checkbox)
   wrap.querySelectorAll('.audit-group-row').forEach(row => {
     row.onclick = e => {
-      if (e.target.closest('.checkbox-cell')) return;   // checkbox clicks already handled + stopped
-      const unit = row.dataset.unit;
-      if (_auditCollapsed.has(unit)) _auditCollapsed.delete(unit);
-      else _auditCollapsed.add(unit);
+      if (e.target.closest('.checkbox-cell')) return;
+      const key = row.dataset.key;
+      if (_auditCollapsed.has(key)) _auditCollapsed.delete(key);
+      else _auditCollapsed.add(key);
       renderOverrideAudit();
     };
   });
@@ -1903,19 +1988,31 @@ function renderOverrideAudit() {
   _updateAuditSummaryInConfig();
 }
 
-// Sync per-machine checkbox state (checked / unchecked / indeterminate) based on
-// the row checkboxes currently visible in each group.
+// v18.5.9 — Build the CSS selector for descendant component rows of a given
+// group-level checkbox. Centralised so click + tri-state-sync logic agree.
+function _auditGroupCompSelector(grpCb) {
+  const lvl = grpCb.dataset.level;
+  const f = grpCb.dataset.fleet;
+  if (lvl === 'fleet') return `.audit-component-row[data-fleet="${f}"]`;
+  const m = grpCb.dataset.model;
+  if (lvl === 'model') return `.audit-component-row[data-fleet="${f}"][data-model="${m}"]`;
+  const u = grpCb.dataset.unit;
+  return `.audit-component-row[data-fleet="${f}"][data-model="${m}"][data-unit="${u}"]`;
+}
+
+// v18.5.9 — Tri-state checkbox sync at every group level (fleet / model / unit)
+// based on the visible-leaf row checkboxes scoped to that group.
 function _updateGroupCheckboxes(wrap) {
   if (!wrap) wrap = document.getElementById('auditTableWrap');
   if (!wrap) return;
   wrap.querySelectorAll('.audit-grp-cb').forEach(grpCb => {
-    const unit = grpCb.dataset.unit;
-    const rowCbs = wrap.querySelectorAll(`.audit-component-row[data-unit="${unit}"] .audit-row-cb`);
+    const sel = _auditGroupCompSelector(grpCb);
+    const rowCbs = wrap.querySelectorAll(`${sel} .audit-row-cb`);
     if (rowCbs.length === 0) { grpCb.checked = false; grpCb.indeterminate = false; return; }
     const checkedCount = [...rowCbs].filter(rcb => rcb.checked).length;
-    if (checkedCount === 0)              { grpCb.checked = false; grpCb.indeterminate = false; }
+    if (checkedCount === 0)                  { grpCb.checked = false; grpCb.indeterminate = false; }
     else if (checkedCount === rowCbs.length) { grpCb.checked = true;  grpCb.indeterminate = false; }
-    else                                 { grpCb.checked = false; grpCb.indeterminate = true; }
+    else                                     { grpCb.checked = false; grpCb.indeterminate = true;  }
   });
 }
 
@@ -5590,14 +5687,21 @@ document.getElementById('auditExpandAllBtn').onclick = () => {
   _auditCollapsed.clear();
   renderOverrideAudit();
 };
+// v18.5.9 — Collapse All walks the 4-level hierarchy and stashes every fleet / model
+// / unit key into _auditCollapsed. Operator sees only the top-level fleet header rows.
 document.getElementById('auditCollapseAllBtn').onclick = () => {
-  if (!state.fileOverrideIds) return;
-  const units = new Set();
-  [...state.fileOverrideIds].forEach(id => {
-    const rec = state.data.find(r => r.id === id);
-    if (rec) units.add(rec.unit || '(no unit)');
+  if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) return;
+  const h = _buildAuditHierarchy();
+  _auditCollapsed = new Set();
+  Object.values(h.fleets).forEach(f => {
+    _auditCollapsed.add('f:' + f.name);
+    Object.values(f.models).forEach(m => {
+      _auditCollapsed.add('m:' + f.name + ':' + m.name);
+      Object.values(m.units).forEach(u => {
+        _auditCollapsed.add('u:' + f.name + ':' + m.name + ':' + u.name);
+      });
+    });
   });
-  _auditCollapsed = units;
   renderOverrideAudit();
 };
 

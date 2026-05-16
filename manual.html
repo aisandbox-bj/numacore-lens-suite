@@ -264,7 +264,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
-  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-05-17 — covers Lens v4.3.6 + FIX-1 · <strong>Cadence v18.5.8 (P/Lock + cleanup toolkit + save-time safety net + Override Audit accessed from Config + grouped-by-machine collapsible + multi-select + 4 master buttons + Clear All Orphans + FIX today-clamp orphan self-generation + FIX JSON drag-drop on splash + 🩺 Health Check button)</strong> · Deploy v8.13 + FIX-1 · Intake v8.7 + FIX-2 · numacore_lib v1.5.1 · Tab 13 Forecast Dates updated for v18.5.8</p>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-05-17 — covers Lens v4.3.6 + FIX-1 · <strong>Cadence v18.5.9 (P/Lock + cleanup toolkit + save-time safety net + Override Audit accessed from Config + multi-select + 4 master buttons + Clear All Orphans + FIX today-clamp orphan self-generation + FIX JSON drag-drop on splash + 🩺 Health Check button + 4-level Fleet/Model/Unit/Component roll-up)</strong> · Deploy v8.13 + FIX-1 · Intake v8.7 + FIX-2 · numacore_lib v1.5.1 · Tab 13 Forecast Dates updated for v18.5.9</p>
   <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-05-08.</div>
 </header>
 
@@ -1940,6 +1940,14 @@ Gate completion state is preserved either way.</pre>
   <p><strong>v18.5.2 helps you notice them.</strong> Every SAVE FILE fires a follow-up toast counting overrides not in any project.</p>
   <p><strong>v18.5.3 gives the audit room to breathe.</strong> Full-screen tab with table that fills the viewport. Config keeps a compact summary.</p>
   <p><strong>v18.5.4 organises and curates.</strong> Audit rows now group by machine with roll-up counts (e.g. <em>"BD203 · 13 of 17 components · 5 linked · 8 orphan"</em>). Per-row + per-machine checkboxes (tri-state on machine: full / partial / none). Operator-curated multi-select clear that's faster than per-row Reset but more focused than blanket Reconcile.</p>
+
+  <h4>How do I navigate the Override Audit across a multi-fleet dataset?</h4>
+  <p><strong>v18.5.9</strong> rebuilds the audit pane as a 4-level hierarchy matching the Cadence Schedule tree: <strong>Fleet → Model → Unit → Component</strong>. Each non-leaf level shows a chevron, tri-state checkbox, and rollup summary ("47 overrides · 12 linked · 35 orphan"). Click a row header to expand or collapse that level.</p>
+  <p><strong>Roll-up counts</strong> are computed against the FULL override set, not the filter-restricted view. So under the <em>Orphan</em> filter, a fleet's rollup still reads "47 overrides · 12 linked · 35 orphan" — the filter only hides component rows that don't match, plus any empty groups above them.</p>
+  <p><strong>Unit-level framing.</strong> Unit headers show "X of Y components" where Y is the FULL component count on that unit and X is the count with overrides. This lets you see at a glance whether a unit has a few stray overrides or wholesale divergence from the formula.</p>
+  <p><strong>Tri-state checkboxes propagate down.</strong> Click the FLEET-level checkbox and every visible-leaf component under that fleet (across every model + unit) becomes selected. Click a single component to uncheck it and every parent level (unit / model / fleet) flips to indeterminate. Use this with <strong>Clear Selected</strong> for fleet-wide cleanup that's faster than per-row Reset but more focused than Clear All Orphans.</p>
+  <p><strong>Expand All / Collapse All</strong> operate across every level at once. Collapse All leaves only the FLEET header rows visible — useful as a starting point for top-down navigation. Expand All opens everything.</p>
+  <p>The 🩺 <strong>Health Check</strong> button (from v18.5.8) still works the same way — it refreshes the underlying override set, and the new 4-level view re-renders against the fresh data.</p>
 
   <h4>How do I refresh the Override Audit during a working session?</h4>
   <p><strong>v18.5.8</strong> added a <strong>🩺 Health Check</strong> button in the audit controls (row 1, next to Expand All / Collapse All). Click it any time to rescan the in-memory data and refresh the audit view to current runtime.</p>
