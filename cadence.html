@@ -111,7 +111,8 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .comp-flag.flag-lock{color:#e3b341;vertical-align:-1px}
 .comp-flag:hover{filter:brightness(1.3)}
 /* v18.5.4 — Override Audit grouped rendering + checkbox columns */
-.audit-tbl tr.audit-group-row td{background:#161b22;padding:7px 10px;border-bottom:1px solid #21262d;border-top:1px solid #21262d}
+.audit-tbl tr.audit-group-row td{background:#161b22;padding:7px 10px;border-bottom:1px solid #21262d;border-top:1px solid #21262d;cursor:pointer;user-select:none}
+.audit-tbl tr.audit-group-row:hover td{background:#1c2128}
 .audit-tbl tr.audit-group-row td strong{color:#7dd3fc;font-size:12px;letter-spacing:0.04em}
 .audit-group-rollup{color:#8b949e;font-size:11px;margin-left:8px}
 .audit-tbl .checkbox-cell{width:34px;padding-left:12px;padding-right:4px;text-align:center}
@@ -120,6 +121,11 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 #clearSelectedBtn:disabled{opacity:0.35;cursor:not-allowed}
 #clearSelectedBtn:not(:disabled){background:#21262d;color:#e3b341;border-color:#e3b341}
 #clearSelectedBtn:not(:disabled):hover{background:#30363d;border-color:#f0883e;color:#f0883e}
+/* v18.5.5 — two-row controls + collapse chevron */
+.audit-controls-row1, .audit-controls-row2{margin-bottom:6px}
+.audit-controls-row2{margin-bottom:14px}
+.audit-view-btn, .audit-sel-btn{font-size:11px;padding:4px 10px}
+.audit-grp-chev{display:inline-block;width:12px;color:#7dd3fc;font-size:9px;margin-right:6px;text-align:center;transition:transform 0.12s}
 /* v18.5.1 — Override Audit panel (Config overlay) */
 .audit-filter-chip{display:inline-block;padding:4px 11px;border:1px solid #30363d;border-radius:12px;font-size:11px;color:#8b949e;cursor:pointer;background:transparent;user-select:none;transition:all .12s}
 .audit-filter-chip.active{background:#388bfd;color:#fff;border-color:#388bfd}
@@ -788,7 +794,6 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
     <button class="tab-btn" id="tabProjectList">&#128203; &nbsp;Project List</button>
     <button class="tab-btn" id="tabAutoBuild">&#9889; &nbsp;Auto-Build</button>
     <button class="tab-btn" id="tabDataEditor">&#9998; &nbsp;Data Editor</button>
-    <button class="tab-btn" id="tabOverrideAudit">&#128272; &nbsp;Override Audit</button>
     <button class="tab-btn" id="tabConfig">&#9881; &nbsp;Config</button>
   </div>
   <div class="tab-controls">
@@ -1156,7 +1161,7 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
     <!-- v18.5.3 — Audit relocated to its own full-screen tab. Config keeps a compact entry point. -->
     <div class="cfg-section" id="cfgOverrideAuditSummary">
       <h3>Override Audit</h3>
-      <p>See and clean file-resident overrides. The full audit panel opens in its own full-screen view with filter chips, sortable table, per-row Reset buttons, and the 🧹 Reconcile Orphans bulk-clear action.</p>
+      <p>See and clean file-resident overrides. The full audit panel opens in its own full-screen view with filter chips, sortable table, per-row Reset buttons, and the 🧹 Clear All Orphans bulk-clear action.</p>
       <p id="cfgAuditSummaryCount" style="font-size:12px;color:#8b949e;margin:8px 0 0">—</p>
       <button class="btn btn-import" id="openOverrideAuditBtn" style="margin-top:10px">&#128272; Open Override Audit</button>
     </div>
@@ -1189,14 +1194,21 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 <!-- Override Audit Panel (Tab 8 — v18.5.3) -->
 <div id="overrideAuditPanel">
   <h2>&#128272; Override Audit</h2>
-  <p class="audit-intro">Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON, grouped by machine. <span class="lk">Linked</span> entries are tied to a currently-active project (legitimate). <span class="or">Orphan</span> entries are not — they're left over from past project edits / deleted projects / early-use drags. Three cleanup paths: row-by-row Reset · multi-select via per-row or per-machine checkboxes + Clear Selected · all-orphans Reconcile. <em>SAVE FILE</em> to persist after any change.</p>
-  <div class="audit-controls">
+  <p class="audit-intro">Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON, grouped by machine. <span class="lk">Linked</span> entries are tied to a currently-active project (legitimate). <span class="or">Orphan</span> entries are not — they're left over from past project edits / deleted projects / early-use drags. Three cleanup paths: row-by-row Reset · multi-select via per-row or per-machine checkboxes + Clear Selected · all-orphans Clear All Orphans. <em>SAVE FILE</em> to persist after any change.</p>
+  <div class="audit-controls audit-controls-row1">
     <span class="audit-filter-chip active" data-filter="all">All</span>
     <span class="audit-filter-chip" data-filter="linked">Currently linked</span>
     <span class="audit-filter-chip" data-filter="orphan">Orphans</span>
-    <span id="auditCount"></span>
-    <button class="btn btn-import" id="clearSelectedBtn" style="margin-left:auto" disabled>Clear Selected</button>
-    <button class="btn btn-danger" id="reconcileOrphansBtn">&#129529; Reconcile Orphans</button>
+    <span id="auditCount" style="margin-left:auto"></span>
+    <button class="btn btn-import audit-view-btn" id="auditExpandAllBtn">&#9660; Expand All</button>
+    <button class="btn btn-import audit-view-btn" id="auditCollapseAllBtn">&#9654; Collapse All</button>
+  </div>
+  <div class="audit-controls audit-controls-row2">
+    <button class="btn btn-import audit-sel-btn" id="auditSelectAllBtn">Select All</button>
+    <button class="btn btn-import audit-sel-btn" id="auditDeselectAllBtn">Deselect All</button>
+    <span style="flex:1"></span>
+    <button class="btn btn-import" id="clearSelectedBtn" disabled>Clear Selected</button>
+    <button class="btn btn-danger" id="reconcileOrphansBtn">&#129529; Clear All Orphans</button>
   </div>
   <div id="auditTableWrap">
     <!-- populated by renderOverrideAudit() -->
@@ -1306,7 +1318,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.4';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.5';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1484,7 +1496,7 @@ function _orphanSaveCheck() {
     const noun = orphanCount === 1 ? 'override' : 'overrides';
     showToast(
       `⚠ ${orphanCount.toLocaleString()} ${noun} not in any project — won't appear on the deployment schedule. ` +
-      `Review via 🔓 Override Audit → 🧹 Reconcile Orphans.`,
+      `Review via ⚙ Config → 🔓 Open Override Audit → 🧹 Clear All Orphans.`,
       6800
     );
   }, 1800);
@@ -1663,6 +1675,7 @@ function trackActivity(type) {
 // and persists across filter changes / re-renders within the session. Cleared on page reload.
 let _auditFilter = 'all';
 let _auditSelected = new Set();
+let _auditCollapsed = new Set();   // v18.5.5 — unit names whose component rows are collapsed/hidden
 
 function renderOverrideAudit() {
   const wrap = document.getElementById('auditTableWrap');
@@ -1718,11 +1731,14 @@ function renderOverrideAudit() {
     + '</tr></thead><tbody>';
   sortedGroups.forEach(g => {
     const unitEsc = _esc(g.unit);
-    html += `<tr class="audit-group-row" data-unit="${unitEsc}">`
+    const isCollapsed = _auditCollapsed.has(g.unit);
+    const chev = isCollapsed ? '&#9654;' : '&#9660;';   // ▶ collapsed · ▼ expanded
+    html += `<tr class="audit-group-row" data-unit="${unitEsc}" title="Click to ${isCollapsed ? 'expand' : 'collapse'}">`
       + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-unit="${unitEsc}"></td>`
-      + `<td><strong>${unitEsc}</strong></td>`
+      + `<td><span class="audit-grp-chev">${chev}</span><strong>${unitEsc}</strong></td>`
       + `<td colspan="5"><span class="audit-group-rollup">${g.overridesOnUnit} of ${g.totalCompsOnUnit} components &middot; ${g.linkedOnUnit} linked &middot; ${g.orphanOnUnit} orphan</span></td>`
       + `</tr>`;
+    if (isCollapsed) return;   // v18.5.5 — hide component rows when collapsed
     g.rows.forEach(r => {
       const projLabel = r.proj ? (r.proj.name || r.proj.id || '').substring(0, 18) : '';
       const status = r.isLinked
@@ -1764,8 +1780,10 @@ function renderOverrideAudit() {
       _updateClearSelectedBtn();
     };
   });
-  // Wire per-machine (group) checkboxes — select/deselect all visible component rows on that unit
+  // Wire per-machine (group) checkboxes — select/deselect all visible component rows on that unit.
+  // Note: stopPropagation so clicking the checkbox doesn't ALSO trigger the row-collapse toggle.
   wrap.querySelectorAll('.audit-grp-cb').forEach(grpCb => {
+    grpCb.onclick = e => e.stopPropagation();
     grpCb.onchange = () => {
       const unit = grpCb.dataset.unit;
       const targetState = grpCb.checked;
@@ -1776,6 +1794,16 @@ function renderOverrideAudit() {
       });
       grpCb.indeterminate = false;
       _updateClearSelectedBtn();
+    };
+  });
+  // v18.5.5 — wire machine-row click to toggle collapse state (skip if click landed on checkbox)
+  wrap.querySelectorAll('.audit-group-row').forEach(row => {
+    row.onclick = e => {
+      if (e.target.closest('.checkbox-cell')) return;   // checkbox clicks already handled + stopped
+      const unit = row.dataset.unit;
+      if (_auditCollapsed.has(unit)) _auditCollapsed.delete(unit);
+      else _auditCollapsed.add(unit);
+      renderOverrideAudit();
     };
   });
   _updateGroupCheckboxes(wrap);
@@ -5448,6 +5476,39 @@ document.getElementById('clearSelectedBtn').onclick = () => {
   );
 };
 
+// v18.5.5 — 4 master buttons for the Override Audit panel: Select All / Deselect All / Expand All / Collapse All
+// Note: IDs are `audit*` prefixed to disambiguate from the Cadence Schedule's own
+// expand-all / collapse-all buttons (L903-904) — those operate on state.expanded
+// (fleet/model/unit tree), not on _auditSelected / _auditCollapsed.
+document.getElementById('auditSelectAllBtn').onclick = () => {
+  if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) return;
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  [...state.fileOverrideIds].forEach(id => {
+    if (_auditFilter === 'linked' && !linkedIds.has(id)) return;
+    if (_auditFilter === 'orphan' && linkedIds.has(id)) return;
+    _auditSelected.add(id);
+  });
+  renderOverrideAudit();
+};
+document.getElementById('auditDeselectAllBtn').onclick = () => {
+  _auditSelected.clear();
+  renderOverrideAudit();
+};
+document.getElementById('auditExpandAllBtn').onclick = () => {
+  _auditCollapsed.clear();
+  renderOverrideAudit();
+};
+document.getElementById('auditCollapseAllBtn').onclick = () => {
+  if (!state.fileOverrideIds) return;
+  const units = new Set();
+  [...state.fileOverrideIds].forEach(id => {
+    const rec = state.data.find(r => r.id === id);
+    if (rec) units.add(rec.unit || '(no unit)');
+  });
+  _auditCollapsed = units;
+  renderOverrideAudit();
+};
+
 document.getElementById('reconcileOrphansBtn').onclick = () => {
   if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
     showToast('No override entries in this file — nothing to reconcile.');
@@ -5461,7 +5522,7 @@ document.getElementById('reconcileOrphansBtn').onclick = () => {
     return;
   }
   showPopup(
-    `Reconcile <strong>${orphanCount.toLocaleString()}</strong> orphan override entries?<br>` +
+    `Clear all <strong>${orphanCount.toLocaleString()}</strong> orphan override entries?<br>` +
     `<span style="color:#8b949e;font-size:11px">` +
     `Will clear ${orphanCount.toLocaleString()} entries not tied to any currently-active project link.<br>` +
     `Will preserve ${linkedCount.toLocaleString()} entries tied to active projects.<br>` +
@@ -5469,7 +5530,7 @@ document.getElementById('reconcileOrphansBtn').onclick = () => {
     `<strong style="color:#f0883e">Take a backup of your JSON first.</strong> This writes to memory but won't persist until you SAVE FILE.` +
     `</span>`,
     [
-      { label: `Reconcile ${orphanCount.toLocaleString()} orphans`, cls: 'danger', action: () => {
+      { label: `Clear all ${orphanCount.toLocaleString()} orphans`, cls: 'danger', action: () => {
           const result = _reconcileOrphanOverrides();
           _scheduleSave();
           renderOverrideAudit();
@@ -5490,8 +5551,9 @@ document.getElementById('tabOptimiser').onclick   = () => _setMainTab('tabOptimi
 document.getElementById('tabConfig').onclick      = () => _setMainTab('tabConfig');
 document.getElementById('tabDataEditor').onclick = () => _setMainTab('tabDataEditor');
 document.getElementById('tabAutoBuild').onclick   = () => _setMainTab('tabAutoBuild');
-document.getElementById('tabOverrideAudit').onclick = () => _setMainTab('tabOverrideAudit');   // v18.5.3
-// v18.5.3 — open audit from Config summary button
+// v18.5.5 — Override Audit tab button removed from the main tab bar. The audit
+// panel still opens full-screen via the openOverrideAuditBtn in Config Settings.
+// Tab machinery (_setMainTab toggle, panel .active class) stays in place.
 document.getElementById('openOverrideAuditBtn').onclick = () => _setMainTab('tabOverrideAudit');
 
 // ─── NAMING CONVENTION TOGGLE ─────────────────────────────────────
