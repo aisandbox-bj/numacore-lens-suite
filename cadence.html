@@ -1275,7 +1275,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.1';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.2';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1420,6 +1420,43 @@ function _reconcileOrphanOverrides() {
     });
   }
   return { removed: removedRecs.length, kept: state.fileOverrideIds.size };
+}
+
+// v18.5.2 — Orphan safety net. Fires from saveToFile() after the success toast.
+//
+// Per the operator's framing (2026-05-16): project / shutdown creation is the
+// scheduling primitive in this suite. A component with shadow ≠ solid that
+// isn't in any active project won't appear on the deployment schedule. Whether
+// the divergence is a historical orphan (project since deleted, override entry
+// survived) or a drag that never got promoted to a project (operator intent
+// unclear / stranded state), the operator should be nudged at the moment they
+// commit the file. Operator drag is THE risk vector.
+//
+// The detector reads from state.data directly (not state.fileOverrideIds) so it
+// catches BOTH file-loaded entries AND new drags / new project deletions made
+// in this session. The count matches what will land in componentDateOverrides
+// on this save (since the JSON save filter at L6654 uses the same r.changeout_date
+// !== r.original_date predicate).
+//
+// Silent if count == 0. Operator-driven cleanup via the v18.5.1 Reconcile button.
+// No auto-deletion.
+function _orphanSaveCheck() {
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const orphanCount = (state.data || []).filter(r =>
+    r.original_date && r.changeout_date &&
+    r.changeout_date !== r.original_date &&
+    !linkedIds.has(r.id)
+  ).length;
+  if (orphanCount === 0) return;
+  // Defer slightly so the "Fleet data saved" success toast appears first.
+  setTimeout(() => {
+    const noun = orphanCount === 1 ? 'override' : 'overrides';
+    showToast(
+      `⚠ ${orphanCount.toLocaleString()} ${noun} not in any project — won't appear on the deployment schedule. ` +
+      `Review via ⚙ Config → Override Audit → 🧹 Reconcile Orphans.`,
+      6800
+    );
+  }, 1800);
 }
 
 // Right-click context menu for a LOCKED component tree row (one-off reset).
@@ -6927,6 +6964,7 @@ function saveToFile() {
   a.click();
   URL.revokeObjectURL(a.href);
   showToast('Fleet data saved to ' + a.download);
+  _orphanSaveCheck();   // v18.5.2 — orphan nudge (silent if no orphans found)
 }
 
 // Wire up file input
