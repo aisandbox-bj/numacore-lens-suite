@@ -1202,6 +1202,7 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
     <span id="auditCount" style="margin-left:auto"></span>
     <button class="btn btn-import audit-view-btn" id="auditExpandAllBtn">&#9660; Expand All</button>
     <button class="btn btn-import audit-view-btn" id="auditCollapseAllBtn">&#9654; Collapse All</button>
+    <button class="btn btn-import audit-view-btn" id="auditHealthCheckBtn" title="Rescan state.data and refresh the audit view to current runtime (in-session drags / link writes / breakLink restores). Does NOT modify any saved data.">&#129658; Health Check</button>
   </div>
   <div class="audit-controls audit-controls-row2">
     <button class="btn btn-import audit-sel-btn" id="auditSelectAllBtn">Select All</button>
@@ -1356,7 +1357,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.7';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.8';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1508,6 +1509,27 @@ function _resetOverride(id) {
   state.fileOverrideIds.delete(id);
   rec.changeout_date = rec.original_date;   // solid snaps to shadow
   return true;
+}
+
+// v18.5.8 — Health Check sweep. Rebuilds state.fileOverrideIds from current
+// runtime truth (state.data), so in-session changes (drags / link writes /
+// breakLink restores / Auto-Build cluster applies) show up in the Override
+// Audit pane and the tree Lock icons WITHOUT needing SAVE FILE + RELOAD.
+//
+// Filters today-clamp artefacts (v18.5.6 fix) for parity with the save-side
+// filter — after the sweep, fileOverrideIds matches what would land in the
+// JSON on next SAVE. No file pollution risk.
+//
+// Rebuild-from-scratch (not additive) so undone overrides (drag → breakLink)
+// also drop out. Returns post-sweep count for caller feedback.
+function _runOverrideHealthCheck() {
+  state.fileOverrideIds = new Set();
+  (state.data || []).forEach(r => {
+    if (r.changeout_date !== r.original_date && !_isTodayClampedOverride(r)) {
+      state.fileOverrideIds.add(r.id);
+    }
+  });
+  return state.fileOverrideIds.size;
 }
 
 // Bulk clear orphan overrides (those NOT tied to a currently-active project link).
@@ -5577,6 +5599,33 @@ document.getElementById('auditCollapseAllBtn').onclick = () => {
   });
   _auditCollapsed = units;
   renderOverrideAudit();
+};
+
+// v18.5.8 — Health Check button: refreshes state.fileOverrideIds from current
+// runtime (state.data), then re-renders the audit table AND the tree (Lock icons).
+// Closes the discoverability gap where in-session drags / link writes don't
+// appear in the audit view until SAVE FILE + RELOAD.
+document.getElementById('auditHealthCheckBtn').onclick = () => {
+  const prev = state.fileOverrideIds ? state.fileOverrideIds.size : 0;
+  const now  = _runOverrideHealthCheck();
+  const delta = now - prev;
+  if (delta !== 0) {
+    state.decisionLog = state.decisionLog || [];
+    state.decisionLog.push({
+      type: 'override_health_check',
+      date: new Date().toISOString(),
+      before: prev,
+      after: now,
+      delta
+    });
+  }
+  renderOverrideAudit();   // audit table
+  render();                // tree (Lock-icon visibility may have changed)
+  const word = now === 1 ? 'override' : 'overrides';
+  const msg = delta === 0
+    ? `Health Check: no change — still ${now.toLocaleString()} ${word}.`
+    : `Health Check: ${now.toLocaleString()} ${word} now (${delta > 0 ? '+' : ''}${delta} since last view).`;
+  showToast(msg);
 };
 
 document.getElementById('reconcileOrphansBtn').onclick = () => {
