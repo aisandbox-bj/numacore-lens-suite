@@ -1122,7 +1122,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.13';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
+const VERSION = '8.14';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1458,6 +1458,25 @@ function parseFleet() {
     };
   }
   if (!deploy.config.defaultTemplateId) deploy.config.defaultTemplateId = 'standard_pcr';
+
+  // v8.14 — Cadence-shift continuity. Detects projects whose Cadence start
+  // date has moved since Deploy last saw them; shifts every gate's
+  // planStart/planEnd by the delta so gates move with the project bar.
+  // First-load bootstrap is silent (non-destructive — no retroactive shift
+  // on legacy fleet JSONs that pre-date v8.14). Fires a deferred toast if
+  // any project was shifted, mirroring the v18.5.2 orphan-toast pattern.
+  try {
+    const _shifted = _applyCadenceShifts();
+    if (_shifted.length > 0) {
+      const totalGates = _shifted.reduce((s, x) => s + x.gatesTouched, 0);
+      const sampleNames = _shifted.slice(0, 3).map(x => `${x.name} (${x.deltaDays > 0 ? '+' : ''}${x.deltaDays}d)`).join(', ');
+      const tail = _shifted.length > 3 ? ` + ${_shifted.length - 3} more` : '';
+      console.log('[v8.14 Cadence-shift] applied to', _shifted.length, 'project(s):', _shifted);
+      setTimeout(() => {
+        toast(`Cadence shifted ${_shifted.length} project${_shifted.length === 1 ? '' : 's'} — ${totalGates} gate date${totalGates === 1 ? '' : 's'} moved. ${sampleNames}${tail}.`, 'info');
+      }, 1800);
+    }
+  } catch (e) { console.warn('[v8.14 Cadence-shift] error:', e); }
 }
 
 // ─────────────────────────────────────────────
@@ -1581,6 +1600,18 @@ function ensurePD(id, templateId) {
   if (!p.knownWOs || typeof p.knownWOs !== 'object') p.knownWOs = {};       // v8.13 — back-fill on older fleet JSONs
   if (typeof p.knownWOsLastLoadIso === 'undefined') p.knownWOsLastLoadIso = null;          // v8.13
   if (typeof p.knownWOsLastFleetAsOf === 'undefined') p.knownWOsLastFleetAsOf = null;      // v8.13
+  // v8.14 — Cadence-shift continuity snapshot. Stores the Cadence project
+  // start/end as Deploy last saw them; parseFleet compares against this on
+  // every load and shifts gate dates if Cadence has moved the project.
+  // Non-destructive bootstrap: first load with no prior snapshot just records
+  // current Cadence values without shifting anything.
+  if (typeof p.lastCadenceStart === 'undefined') p.lastCadenceStart = null;
+  if (typeof p.lastCadenceEnd   === 'undefined') p.lastCadenceEnd   = null;
+  // v8.14 — Per-project acknowledgement map for Recently Closed bucket rows.
+  // Key = WO number; value = ack ISO timestamp. _ackFilteredRecentlyClosed
+  // drops rows whose ack is more recent than the closed-transition's
+  // last_seen_iso. Re-surfaces on subsequent transitions of the same WO.
+  if (!p.recentlyClosedAcked || typeof p.recentlyClosedAcked !== 'object') p.recentlyClosedAcked = {};
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   // v8.11 Item-4 — Gates ↔ Gantt source-of-truth consolidation. Pre-v8.11,
   // Gantt-added "custom tasks" were stored in a separate p.customTasks[]
@@ -1780,23 +1811,13 @@ function handleToggle(id) {
       );
       // Optional date shift on reschedule path. Project window itself is
       // managed by Cadence — we only shift gate planStart/planEnd here.
-      if (!keepOrig && Array.isArray(p.gates) && p.gates.length > 0) {
+      // v8.14 — Uses _shiftGateDates so this path agrees with the parseFleet
+      // Cadence-shift detector. Both end up calling the same helper.
+      if (!keepOrig) {
         const todayDate = new Date(); todayDate.setHours(0,0,0,0);
         const oldStart  = (origStart && !isNaN(Date.parse(origStart))) ? new Date(origStart) : todayDate;
         oldStart.setHours(0,0,0,0);
-        const delta = todayDate.getTime() - oldStart.getTime();
-        if (delta !== 0) {
-          p.gates.forEach(function(g) {
-            if (g.planStart) {
-              const t = Date.parse(g.planStart);
-              if (!isNaN(t)) g.planStart = new Date(t + delta).toISOString().split('T')[0];
-            }
-            if (g.planEnd) {
-              const t = Date.parse(g.planEnd);
-              if (!isNaN(t)) g.planEnd = new Date(t + delta).toISOString().split('T')[0];
-            }
-          });
-        }
+        _shiftGateDates(p.gates, todayDate.getTime() - oldStart.getTime());
       }
       p.activated     = true;
       p.activatedDate = todayStr();
@@ -3201,6 +3222,121 @@ function _recentlyClosedWOs(projId, currentSourcePool) {
   return recent;
 }
 
+// v8.14 — Filter out closed-transitions the operator has acknowledged. Reads
+// p.recentlyClosedAcked[wo_number] = ack_iso. Keeps the row only if there's
+// no ack OR the ack pre-dates the transition (last_seen_iso). Caller passes
+// the result of _recentlyClosedWOs through this filter.
+function _ackFilteredRecentlyClosed(projId, recentRows) {
+  const p = deploy.projects[projId];
+  if (!p || !p.recentlyClosedAcked) return recentRows;
+  return recentRows.filter(r => {
+    const ack = p.recentlyClosedAcked[r.wo_number];
+    if (!ack) return true;
+    return new Date(ack).getTime() < new Date(r.last_seen_iso).getTime();
+  });
+}
+
+// v8.14 — Acknowledge (dismiss) a closed-transition row from the Recently
+// Closed bucket. Stamps p.recentlyClosedAcked[wo_number] with NOW. Persists
+// via _markUnsaved. The bucket re-renders on next renderWorkOrders and the
+// row drops out via _ackFilteredRecentlyClosed.
+function _dismissClosedWO(projId, woNumber) {
+  const p = deploy.projects[projId];
+  if (!p) return;
+  if (!p.recentlyClosedAcked || typeof p.recentlyClosedAcked !== 'object') p.recentlyClosedAcked = {};
+  p.recentlyClosedAcked[String(woNumber)] = new Date().toISOString();
+  _markUnsaved();
+  if (selProjId === projId && curTab === 'wo') renderWorkOrders(projId);
+}
+
+// v8.14 — Apply a calendar-day delta (in ms) to every gate's planStart and
+// planEnd on a project. Skips empty values — auto-spread gates will repopulate
+// at render time. Used by:
+//   (a) parseFleet's Cadence-shift detector (new in v8.14)
+//   (b) handleToggle's reactivation reschedule path (was inline in v8.11)
+// Centralised so the two shift sites can't disagree on semantics.
+// Returns count of gate-dates touched.
+function _shiftGateDates(gates, deltaMs) {
+  if (!Array.isArray(gates) || gates.length === 0 || !deltaMs) return 0;
+  let touched = 0;
+  gates.forEach(g => {
+    if (g.planStart) {
+      const t = Date.parse(g.planStart);
+      if (!isNaN(t)) { g.planStart = new Date(t + deltaMs).toISOString().split('T')[0]; touched++; }
+    }
+    if (g.planEnd) {
+      const t = Date.parse(g.planEnd);
+      if (!isNaN(t)) { g.planEnd = new Date(t + deltaMs).toISOString().split('T')[0]; touched++; }
+    }
+  });
+  return touched;
+}
+
+// v8.14 — Cadence-shift continuity. Walks every project that already has a
+// Deploy entry (deploy.projects[id]); compares its stored lastCadenceStart
+// to the current fleetProjects entry; on diff, shifts all gates by the delta
+// and updates the snapshot. Non-destructive bootstrap: a project without a
+// prior snapshot just records the current Cadence dates without shifting,
+// so an existing fleet JSON loaded for the first time under v8.14 does NOT
+// retroactively shift anything. Returns array of { id, name, deltaDays,
+// gatesTouched } for the deferred toast.
+function _applyCadenceShifts() {
+  if (!Array.isArray(fleetProjects) || !deploy || !deploy.projects) return [];
+  const shifted = [];
+  fleetProjects.forEach(fp => {
+    const p = deploy.projects[fp.id];
+    if (!p) return;   // project never touched in Deploy — nothing to shift; snapshot will init on first ensurePD
+    const prevStart = p.lastCadenceStart;
+    const newStart  = fp.start || null;
+    const newEnd    = fp.end   || null;
+    // Always update the snapshot so future shifts are detectable.
+    p.lastCadenceStart = newStart;
+    p.lastCadenceEnd   = newEnd;
+    if (!prevStart || !newStart) return;             // bootstrap path — no shift on first encounter
+    if (prevStart === newStart) return;              // no change
+    const tOld = Date.parse(prevStart);
+    const tNew = Date.parse(newStart);
+    if (isNaN(tOld) || isNaN(tNew)) return;
+    const deltaMs = tNew - tOld;
+    if (deltaMs === 0) return;
+    const touched = _shiftGateDates(p.gates, deltaMs);
+    if (touched > 0) {
+      shifted.push({
+        id: fp.id,
+        name: fp.name || fp.id,
+        deltaDays: Math.round(deltaMs / 86400000),
+        gatesTouched: touched
+      });
+    }
+  });
+  return shifted;
+}
+
+// v8.14 — Aggregate closed-transition count across every Deploy project,
+// given a fresh fleet-wide WO pool. Per-project unit-filter mirrors the
+// renderWorkOrders filter pipeline (FLOC substring match). Used to feed the
+// one-shot closed-transitions toast after a fleet-wide IW39 load. Returns
+// { total, projectCount } where projectCount is the number of projects with
+// at least one closed-transition.
+function _countAllClosedTransitions(fleetWidePool) {
+  if (!Array.isArray(fleetWidePool) || fleetWidePool.length === 0) return { total: 0, projectCount: 0 };
+  let total = 0;
+  const affected = new Set();
+  Object.keys(deploy.projects || {}).forEach(pid => {
+    const fp = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === pid) : null;
+    const unitId = (fp && fp.unit) ? String(fp.unit).trim().toUpperCase() : '';
+    if (!unitId) return;
+    const pool = fleetWidePool.filter(w => String(w.floc || '').toUpperCase().includes(unitId));
+    if (pool.length === 0) return;
+    const closed = _ackFilteredRecentlyClosed(pid, _recentlyClosedWOs(pid, pool));
+    if (closed.length > 0) {
+      total += closed.length;
+      affected.add(pid);
+    }
+  });
+  return { total, projectCount: affected.size };
+}
+
 function renderWorkOrders(id) {
   const p  = pd(id);
   const el = document.getElementById('woContent');
@@ -3309,7 +3445,10 @@ function renderWorkOrders(id) {
   // CLSD/TECO/CNCL on the latest source). Computed BEFORE the filter so we
   // catch closed transitions that the open-only WO filter would otherwise
   // hide silently.
-  const _recentlyClosed = _recentlyClosedWOs(id, _sourcePool);
+  // v8.14 — Filter out closed-transitions the operator has dismissed via
+  // the per-row ✕ button. Re-surfaces on subsequent transitions of the
+  // same WO (ack timestamp < new last_seen_iso).
+  const _recentlyClosed = _ackFilteredRecentlyClosed(id, _recentlyClosedWOs(id, _sourcePool));
 
   // v8.13 Item 2 — capture the "prior known" set BEFORE row render so the
   // carried-over glow can distinguish "added on this load" from "carried
@@ -3409,7 +3548,10 @@ function renderWorkOrders(id) {
             <span class="wrcb-desc" title="${esc(r.description)}">${esc(r.description) || '<span style="color:var(--faint);font-style:italic">no description</span>'}</span>
             <span class="wrcb-transition">${esc(r.last_status)} → ${esc(r.current_status)}</span>
             <span class="wrcb-comp">${esc(r.component) || '—'}</span>
-            <span class="wrcb-days">${r.days_since}d ago</span>
+            <span class="wrcb-days" style="display:flex;align-items:center;justify-content:flex-end;gap:6px">
+              <span>${r.days_since}d ago</span>
+              <button class="wrcb-ack-btn" title="Dismiss this row (acknowledged — won't re-surface unless this WO transitions again)" onclick="event.stopPropagation(); _dismissClosedWO('${id}', '${esc(r.wo_number).replace(/'/g, "\\'")}');" style="background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer;font-size:10px;padding:1px 6px;border-radius:3px;font-family:inherit;line-height:1.4">✓ ack</button>
+            </span>
           </div>`).join('')}
       </div>
     </div>`;
@@ -3817,6 +3959,20 @@ function confirmIW39FleetImport() {
   _updateIW39StatusPill(matchingCount);
   const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
   toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl} (session memory)`, 'success');
+  // v8.14 — Closed-transitions one-shot toast. Aggregates across every Deploy
+  // project (unit-filtered per-project) and surfaces a single deferred toast
+  // if any previously-open WO has transitioned to CLSD/TECO/CNCL on this load.
+  // Already-acknowledged transitions are filtered out by _ackFilteredRecentlyClosed.
+  // Deferred 2200ms so it sits AFTER the "Fleet-wide IW39 loaded" success toast
+  // (which auto-dismisses around the same time the operator's eye returns).
+  try {
+    const _ct = _countAllClosedTransitions(wos);
+    if (_ct.total > 0) {
+      setTimeout(() => {
+        toast(`✓ ${_ct.total} WO${_ct.total === 1 ? '' : 's'} closed since last load (across ${_ct.projectCount} project${_ct.projectCount === 1 ? '' : 's'}). Check the Recently closed bucket on each.`, 'info');
+      }, 2200);
+    }
+  } catch (e) { console.warn('[v8.14 closed-transitions toast] error:', e); }
   if (selProjId) renderMaterials(selProjId);
 }
 
