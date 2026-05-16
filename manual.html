@@ -174,6 +174,88 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
 /* Footnote */
 .note{color:var(--text-dim);font-size:11.5px;font-style:italic}
+
+/* ──────────────────────────────────────────────────────────────
+   Forecast Dates section — diamond legend + timeline + decision
+   tree + summary matrix. Scoped under #tab-forecast so styles don't
+   bleed into other sections. Uses manual palette throughout.
+   ────────────────────────────────────────────────────────────── */
+#tab-forecast .fd-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 18px}
+@media (max-width:780px){#tab-forecast .fd-legend{grid-template-columns:repeat(2,1fr)}}
+#tab-forecast .fd-legend-card{background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:14px 12px;text-align:center}
+#tab-forecast .fd-legend-card .fd-dm-wrap{display:flex;justify-content:center;align-items:center;height:24px;margin-bottom:8px}
+#tab-forecast .fd-legend-card .fd-name{font-size:11.5px;font-weight:700;color:var(--text-pri);margin-bottom:4px}
+#tab-forecast .fd-legend-card .fd-desc{font-size:11px;color:var(--text-sec);line-height:1.5}
+
+#tab-forecast .fd-dm{display:inline-block;width:14px;height:14px;transform:rotate(45deg);vertical-align:middle}
+#tab-forecast .fd-dm.solid{background:var(--lens-accent)}
+#tab-forecast .fd-dm.ghost{background:transparent;border:2px solid var(--lens-accent);opacity:0.55}
+#tab-forecast .fd-dm.proj{background:transparent;border:1.5px solid var(--lens-accent);opacity:0.7}
+#tab-forecast .fd-dm.proj.cond{border-style:dashed}
+#tab-forecast .fd-dm.cm{background:var(--gold)}
+#tab-forecast .fd-dm.erp{background:var(--red);opacity:0.65;width:11px;height:11px}
+
+/* Timeline visual */
+#tab-forecast .fd-tl{background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:18px 24px 14px;margin:12px 0}
+#tab-forecast .fd-tl-caption{font-size:10.5px;color:var(--text-sec);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px}
+#tab-forecast .fd-tl-axis{position:relative;height:70px;border-bottom:1px solid var(--border)}
+#tab-forecast .fd-tl-tick{position:absolute;bottom:-1px;font-size:10px;color:var(--text-dim);transform:translateX(-50%)}
+#tab-forecast .fd-tl-tick::before{content:'';display:block;width:1px;height:6px;background:var(--text-dim);margin:0 auto 2px;opacity:0.55}
+#tab-forecast .fd-tl-marker{position:absolute;top:36px;transform:translate(-50%,-50%) rotate(45deg);z-index:5}
+#tab-forecast .fd-tl-marker.solid{width:14px;height:14px;background:var(--lens-accent);box-shadow:0 0 10px rgba(61,201,160,0.45)}
+#tab-forecast .fd-tl-marker.ghost{width:12px;height:12px;background:transparent;border:2px solid var(--lens-accent);opacity:0.55}
+#tab-forecast .fd-tl-marker.erp{width:10px;height:10px;background:var(--red);opacity:0.7}
+#tab-forecast .fd-tl-label{position:absolute;top:56px;transform:translateX(-50%);font-size:9.5px;font-weight:700;color:var(--text-sec);white-space:nowrap;letter-spacing:0.04em}
+#tab-forecast .fd-tl-label.solid{color:var(--lens-accent)}
+#tab-forecast .fd-tl-label.ghost{color:var(--lens-accent);opacity:0.75}
+#tab-forecast .fd-tl-label.erp{color:var(--red)}
+#tab-forecast .fd-tl-today-line{position:absolute;top:0;bottom:-16px;width:2px;background:var(--gold);opacity:0.9;z-index:8;box-shadow:0 0 6px rgba(255,213,79,0.45)}
+#tab-forecast .fd-tl-today-tag{position:absolute;top:-8px;transform:translateX(-50%);background:var(--gold);color:var(--bg-deep);font-size:9px;font-weight:800;padding:2px 6px;border-radius:3px;letter-spacing:0.08em;z-index:9}
+
+/* State tables — distinct from main manual tables */
+#tab-forecast .fd-st{width:100%;border-collapse:collapse;margin:10px 0;font-size:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tab-forecast .fd-st th{background:var(--bg-card2);color:var(--text-sec);padding:9px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1px solid var(--border);font-weight:700}
+#tab-forecast .fd-st td{padding:9px 12px;color:var(--text-pri);border-bottom:1px solid var(--border-soft);vertical-align:top}
+#tab-forecast .fd-st tr:last-child td{border-bottom:none}
+#tab-forecast .fd-st .field{font-family:Consolas,'Courier New',monospace;color:var(--lens-accent)}
+#tab-forecast .fd-st .val  {font-family:Consolas,'Courier New',monospace;color:var(--text-pri)}
+#tab-forecast .fd-st .nt   {color:var(--text-dim);font-size:11px;font-style:italic}
+#tab-forecast .fd-st .changed{color:var(--green)}
+#tab-forecast .fd-st .frozen{color:var(--text-dim)}
+
+/* Formula card */
+#tab-forecast .fd-formula{background:var(--bg-deep);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:6px;padding:14px 18px;margin:12px 0;font-family:Consolas,'Courier New',monospace;font-size:12.5px}
+#tab-forecast .fd-formula .fd-formula-title{color:var(--green);font-family:'Segoe UI',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px}
+#tab-forecast .fd-formula .fd-formula-line{color:var(--text-pri);margin:3px 0}
+#tab-forecast .fd-formula .fd-formula-result{color:var(--green);font-weight:700;margin:3px 0}
+#tab-forecast .fd-formula .fd-formula-note{font-family:'Segoe UI',sans-serif;color:var(--text-sec);font-size:11px;font-style:italic;margin-top:10px}
+
+/* Decision tree */
+#tab-forecast .fd-tree{background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:16px 20px;margin:12px 0;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1.75}
+#tab-forecast .fd-tree .q{color:var(--lens-accent);font-weight:700}
+#tab-forecast .fd-tree .y{color:var(--green)}
+#tab-forecast .fd-tree .n{color:var(--gold)}
+#tab-forecast .fd-tree .r{color:var(--text-pri)}
+#tab-forecast .fd-tree .c{color:var(--text-dim);font-style:italic;font-family:'Segoe UI',sans-serif}
+
+/* Summary matrix */
+#tab-forecast .fd-matrix{width:100%;border-collapse:collapse;margin:12px 0;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tab-forecast .fd-matrix th{background:var(--bg-card2);color:var(--text-pri);padding:11px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid var(--border);font-weight:700}
+#tab-forecast .fd-matrix td{padding:11px 14px;font-size:12px;border-bottom:1px solid var(--border-soft);vertical-align:top;color:var(--text-pri)}
+#tab-forecast .fd-matrix tr:last-child td{border-bottom:none}
+#tab-forecast .fd-matrix .col-field{background:var(--bg-deep);color:var(--lens-accent);font-family:Consolas,'Courier New',monospace;font-weight:600}
+#tab-forecast .fd-matrix .yes{color:var(--green);font-weight:700}
+#tab-forecast .fd-matrix .no {color:var(--text-dim)}
+#tab-forecast .fd-matrix .cond{color:var(--gold);font-weight:600}
+#tab-forecast .fd-matrix .changed{color:var(--green);font-weight:700}
+
+/* Inline tags */
+#tab-forecast .fd-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:0.04em;vertical-align:middle}
+#tab-forecast .fd-tag.shadow{background:rgba(61,201,160,0.15);color:var(--lens-accent);border:1px solid var(--lens-accent)}
+#tab-forecast .fd-tag.solid {background:rgba(76,175,80,0.15);color:var(--green);border:1px solid var(--green)}
+#tab-forecast .fd-tag.erp   {background:rgba(244,67,54,0.15);color:var(--red);border:1px solid var(--red)}
+#tab-forecast .fd-tag.frozen{background:var(--bg-card2);color:var(--text-sec);border:1px solid var(--border)}
+#tab-forecast .fd-tag.recompute{background:rgba(255,213,79,0.15);color:var(--gold);border:1px solid var(--gold)}
 </style>
 </head>
 <body>
@@ -182,6 +264,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-05-17 — covers Lens v4.3.6 + FIX-1 · <strong>Cadence v18.5.8 (P/Lock + cleanup toolkit + save-time safety net + Override Audit accessed from Config + grouped-by-machine collapsible + multi-select + 4 master buttons + Clear All Orphans + FIX today-clamp orphan self-generation + FIX JSON drag-drop on splash + 🩺 Health Check button)</strong> · Deploy v8.13 + FIX-1 · Intake v8.7 + FIX-2 · numacore_lib v1.5.1 · Tab 13 Forecast Dates updated for v18.5.8</p>
   <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-05-08.</div>
 </header>
 
@@ -205,9 +288,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
   <button class="tab-btn"        data-tab="fleetconfig"   data-section="supporting"><span class="num">10.</span>FleetConfig</button>
   <button class="tab-btn"        data-tab="migrate"       data-section="supporting"><span class="num">11.</span>Migrate</button>
   <button class="tab-btn"        data-tab="troubleshoot"  data-section="reference"><span class="num">12.</span>Troubleshooting</button>
-  <button class="tab-btn"        data-tab="roadmap"       data-section="reference"><span class="num">13.</span>Roadmap</button>
-  <button class="tab-btn"        data-tab="glossary"      data-section="reference"><span class="num">14.</span>Glossary</button>
-  <button class="tab-btn"        data-tab="prompts"       data-section="reference"><span class="num">15.</span>Spin-off Prompts</button>
+  <button class="tab-btn"        data-tab="forecast"      data-section="reference"><span class="num">13.</span>Forecast Dates</button>
+  <button class="tab-btn"        data-tab="roadmap"       data-section="reference"><span class="num">14.</span>Roadmap</button>
+  <button class="tab-btn"        data-tab="glossary"      data-section="reference"><span class="num">15.</span>Glossary</button>
+  <button class="tab-btn"        data-tab="prompts"       data-section="reference"><span class="num">16.</span>Spin-off Prompts</button>
 </nav>
 
 <main>
@@ -376,19 +460,21 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
   <h3>File layout on disk</h3>
 <pre>4 - Build Output/
-├── Lens v4.0.html              ← host app (Mission Control)
-├── Cadence v18.html            ← standalone scheduler
-├── Deploy v8.6.html            ← standalone execution
-├── Intake v8.html              ← data ingestion
+├── Lens v4.3.6.html            ← host app (Mission Control) — visibility autosave + Util % bands
+├── Cadence v18.4.html          ← standalone scheduler
+├── Deploy v8.11.html           ← standalone execution — Gates/Tasks UX bundle
+├── Intake v8.7.html            ← data ingestion (FIX-1 in-place) — Idling tab
 ├── FleetConfig v0.1.html       ← fleet/model/unit editor
 ├── migrate.html                ← V4 Flat → V5 migrator
-├── numacore_lib.js             ← shared library (esc, parseDate, makeComponentId, V5 validator)
+├── numacore_lib.js             ← shared library (v1.5.1) — esc, parseDate, makeComponentId,
+│                                  V5 validator, showToast (top-clearance applied), fmtDate
 └── tools/
     ├── index.html              ← Pages landing
     ├── cadence.html            ← iframe target
     ├── deploy.html             ← iframe target
     ├── intake.html             ← Pages link
     └── fleetconfig.html        ← Pages link</pre>
+  <p class="note">Versions shown reflect live Pages state at the time of the most recent manual revision (see header). Run <code>archive/&lt;Tool&gt;/v&lt;N&gt;/</code> to find rollback snapshots and per-version Backlog.md files.</p>
 
   <h3>file:// vs GitHub Pages — both first-class</h3>
   <p>The suite must work identically from a local file system AND from a hosted GitHub Pages deploy. Two contexts, one codebase.</p>
@@ -494,9 +580,45 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
     <p>All nine capabilities are visible in the UI; missing ones are greyed with a tooltip explaining what data is needed. This is not access control — never describe it as one.</p>
   </div>
 
+  <h3>Hero panel — Unit detail view <span class="badge done">v4.3 → v4.3.6</span></h3>
+  <p>When you drill into a unit (FLEET → MODEL → UNIT in Vitals), the right pane fills with a "Hero panel" — a tile grid summarising that unit's state at a glance. The layout was re-organised across v4.3.3 → v4.3.6 into a 4-row × 2-column grid plus a spanning Health Mix row.</p>
+  <table>
+    <thead><tr><th>Tile</th><th>What it shows</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td><b>SMU</b></td><td>Current hours + "Last recorded: <em>date</em>"</td><td>Max <code>last_smu</code> across the unit's components</td></tr>
+      <tr><td><b>Worst Health</b></td><td>Highest-band component (% benchmark + colour)</td><td>Max <code>pct</code>, excluding no-benchmark</td></tr>
+      <tr><td><b>Idling % (life)</b></td><td>Lifetime idle %, colour-banded <span class="badge done">v4.3.4</span></td><td><code>masterData.units[].idle_pct_life</code> (V5) or first-non-null aggregation across components (V4 Flat)</td></tr>
+      <tr><td><b>Active Projects</b></td><td>Count of in-flight Cadence projects for this unit</td><td><code>workingData.projects[]</code> (Cadence-owned, read-only)</td></tr>
+      <tr><td><b>Idling % (3-month)</b></td><td>Recent idle %, same colour bands as life</td><td><code>masterData.units[].idle_pct_3mo</code> (V5) or per-component (V4 Flat)</td></tr>
+      <tr><td><b>Next PCR</b></td><td>Soonest <code>pred_changeout</code> date + component + days-ahead</td><td>Min date across the unit's components</td></tr>
+      <tr><td><b>Util %</b></td><td>Median util_rate (hrs/day × 24 → %), colour-banded <span class="badge done">v4.3.6</span></td><td><code>_computeUnitUtilPct</code> — median of non-zero util_rate values</td></tr>
+      <tr><td><b>Components</b></td><td>Count of tracked components on this unit</td><td>Length of unit's components array</td></tr>
+      <tr><td><b>Health Mix</b> <em>(spans 2 cols)</em></td><td>Pill row showing per-band counts (green/amber/orange/red/NB)</td><td>Aggregated from each component's status band</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Idle % colour bands (v4.3.4 — Idle tiles)</h4>
+  <p>Both idle tiles use the same monotonic palette per <code>_idleBandClass</code>: <b>&lt;30%</b> green (healthy), <b>30–50%</b> orange (caution), <b>≥50%</b> red (concerning), null/no-data light grey + dimmed. Higher idle = worse.</p>
+
+  <h4>Util % colour bands (v4.3.6 — operator-specified U-shape)</h4>
+  <p>Util % uses a <em>different</em> palette per <code>_utilBandClass</code> — both extremes are orange because both under-utilisation and over-utilisation are concerns: <b>&lt;40%</b> orange (under-utilised, fleet productivity gap), <b>40–70%</b> blue (expected range), <b>&gt;70%</b> orange (over-utilised, component stress), null/no-data grey. The "expected range" interpretation is operator-specific.</p>
+
+  <h4>ConMon trend arrows (v4.3.1 — component cards)</h4>
+  <p>Each component row in the drill-in shows a per-row ▲ ▬ ▼ trend arrow computed from the last 4 oil-sample <code>sample_rank</code> values via a slope classifier (<code>_componentTrend</code>). Slope &gt; +0.5 = ▲ trending worse; &lt; −0.5 = ▼ trending better; flat between. Heatmap cells use the same logic and clicking either surface opens the side-by-side sample-trend modal.</p>
+
+  <h3>Visibility persistence — autosave to localStorage <span class="badge done">v4.3.5 + v4.3.6 FIX-1</span></h3>
+  <p>The "fleets I've hidden" and "components I've hidden" toggles in the filter sidebar now <em>survive a browser close</em>, even if you don't click Save Final. v4.3.5 wired a debounced 400 ms write of <code>ui_settings</code> to <code>localStorage['lens_ui_settings_&lt;clientCode&gt;']</code> on every visibility toggle. On the next file load, Lens checks if its localStorage entry is newer than the JSON's <code>meta.lastSaved</code> — if so, it overlays your in-session toggles on top of the file. A small gold pulsing ● dot next to <b>SAVE FILE</b> lights up while local changes are unsaved-to-file. When you click SAVE FILE, the JSON gets the new <code>lastSaved</code> stamp and the dot clears.</p>
+  <p>Per-client by design: localStorage is keyed by <code>clientCode</code>, so switching to a different client's JSON starts from that client's last localStorage state (or a clean slate if you've never opened them before). Same JSON loaded on a different machine = uses what's in the file (no cross-machine sync).</p>
+  <p>On overlay-apply, Lens fires a 2.4-second toast ("Restored unsaved visibility changes from <em>date</em>") so you know why the dot is lit. <strong>v4.3.6 FIX-1:</strong> <code>numacore_lib.showToast</code>'s <code>bottom: 24px</code> was raised to <code>70px</code> across the suite so the toast no longer visually collides with Lens's bottom-right <code>#legend</code> pill (the operator-reported dark-on-dark camouflage issue).</p>
+
+  <div class="callout">
+    <div class="callout-title">If you want to nuke the local cache</div>
+    <p>Open DevTools (F12) → Application → Local Storage → delete the <code>lens_ui_settings_&lt;CLIENTCODE&gt;</code> key. On next load Lens falls back to whatever the JSON says. A "Clear local cache" button in the Settings panel is on the deferred list — F12 works in the meantime.</p>
+  </div>
+
   <div class="callout coming">
     <div class="callout-title">Coming next</div>
-    <p>Cross-reload state persistence (<code>_restoreState()</code>) is wired but unloaded — autosave to localStorage works, restore on reload doesn't. Pre-existing CPT behaviour, tracked separately.</p>
+    <p>Cross-tab autosave conflict resolution (BroadcastChannel) — current behaviour is last-write-wins if you have two browser tabs open on the same client JSON. Single-tab is the normal flow so this is a low-priority deferred item.</p>
   </div>
 </section>
 
@@ -699,6 +821,35 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
   </table>
   <p class="note">Hold Shift while dragging to snap to week boundaries. Hold Alt to ignore the project bar (drag a single diamond out of a tightly packed cluster).</p>
 
+  <h3>Utilization rate (util_rate) — Data Editor + behaviour on file load <span class="badge done">v18.3</span></h3>
+  <p>Every component has a <code>util_rate</code> (hours/day) that drives both the theoretical changeout date and the multi-cycle Projections feature. The value is stored internally as hrs/day (e.g. 18); operator views and edits it as a percentage of 24 hours (75%). Source path: Intake reads the XLSX <code>% Util</code> column at BUILD time, converts <code>fraction × 24 → hrs/day</code>, and writes it onto each component's <code>util_rate</code> field. UPDATE-mode refreshes the value when the source XLSX changes (e.g. quarterly review, shift-pattern change).</p>
+
+  <h4>Util % column in Data Editor</h4>
+  <p>Open the <b>Data Editor</b> tab. A column labelled <b>Util %</b> sits between <i>Benchmark</i> and <i>% of Bench</i> (drag to reorder; order is persisted in the JSON). Display shows the percentage form (<code>util_rate / 24 × 100</code>, e.g. <code>util_rate</code> 18 displays as "75"). Empty cell means util_rate is missing/zero.</p>
+  <p>Edit by clicking the cell, typing a new percentage value (0–100), and pressing Enter or clicking away. Internally, <code>util_rate</code> becomes <code>typed_value × 24 / 100</code>. Autosave fires within ~1.5s. Round-trip-safe.</p>
+  <p class="note">Edit doesn't auto-trigger the file-load recompute — that runs only when a file is dropped. Projections refresh on next render of the Schedule tab (which reads <code>r.util_rate</code> live), but shadow/solid diamond positions stay until next file reload. Same pattern as other Data Editor edits (benchmark, install_hours, etc.).</p>
+
+  <h4>Inferred util_rate warning (blue ⓘ badge)</h4>
+  <p>When a V5 file has components missing <code>util_rate</code>, Cadence falls back to a <strong>unit-peer median</strong>: if at least 2 sibling components on the same unit have explicit util_rate, their median fills the gap for the missing components. Inferred components get a small blue ⓘ badge next to their label in the unit tree (hover for tooltip explaining the inference).</p>
+  <p>Inferred values produce sensible default predictions but are less precise than operator-set values. To replace an inferred value with an explicit one: edit the Util % column for that component in the Data Editor. The ⓘ badge disappears on next render (the inferred flag is cleared on explicit edit).</p>
+  <p class="note">If NO components on a unit have explicit util_rate, none can be inferred — those components remain undateable until you populate util_rate (via Data Editor edit, or by re-BUILDing/UPDATEing in Intake with util_rate column mapped). Per PCR data-model rules: don't invent util_rate from calendar elapsed time; it's a measured/set value.</p>
+
+  <h4>Auto-clear stale localStorage on rebuild</h4>
+  <p>Cadence's autosave persists drag overrides and project edits in browser localStorage (scoped per client code). When you re-BUILD or re-UPDATE the fleet JSON in Intake, the new file represents a fresh starting point — old drag overrides from prior sessions should NOT bleed onto it.</p>
+  <p>v18.3 FIX-4 detects this automatically: on file load, Cadence compares the file's <code>meta.lastSaved</code> timestamp against the localStorage snapshot's <code>savedAt</code>. If the file is newer (i.e. Intake just rebuilt it), localStorage is cleared and a toast appears:</p>
+  <p style="background:#1a2230;border-left:3px solid #ffd54f;padding:8px 12px;border-radius:4px;font-size:12px;color:#e6edf3">⚠ File is newer than local autosave — cleared stale N drag overrides + M projects (re-BUILD detected)</p>
+  <p>Round-trip safety preserved: when you Save File from Cadence, both the file and localStorage get the same timestamp → no clear on next load → mid-session drag work survives. If you want drags to persist across rebuilds, click Save File <em>before</em> rebuilding — that way the drags are in the JSON's <code>componentDateOverrides</code> and re-applied via the file (no localStorage dependency). DevTools console shows the exact timestamps and counts when a clear fires.</p>
+
+  <div class="callout">
+    <div class="callout-title">Forecast date calculations — see Tab 13</div>
+    <p>The full lifecycle of how Cadence computes solid + shadow diamond positions (the formula, the override / project-link interlock, what happens between SMU updates) is documented on its own page: <a href="#" data-jump="forecast">Forecast Dates</a>. Worth a read if you're trying to understand why a diamond is or isn't where you expect.</p>
+  </div>
+
+  <h3>Category vocabulary unification <span class="badge done">v18.4 (Suite Chunk 5)</span></h3>
+  <p>Cadence v18.4 was part of a suite-wide canonicalization sweep — the four tools + numacore_lib now share a single canonical 9-category vocabulary: <code>engine, drivetrain, geared_drives, drill_rotary, hydraulics, cylinders, undercarriage, attachments, misc</code>. Legacy aliases (<code>tracks → undercarriage</code>, <code>drill_swing → drill_rotary</code>) are normalised at read time via <code>numacore_lib.canonicalCategory()</code> so cross-tool data stays consistent regardless of which tool wrote it.</p>
+  <p>In Cadence specifically: every <code>r.category</code> is canonicalised on file load before the data drives Auto-Build / Components / Optimiser. The v17.x "misc-fallback rescue" pass was removed (categories should be canonical at the source after Intake — if something falls to <code>misc</code>, it's a real classification gap, not noise to be papered over). Side-effect you'll see: <em>Undercarriage</em> appears consistently as a category label across all four tools (no more "Tracks" in Cadence vs "Undercarriage" in Lens).</p>
+  <p class="note">Bumping VERSION to <code>'18.4'</code> resets localStorage scope per the version-keyed pattern — your first load on v18.4 after upgrading from v18.3 starts a fresh autosave bucket. The file's <code>componentDateOverrides</code> still load normally; only the localStorage drag-pending state is reset.</p>
+
   <h3>Auto-Build workflow (TL;DR)</h3>
   <ol>
     <li><b>Details</b> sub-tab: pick a date window and fleet/model scope.</li>
@@ -743,11 +894,195 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
     <li><span class="nm">Overview</span><span class="desc">Summary Gantt + project list. Landing view toggle (Gantt ↔ List). Status filters: All / Active / Pending. Default view.</span></li>
     <li><span class="nm">Gantt</span><span class="desc">Full per-project Gantt with milestone markers. Drag to adjust dates.</span></li>
     <li><span class="nm">Gates</span><span class="desc">12-gate template per project. Add / delete / reorder. Strong confirmation on deleting template gates.</span></li>
-    <li><span class="nm">Materials</span><span class="desc">SAP BOM ingestion. Filters: All / Pending / In SAP / Ordered / On Site / Not Found.</span></li>
-    <li><span class="nm">Work Orders</span><span class="desc">SAP IW39 work-order tracker. Filters by SAP status: CRTD / REL / TECO / CLSD.</span></li>
+    <li><span class="nm">Bill of Materials</span><span class="desc">Dealer BOM ingestion (Excel). Stock badges from Inventory Master + Component Snapshot cross-reference (v8.9). Filters: All / Pending / In SAP / Ordered / On Site / Not Found. Renamed from "Materials" in v8.8.</span></li>
+    <li><span class="nm">Work Orders</span><span class="desc">Per-project SAP IW39 work-order tracker. Filters by SAP status: CRTD / REL / TECO / CLSD. v8.9: fleet-wide IW39 upload (header pill) supersedes this for stock lookups when loaded.</span></li>
     <li><span class="nm">Actions</span><span class="desc">Task checklist per project. ✎ button opens action in modal — dual-mode save (edit in place with <code>editedAt</code> timestamp OR create new).</span></li>
     <li><span class="nm">Notes</span><span class="desc">Free-text notes per project. Inline textarea edit. Edited notes get <code>(edited)</code> tag with timestamp.</span></li>
   </ul>
+
+  <h3>Fleet-wide session uploads (v8.9) <span class="badge done">v8.9</span></h3>
+  <p>Two header pills sit next to the Call Horizon selector. Both are session-memory only — they NEVER save into the fleet JSON. Re-upload replaces. Page reload = need to re-upload (intentional: inventory state is "true at the moment of download").</p>
+  <ul>
+    <li><b>📦 Inventory</b> — the fleet-wide SAP Inventory Master export. Provides on-hand and on-order quantities for every SAP material. ~5-10 second parse on a 5-6 MB export. Pill flips green showing "as of HH:MM · N mats" when loaded. Required for Stock badges to show data.</li>
+    <li><b>⚙ IW39</b> — the fleet-wide SAP IW39 export. Covers all units. Per-unit filter happens at render time via Sort Field substring match. Pill shows "as of HH:MM · N WOs · M YBA2". Required for fleet-wide BOM↔IW39 link badges.</li>
+    <li><b>YBA2 only</b> toggle — appears in the header only when YBA2 rows exist in the loaded IW39. Filters BOM badge counts + drill-down WO list live without re-upload (Option B chosen 2026-05-11).</li>
+  </ul>
+
+  <h3>Bill of Materials tab — stock workflow (v8.9) <span class="badge done">v8.9 + FIX-1</span></h3>
+  <p>The BOM tab has three uploads that together drive the Stock column:</p>
+  <ol>
+    <li><b>📂 Upload BOM (Excel)</b> — dealer-provided BOM with columns: Line · Description · Part No (VPN) · SAP Material No · Qty · Unit Cost. <strong>v8.9 FIX-1:</strong> if the workbook has multiple sheets (e.g. one per component — ENGINE, TORQUE, TRANSMISSION, …), a sheet picker appears. Each sheet shows its row count + first 4 column headers + a checkbox. Smart defaults: catalog-like sheets (large row count OR name matches "parts"/"catalog"/etc.) are <em>deselected</em>; per-component sheets are <em>selected</em>. Override as needed. Click "Next: Map Columns →" — the existing column mapper opens against the concatenated rows from your selected sheets. Each row is tagged internally with its source sheet name (used as the component hint for stock matching).</li>
+    <li><b>📂 Upload Component Snapshot</b> — <b>per-project</b> (per-unit) cross-reference Excel. Maps each component (e.g. Engine, Torque, Transmission) to up to 12 VPN variants across NEW (cols New 01-04), EXC (EXC 01-04), and REMAN (REMAN 01-04) generations. Column-04 = current generation; 01-03 = superseded. <code>N/A</code> literal means "no variant in this slot". Button label flips to "✓ Snapshot: N components" when loaded. Persists in the fleet JSON.</li>
+    <li><b>Inventory Master + IW39</b> — uploaded once per session from the header pills (above).</li>
+  </ol>
+
+  <h4>Stock column — badge states</h4>
+  <p>For each BOM row, Deploy walks the Component Snapshot to find the matching component, collects all 12 variant VPNs, looks each up in the Inventory Master, and aggregates on-hand + on-order:</p>
+  <ul>
+    <li><b>✓ In stock</b> (green) — total on-hand across all variants ≥ BOM qty needed. "2OH·5PO" appended showing aggregate counts.</li>
+    <li><b>⚠ Partial</b> (gold) — on-hand > 0 but less than qty needed.</li>
+    <li><b>⚠ On order</b> (gold) — on-hand = 0, but at least one variant has open PO quantity.</li>
+    <li><b>✗ Out</b> (red) — on-hand = 0 and no open POs across any variant.</li>
+    <li><b>⚪ No snapshot</b> (grey) — the BOM row's VPN didn't match any Snapshot row. Either the Snapshot isn't loaded yet or this BOM line is genuinely outside the cross-reference scope.</li>
+    <li><b>⚪ Not in master</b> (grey) — Snapshot variants resolved, but none of them are present in the Inventory Master. Either the Inventory Master isn't loaded yet or these materials aren't tracked in SAP.</li>
+  </ul>
+  <p>Click any badge → drill-down modal opens showing: BOM line info, every populated variant (with current vs superseded marker), per-variant Inventory match (description · on hand · on order · location), plus the matching Work Orders (top 50) for this material from the fleet-wide IW39 (filtered by unit Sort Field + YBA2 toggle).</p>
+
+  <h4>VPN normalisation rule</h4>
+  <p>Cross-reference matching uses a normalised VPN: <b>remove all hyphens EXCEPT the "-EXC" suffix</b>. So <code>3723563-EXC</code> stays <code>3723563-EXC</code>, but <code>123-4567</code> becomes <code>1234567</code>. The lookup also tries both the SAP Material column (A) and Manufacturer Part No column (D) in the Inventory Master, so a dealer-provided Cat number can resolve to a SAP material whether the SAP record carries the Cat number as Material or as Manufacturer Part No.</p>
+
+  <h3>Work Orders tab — fleet-wide IW39 per-unit filtering (v8.9 FIX-2) <span class="badge done">v8.9 + FIX-2</span></h3>
+  <p>When a fleet-wide IW39 is loaded (header pill), the project's Work Orders tab auto-populates from it — filtered to this unit's Sort Field (FLOC substring match). A green source-indicator pill in the WO tab toolbar shows what's driving the view. Per-project IW39 uploads (the v8.7/v8.8 path) remain as a fallback if no fleet-wide IW39 is loaded — the toolbar shows a different pill ("📁 Per-project upload") in that case.</p>
+  <p><strong>Note on the v8.8 BOM↔IW39 material-match badge:</strong> the "🔗 N WOs" badge on each BOM row was removed in v8.9 FIX-1. The operator's IW39 exports do not carry a SAP Material No column, so the material-based join always returned zero. The Work Orders tab is now the single canonical place to see WOs for a project; the BOM Stock drill-down points there with a small reference note.</p>
+
+  <h3>IW39 Work Order filter tightening (v8.10 FIX-1) <span class="badge done">v8.10 FIX-1</span></h3>
+  <p>v8.9 left the Work Orders tab too permissive — it surfaced TECO/CLSD/CNCL closed orders, (PM) Service line items the operator never wanted to see, and only filtered by a hardcoded <code>YBA2</code> order type. v8.10 FIX-1 tightens the pipeline with three additional filters, all stacked on top of the v8.9 FIX-2 unit Sort Field filter:</p>
+  <ol>
+    <li><strong>Status: OPEN-only.</strong> Work Orders tab now hard-filters to status token in <code>{REL, CRTD}</code>. TECO / CLSD / CNCL never appear in the table. The status filter chips at the top of the WO tab are now <code>[All open / CRTD / REL]</code> (TECO chip removed). The status token is the first alphanumeric run of the status field — a User Status string like <code>"REL YBA2 ZZZZ"</code> parses to <code>REL</code> for filtering purposes.</li>
+    <li><strong>Description exclusion (configurable).</strong> Any WO whose <strong>Description</strong> contains the configured exclusion keyword (case-insensitive substring) is filtered out. Default: <code>Service</code> — covers SAP <code>(PM) Service</code> line items. Comma-separate for multiple keywords (e.g. <code>Service, Inspection</code>). Empty value = no exclusion.</li>
+    <li><strong>Per-fleet Order Type allow-list (configurable).</strong> The hardcoded YBA2 toggle is gone. Replaced with a comma-separated list at <code>deploy.config.iw39OrderTypes</code> (default <code>YBA2</code>). Every client site uses different SAP order-type codes, so this MUST be per-client. Examples: <code>YBA2</code> or <code>YBA2,YBA3</code> or <code>ZPM3</code>. Empty value = no order-type restriction (shows all types).</li>
+  </ol>
+  <p><strong>Where the filters are set:</strong> two text inputs at the top of the Work Orders tab, just below the toolbar (operator preference 2026-05-12: inline, not in a settings menu). Edit either input and click away (or press Enter) — the filter saves to <code>deploy.config</code> (per-fleet, persists in the fleet JSON) and the WO tab re-renders immediately. The unsaved-changes indicator lights up so a Save Session will commit it.</p>
+  <p><strong>Source indicator pill</strong> now reads: <em>"⚙ Fleet-wide IW39 · filtered to [UNIT] · [order-types] · open only"</em>. The "Filtered Out" summary card next to CRTD / REL shows how many WOs the filter excluded — useful for a sanity check that you're not over-filtering. Header IW39 status pill (top of page) shows <code>as of HH:MM · N WOs · M [order-types]</code>.</p>
+  <p><strong>What survived from v8.9:</strong> the unit FLOC / Sort Field filter is unchanged (still the first thing applied — only WOs for THIS project's unit get in). Per-project IW39 fallback path is unchanged. The same filters apply whether the source is fleet-wide IW39 or a per-project upload.</p>
+
+  <h3>IW39 import features (v8.8 + v8.9 FIX-3) <span class="badge done">v8.8 / v8.9 FIX-3</span></h3>
+  <ul>
+    <li><b>Sort Field filter on per-project IW39 import</b> — at upload time, optional substring filter against the FLOC / Sort Field column. Value is auto-uppercased per the suite Sort Field CAPS rule. Toast surfaces kept + skipped counts. Note: this is the per-project upload path; for fleet-wide IW39 (header pill) the per-unit filter happens at render time in the Work Orders tab — no upload-time filter needed.</li>
+    <li><b>Preview-first column mapper</b> — both BOM and IW39 column-mapper modals show a 5-row live preview below the dropdowns. Update column mapping → preview re-renders. Catches column-mapping mistakes before commit.</li>
+    <li><b>Wider file-extension acceptance (v8.9 FIX-3)</b> — all 5 Deploy file inputs (BOM, IW39, Snapshot, Inventory Master, fleet-wide IW39) now accept <code>.xlsx · .xls · .xlsm · .xlsb · .csv · .txt · .tsv</code>. If you previously saw your dealer / SAP exports filtered out of the Open dialog, they should now appear.</li>
+  </ul>
+
+  <h3>Autosave behaviour (v8.9 FIX-4) <span class="badge done">v8.9 FIX-4</span></h3>
+  <p>Deploy auto-saves a backup of your edits to browser storage every couple of minutes. When you re-open Deploy and a newer auto-backup exists than the last save in the fleet file, Deploy <strong>silently restores those edits</strong> and shows a quiet toast ("Restored Deploy edits from HH:MM"). No confirmation pop-up — operator-locked: <em>"Deploy should always load the latest session"</em>. This means switching Lens ↔ Deploy ↔ back during a meeting never interrupts the flow. If you ever want to discard the auto-backup, just click <b>Save File</b> (the new save supersedes the backup) or use the Clear Saved button.</p>
+
+  <h3>Component ↔ BOM-sheet linking + per-component Parts Readiness rollup (v8.10) <span class="badge done">v8.10</span></h3>
+  <p>Real-world multi-sheet BOMs (the D9T 17-sheet workbook is the canonical example) only make sense when each project component on the Overview tab is tied to the BOM sheet that holds its parts. v8.10 introduces an explicit linking step between the FIX-1 sheet picker and the column mapper, then re-organises the BOM tab so each project component renders as its own card with a Parts Readiness rollup.</p>
+  <h4>The linking modal</h4>
+  <p>When you upload a multi-sheet BOM <em>and</em> the project has Cadence-linked components on the Overview tab, a second modal opens after the sheet picker:</p>
+  <ul>
+    <li><b>Left column</b> — every project component (same list as the Overview tab) with its category label.</li>
+    <li><b>Right column</b> — a dropdown of the BOM sheets you just selected.</li>
+    <li><b>Pre-fill</b> — fuzzy-suggested matches via a token-overlap scorer with substring boost. Confidence pills: <b>strong</b> (green, score ≥ 0.6), <b>fuzzy</b> (gold, 0.3-0.6), <b>manual</b> (blue, low score), <b>unassigned</b> (grey).</li>
+    <li><b>One-to-one constraint</b> — once a sheet is taken by one component, it shows as "(used)" and disabled in every other dropdown.</li>
+    <li><b>Footer</b> — live counter of unassigned sheets + how many components are mapped.</li>
+    <li><b>Buttons</b> — <b>Cancel upload</b> (aborts entirely), <b>Skip linking</b> (proceeds without a map, v8.9 behaviour), <b>Confirm &amp; continue →</b> (saves the map, opens the column mapper).</li>
+  </ul>
+  <p>The mapping is saved per project as <code>componentSheetMap</code> inside the fleet JSON — survives reload, no re-linking required.</p>
+  <h4>Edit the mapping later from the toolbar</h4>
+  <p>A "🔗 Set / Edit Component Map" button appears on the BOM toolbar whenever the project has linked components AND the BOM has source sheets. Click it to re-open the linking modal in edit mode without re-uploading. Changes apply immediately — the BOM tab re-renders with the new grouping.</p>
+  <h4>BOM tab — grouped view with Parts Readiness rollup</h4>
+  <p>Once a mapping is set, the flat BOM table is replaced with one card per project component (in Overview-tab order). Each card header shows:</p>
+  <ul>
+    <li><b>Component name</b> + linked sheet name (or "no sheet assigned" / "no Cadence-linked components" depending on state)</li>
+    <li><b>Readiness rollup badge:</b> <b>READY</b> (green, every row in this component is in-stock), <b>PARTIAL</b> (gold, mixed states with at least some parts available or on order), <b>AT RISK</b> (red, all rows are out / no-snapshot / not-in-master), <b>UNMAPPED</b> (grey, no sheet assigned), <b>0 PARTS</b> (grey, sheet assigned but no matching rows)</li>
+    <li><b>Aggregate counts</b> — total on-hand · total on-order across all rows in this component</li>
+    <li><b>Parts count</b> — total rows in this component (plus a "N match filter" sub-count if a SAP-status filter is active)</li>
+  </ul>
+  <p>Click any card to expand → the same v8.9 BOM columns appear (Line / Description / Part No / SAP Material / Qty / Line Cost / Stock badge / SAP Status / Notes). Per-row stock badges are <em>identical</em> to v8.9 — same 6 states, same 3-layer Snapshot + Inventory lookup, same drill-down on click. Filter chips (Pending / Confirmed / Ordered / On Site / Not Found) work inside each expanded group.</p>
+  <h4>The "Unmapped" catch-all</h4>
+  <p>BOM rows whose source sheet isn't in any component's mapping (either the operator deliberately left a sheet unmapped, or imported a legacy BOM without source-sheet tags) land in a bottom "Unmapped (no scope)" group. Nothing is hidden; if a row exists it's visible somewhere in the tab.</p>
+  <h4>What v8.10 doesn't change</h4>
+  <ul>
+    <li>Per-row stock badge behaviour (still v8.9 — 6 states, same drill-down).</li>
+    <li>The v8.9 FIX-1 multi-sheet picker — runs first, exactly as before.</li>
+    <li>Save / autosave behaviour — the new <code>componentSheetMap</code> persists via the existing <code>_markUnsaved()</code> hook, no new save plumbing.</li>
+    <li>Work Orders tab and IW39 filtering — unchanged from v8.9 FIX-2.</li>
+  </ul>
+  <p><strong>Fallback paths preserved:</strong> single-sheet workbooks bypass both the picker and the linking modal. Projects without Cadence-linked components skip the linking modal automatically and render BOM as a single "All parts" card (no rollup until you load a project with components).</p>
+
+  <h4>What persists in the fleet JSON (and what doesn't)</h4>
+  <p>Quick reference — confirming what survives save/load:</p>
+  <ul>
+    <li><b>✓ Persists per project:</b> BOM rows (including the per-row <code>_sourceSheet</code> tag from v8.9 FIX-1), Component Snapshot, the new <code>componentSheetMap</code> (component ↔ sheet mapping from the linking modal), gates, customTasks, workOrders, actions, notes. All saved under <code>workingData.deployData.projects[id]</code> in the fleet JSON. <strong>Upload once, persists forever</strong> — never need to re-upload the BOM or Component Snapshot in a future session.</li>
+    <li><b>✗ Session-only (re-upload each session, by design):</b> Inventory Master, Fleet-wide IW39. These are large fleet-wide snapshots that change frequently — the operator-locked rule is to upload them fresh each session from the SAP exports. Never written to the fleet JSON.</li>
+    <li><b>✓ Mission Control round-trip safety (v8.10):</b> Deploy v8.10 includes a defensive merge in <code>parseFleet()</code> that handles the dual-shape situation when fleet files round-trip between Lens (Mission Control flow — Deploy embedded as iframe) and standalone Deploy. Per project, the merge picks the richer side per Deploy-owned field between <code>workingData.deployData.projects[id]</code> and <code>workingData.projectDetails[id]</code>. Prevents apparent "lost edits" after a Lens-side save, in either direction. Scheduled for proper architectural cleanup in v8.12.</li>
+  </ul>
+
+  <h3>Gates / Tasks UX bundle (v8.11) <span class="badge done">v8.11</span></h3>
+  <p>Four operator-requested Gates/Tasks improvements shipped together as a coherent bundle. Captured 2026-05-11 evening; built and shipped 2026-05-14 per <code>Review docs/Deploy v8.11 - Gates_Tasks UX bundle - scoping - 2026-05-11.md</code>.</p>
+
+  <h4>Item 4 — Gates ↔ Gantt single source of truth</h4>
+  <p>Pre-v8.11, the Gates tab read from <code>p.gates[]</code> while the Gantt's right-click "Add Task" wrote to a separate <code>p.customTasks[]</code> array. Tasks added via Gantt never showed up in the Gates list — the operator-reported sync bug. v8.11 consolidates: <code>ensurePD</code> migrates any <code>customTasks</code> entries into <code>p.gates[]</code> on every load (idempotent — empty/missing customTasks is a no-op) and then <code>delete</code>s the legacy field. <code>addCustomTask</code> / <code>deleteCustomTask</code> now operate on <code>p.gates[]</code> too. All mutation paths fire <code>renderGates</code> + <code>renderGateStrip</code> + <code>renderGantt</code> in concert.</p>
+
+  <h4>Item 3 — Drag-reorder for gates</h4>
+  <p>The Gates tab now has a <b>⋮⋮ drag handle</b> on the left of every gate row. Click-and-drag the handle (NOT the row body — text inputs keep native text selection) to a new position; a gold line indicator shows where the row will drop. Persists to <code>p.gates[]</code> and re-renders Gates + gate strip + Gantt on release. Existing ▲/▼ Move-up/down buttons are kept as a keyboard-accessible alternative. Touch/tablet drag support is out of scope for v8.11.</p>
+
+  <h4>Item 1 — Templates UX surfaced from Config to Gates tab</h4>
+  <p>Previously templates lived only inside the ⚙ Config overlay's "Step List Templates" panel — operators reported "where do I save/edit the templates?" The Gates tab now shows a banner at the top:</p>
+  <pre>📋 Templates for: &lt;Client Name&gt;  ·  Using: &lt;Template Name&gt;       [Edit Templates →]</pre>
+  <p>Clicking <b>Edit Templates →</b> opens the Config overlay, jumps to the Templates panel, and pre-selects the project's current template. Two new buttons in the Templates panel header support hand-tuning templates across clients:</p>
+  <ul>
+    <li><b>⤓ Export</b> — downloads the currently-selected template as <code>&lt;ClientCode&gt;_template_&lt;TplName&gt;_&lt;YYYYMMDD&gt;.json</code>. Schema: <code>numacore.deploy.template.v1</code> with name + steps array (id / name / type / durationDays).</li>
+    <li><b>⤒ Import</b> — file picker for a JSON template. Validates name + steps array structure; creates a fresh <code>tpl_</code> id so imports never clobber an existing template. The imported template's name gets " (imported)" suffix so you can rename it later. Toast confirms client + step count.</li>
+  </ul>
+  <p>Templates are still stored at <code>deploy.config.templates</code> in the fleet JSON — already client-specific by virtue of fleet files being per-client.</p>
+
+  <h4>Item 2 — Project-anchored Gantt timeline</h4>
+  <p>Pre-v8.11, the project Gantt's X-axis was anchored on <em>today</em> — TODAY stayed at a fixed screen position, project bars slid right as days passed, and a project that started 2 weeks ago appeared half off-screen. v8.11 flips the math: <code>tStart = projStart − lead</code>, <code>tEnd = projEnd + trail</code>. Project bars now sit at their absolute calendar positions and <strong>don't move</strong> as days pass; only the TODAY line moves. At a glance you can read "we're 2 weeks in, gate 4 should be done, is it?"</p>
+  <p>The zoom slider controls the lead + trail buffer:</p>
+  <ul>
+    <li><b>Zoom 1 (widest)</b> — 28 days lead, 21 days trail. Max context, see prep window + execution + a bit of after.</li>
+    <li><b>Zoom 5 (tightest)</b> — 0 lead, 0 trail. Just <code>projStart → projEnd</code>. Use when focused on the execution window only.</li>
+    <li>Levels 2–4 interpolate linearly between the extremes.</li>
+  </ul>
+  <p>Bars + the TODAY line use the same absolute-calendar conversion. If a project ends in the past, the Gantt will show TODAY off the right edge — visually obvious that you're past the window.</p>
+
+  <h4>Item 2a — Cancelled-project rendering</h4>
+  <p>A project that has been <em>previously activated and then deactivated</em> (i.e. has <code>activatedDate</code> set but <code>activated = false</code>) now renders the Gantt with a grey overlay instead of the "Activate to view" empty state. Bars + diamonds drop to opacity 0.42 and lose saturation; gate completion state is preserved (data lives in <code>p.gates[]</code>, never destroyed by deactivation). A red banner at the top of the Gantt reads:</p>
+  <pre>⛔ CANCELLED — project is deactivated. Bars + completion state are preserved
+   at their original calendar positions.                Last activated: 2026-03-04</pre>
+  <p>Newly-created projects that have never been activated still show the original "Activate this project to view the Gantt chart" empty state.</p>
+
+  <h4>Item 2b — Reactivation prompt</h4>
+  <p>Toggling a project from cancelled back to active raises a confirmation dialog:</p>
+  <pre>Reactivate "Excavator 750 — Eng PCR"?
+
+• OK     = keep ORIGINAL dates (2026-03-12 start)
+• Cancel = RESCHEDULE all gates from today
+
+Gate completion state is preserved either way.</pre>
+  <p>If you choose <b>Reschedule from today</b>, Deploy shifts every gate's <code>planStart</code> + <code>planEnd</code> by <code>(today − origStart)</code> days so the relative position of each gate within the project window stays the same. The project window itself (<code>p.start</code> / <code>p.end</code>) is NOT touched — those dates are managed by Cadence and Deploy never writes them. If you need to also shift the project window, do that in Cadence.</p>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming next — Cadence-shift continuity (Deploy v8.13)</div>
+    <p>If Cadence shifts a project's <code>start</code>/<code>end</code> dates AFTER Deploy gates have been placed, gates with explicit <code>planStart</code> currently stay at their fixed calendar dates while gates with empty planStart auto-spread on each render → mixed gates produce drift relative to the new window. v8.13 will detect external project-date changes on load and prompt: "Project schedule moved Δ days. Shift all gates by Δ to maintain relative position? Y/N." Mirrors the v8.11 reactivation prompt pattern. See <code>archive/Deploy/v8.11/Backlog.md</code> for the full deferred-item spec.</p>
+  </div>
+
+  <h3>Sub-tab terminology</h3>
+  <p>The Materials sub-tab was renamed to <b>Bill of Materials</b> in v8.8 — matches dealer terminology and how operators verbally refer to the file.</p>
+
+  <h3>Persistent WO memory + Recently Closed bucket (v8.13) <span class="badge done">v8.13</span></h3>
+  <p>Items 3+4 of the operator review V2 slide 3 four-item series (items 1+2 shipped as v8.10 FIX-4 — advanced description filter + per-row ✕ hide). v8.13 adds a persistence + reconciliation layer that turns the Work Orders tab into a project-level ledger of work tracked across IW39 snapshots. <strong>Version note:</strong> v8.12 is reserved for the planned dual-shape data model cleanup; this ships as v8.13 per the original deck slide's prediction.</p>
+
+  <h4>knownWOs map — what survives across IW39 loads</h4>
+  <p>Each project now carries a <code>knownWOs</code> object map at <code>deploy.projects[id].knownWOs</code> keyed by WO number. Every WO seen on this project's IW39 pass (whether per-project upload or fleet-wide IW39 filtered to this project's unit) gets recorded as <code>{ first_seen_iso, last_seen_iso, last_status, description, component }</code>. The map persists in the fleet JSON, so the operator's full WO history for a project survives reloads, app restarts, and meeting-to-meeting continuity. Companion fields:</p>
+  <ul>
+    <li><code>knownWOsLastLoadIso</code> — timestamp of the most recent <em>real</em> delta (new WO added OR known WO's status changed). Filter-change re-renders against an unchanged source pool produce no delta, so the timestamp doesn't advance.</li>
+    <li><code>knownWOsLastFleetAsOf</code> — tracks the fleet-wide IW39 timestamp this project was last recorded against, so a fresh fleet-wide load triggers a per-project refresh on first render of each project.</li>
+  </ul>
+
+  <h4>Carried-over glow on rows</h4>
+  <p>A WO row gets a <strong>↻ marker</strong> next to its WO number + a soft amber left-border when its <code>first_seen_iso</code> is earlier than <code>knownWOsLastLoadIso</code> — i.e. it was recorded on a PRIOR load, not this one. At-a-glance signal: "this WO has been with us for more than one IW39 cycle". Pure CSS (<code>.wo-carried-over</code> class on <code>&lt;tr&gt;</code> + inset box-shadow on the first <code>&lt;td&gt;</code>); no DOM restructure of the existing WO table.</p>
+
+  <h4>Recently Closed bucket</h4>
+  <p>A collapsible block renders ABOVE the open-WO list whenever previously-tracked WOs have transitioned from REL/CRTD to a closed status (TECO/CLSD/CNCL) on the latest IW39. Click the header to expand — each row shows:</p>
+  <pre>WO#         Description                Last → Current     Component   Days since
+12345678    Replace transmission seal  REL → TECO         TRANSMISSION 3d ago</pre>
+  <p>Sort: newest transitions first (smallest days-since on top). The bucket renders even when the open WO list is empty (the closed transitions are themselves operator-actionable info — "what work has closed since the last meeting?"). Silent disappearance from the IW39 source (no row at all in current pool) is deliberately NOT surfaced — ambiguous between SAP-side query change and a genuine close-then-purge.</p>
+
+  <div class="callout">
+    <div class="callout-title">Why a separate v8.13, not in-place on v8.11</div>
+    <p>v8.11 Gates/Tasks UX was already a 4-item bundle plus mid-design adds (cancelled rendering, reactivation prompt). Adding WO memory would have inflated v8.11 + complicated rollback. The original deck slide for this feature predicted exactly this slot: <em>"OR as a standalone v8.13 if Gates/Tasks ships first."</em> v8.12 number stays reserved for the planned dual-shape data model cleanup.</p>
+  </div>
+
+  <div class="callout coming">
+    <div class="callout-title">Coming next — operator-driven if used</div>
+    <p>If long-running projects start showing knownWOs bloat (entries that haven't been seen in months still hanging around), add a periodic prune: drop entries where <code>last_seen_iso</code> is older than 365 days AND <code>last_status</code> is in a closed set. If operators want to acknowledge closed transitions so the bucket eventually clears, add a per-row ✓ dismiss with a <code>recentlyClosedAcked</code> map. Both deferred — wait for evidence the need is real.</p>
+  </div>
+
+  <h3>Empty-projects empty state (v8.8) <span class="badge done">v8.8</span></h3>
+  <p>v8.7 conflated "no fleet loaded" with "fleet loaded, 0 projects" under a misleading toast. v8.8 differentiates: fleet loaded but zero projects → app renders with a friendly "📋 No projects yet" sidebar message + a 600ms info toast suggesting Cadence's Project Optimiser. Create projects in Cadence, save the fleet, re-open Deploy.</p>
 
   <h3>Slice ownership</h3>
   <div class="slice-grid">
@@ -797,6 +1132,63 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
   <h2><span class="panel-num">9</span>Intake</h2>
   <p class="lede">Standalone data ingestion tool. NOT a Lens panel — opens in its own browser tab. Three modes: BUILD, UPDATE, CONMON.</p>
 
+  <h3>Client setup — read this first</h3>
+  <p>The header has three things that scope everything else in Intake to one client. Get these right at the start of each client engagement and the rest of the tool behaves consistently across sessions.</p>
+
+  <h4>Client Code (top-right of header)</h4>
+  <p>A short identifier for the client — e.g. <code>BHP_MTW</code>, <code>ACME</code>, <code>RIO_PILBARA</code>. Forced to all-caps as you type. Drives three things automatically:</p>
+  <ul>
+    <li><b>Saved filename</b> — every JSON saved by Intake (BUILD, UPDATE, or CONMON commit) is named <code>&lt;CLIENTCODE&gt;_YYYY-MM-DD_HH-MM-SS.json</code>. So you never have to manually prefix anything.</li>
+    <li><b>Inside the JSON</b> — written to <code>meta.clientCode</code>. Lens / Cadence / Deploy read this when displaying which client is loaded.</li>
+    <li><b>localStorage scope</b> — Intake's saved state (mapping profiles, client settings, in-progress builds) is bucketed BY this client code. <b>Switching the client code in the header switches you to that client's bucket.</b> Your prior work on a different client is intact; type that code back in and it reappears.</li>
+  </ul>
+  <p>Pick a short, stable code and use the SAME code every session for the same client. If you change the code mid-session, you're effectively switching to a different bucket.</p>
+
+  <h4>Client Name (top-right of header, next to Client Code) <span class="badge done">v8.3</span></h4>
+  <p>A long human-readable name — e.g. <code>BHP Iron Ore — Mt Whaleback</code>, <code>Acme Mining Corporation</code>. Optional. Written to <code>meta.clientName</code> in the saved JSON. Used by Lens / Cadence / Deploy displays for friendlier labels. The Client Code is the technical identifier; the Client Name is what shows up in reports and on screen for humans.</p>
+
+  <h4>Client Settings (Step 1 of BUILD — first card) <span class="badge done">v8.3</span></h4>
+  <p>Three dropdowns set at BUILD time and baked into the saved JSON under <code>masterData.clientSettings</code>:</p>
+  <ul>
+    <li><b>Currency</b> — drives all <code>$</code> amounts in Lens / Cadence / Deploy displays. Default <code>CAD</code> (Canadian dollar). 6 options including USD, AUD, EUR, GBP, JPY.</li>
+    <li><b>Timezone</b> — drives every timestamp displayed in the suite. Default <code>America/Edmonton</code> (Mountain Time). Canadian timezones listed first as a group; world subset after.</li>
+    <li><b>Locale</b> — number/date formatting style. Default <code>en-CA</code>. 6 options including <code>fr-CA</code>.</li>
+  </ul>
+  <p>Defaults are pre-selected so you can normally hit Next without touching them. Editable later in FleetConfig's Settings panel (planned for Phase 2 of Chunk 3 — not shipped yet at the time of writing).</p>
+
+  <h4>Mapping profile (Step 1 of BUILD — second card)</h4>
+  <p>When you BUILD a fleet from an XLSX or CSV source, each client tends to have a different column layout. The mapping says "column F is unit ID, column J is category, column L is benchmark, etc." A <b>mapping profile</b> saves that column-to-field configuration under a name so you can reuse it next time the same client sends you the same file shape.</p>
+  <p>Workflow:</p>
+  <ol>
+    <li>Set your client code in the header first (this scopes the profile bucket).</li>
+    <li>Drop your XLSX file. Click through to step 3 (Field Mapping).</li>
+    <li>Map each column to a V5 field using the dropdowns.</li>
+    <li>Click <b>Save Profile</b>, give it a name (e.g. <code>"Monthly SMU export"</code>).</li>
+    <li>Next time the same client sends the same file shape: drop the file, pick the profile from the dropdown on step 1, the mapping populates automatically.</li>
+  </ol>
+  <p><b>Profiles are scoped per-client.</b> Type a different client code in the header and you'll see THAT client's profile dropdown contents (different from the previous client's). The hint <code>"for client: &lt;CODE&gt;"</code> next to each profile dropdown surfaces this so you can always tell whose profiles are loaded.</p>
+
+  <h4>Managing profiles at step 3</h4>
+  <p>From v8.3 onwards, step 3 (Field Mapping) shows the full profile management UI — you no longer need to go back to step 1 to switch or delete profiles:</p>
+  <ul>
+    <li><b>Loaded profile dropdown</b> shows what's currently active. <code>— No profile —</code> means the current mapping was set manually or hasn't been saved.</li>
+    <li><b>🗑 Delete</b> button removes the selected profile from this client's bucket. The current mapping in the table is unaffected — you can save it again under a different name immediately.</li>
+    <li><b>Save Profile</b> input pre-fills with the loaded profile name. Click Save to overwrite the loaded profile (you'll be asked to confirm). To save as a new profile, edit the name first.</li>
+    <li><b>Overwrite confirmation</b> — if you type an existing profile name in the Save input and click Save, you get a popup confirming the overwrite. Cancel if you didn't mean to.</li>
+  </ul>
+  <p><b>Renaming a profile</b> (not a separate button — workflow): load the profile from the dropdown → type the new name in the Save Profile input → click Save → the old name's profile is still there → select it in the dropdown → click Delete. End state: same mapping, new name.</p>
+
+  <h4>Recommended setup workflow for a new client</h4>
+  <ol>
+    <li>Type the new Client Code in the header (e.g. <code>NEWCLIENT</code>).</li>
+    <li>Type the Client Name next to it (e.g. <code>"New Client Pty Ltd"</code>).</li>
+    <li>Go to BUILD tab → confirm Client Settings card defaults match the client's location (change if not). The defaults are CAD / Mountain / en-CA.</li>
+    <li>Drop the client's XLSX → walk through the wizard → set up the column mapping.</li>
+    <li>Save the mapping as a profile (e.g. <code>"Monthly SMU export"</code>).</li>
+    <li>Save the JSON. Filename will be <code>NEWCLIENT_2026-05-10_21-34-22.json</code>.</li>
+    <li>Next session: type <code>NEWCLIENT</code> in the header — your settings, name, and mapping profiles for this client all reappear.</li>
+  </ol>
+
   <h3>Modes</h3>
   <table>
     <thead><tr><th>Mode</th><th>What it does</th><th>When to use</th></tr></thead>
@@ -839,22 +1231,68 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
   <ul>
     <li>FluidLife PDF text extraction via pdf.js</li>
     <li>Bulk-folder scanner: drop a directory of PDFs, processes all of them</li>
+    <li>Two-stage dedup keyed by FluidLife <code>Sample #</code> (format <code>YYYY/MM/DD-NNNN</code>): within-batch at parse time (OIL beats OPC for the same sample), cross-batch at commit time (new overrides existing same-<code>sample_id</code>)</li>
     <li>Unmatched-resolve dialog: when a sample's <code>(unit, component)</code> can't be matched, prompt to fix or skip</li>
     <li>History trim: last 10 samples OR ≤ 365 days old, whichever is looser</li>
   </ul>
 
-  <h3>Known issues</h3>
+  <h4>Drop-handler behaviour (v8.2)</h4>
+  <ul>
+    <li><b>Drops accumulate.</b> Dropping a second batch on top of an existing queue appends; the first batch is preserved. Same-<code>sample_num</code> records are deduped (OIL preferred over OPC).</li>
+    <li><b>Progress line surfaces dedup outcome:</b> <code>"N queued · +M from this drop · K duplicates skipped"</code>. Operator sees within-queue dedup happen in real time.</li>
+    <li><b>Commit alert distinguishes new vs updated:</b> <code>"Imported N samples — X new, Y updated existing entries. ConditionMonitoring total: T (after retention trim)."</code> Tells operator whether the fleet grew or just refreshed existing entries.</li>
+    <li><b>Two reset buttons:</b> <code>✕ Clear queue (keep fleet)</code> empties just the parsed-PDFs queue without dropping the loaded fleet (use this to restart a PDF batch without re-loading the fleet); <code>↺ Clear / Start Over</code> wipes everything for a full reset.</li>
+  </ul>
+
+  <h3>Resolved issues</h3>
   <table>
-    <thead><tr><th>Issue</th><th>Fix in Intake v8</th></tr></thead>
+    <thead><tr><th>Issue</th><th>Fix in</th></tr></thead>
     <tbody>
-      <tr><td>Lens-produced exports use sheet name "History"; legacy import searched for "historic"</td><td>Now accepts both, case-insensitive. No renaming required.</td></tr>
-      <tr><td><code>util_rate</code> only written by UPDATE path; BUILD path skips it</td><td>Brand-new clients have no <code>util_rate</code> until first UPDATE. Tracked.</td></tr>
+      <tr><td>Lens-produced exports use sheet name "History"; legacy import searched for "historic"</td><td>Intake v8 — now accepts both, case-insensitive. No renaming required.</td></tr>
+      <tr><td>ConMon <code>unit_id</code> was lowercased on commit, breaking the strict-match join in Lens (335 records went silently invisible)</td><td>Intake v8.1 FIX-1 — Sort Field (machine ID) now always CAPS per operator rule. Existing lowercase data made visible by Lens v4.1 FIX-1's case-insensitive read; re-importing migrates to CAPS.</td></tr>
+      <tr><td>Dropping a second PDF batch silently REPLACED the first batch (lost work)</td><td>Intake v8.2 Bug B — drop handler now appends, seeds dedup map from existing queue, surfaces "+M from this drop" count.</td></tr>
+      <tr><td>"Duplicates feel like they accumulate" — dedup logic was correct but operator had no signal it ran</td><td>Intake v8.2 Bug A (UX, not logic) — queue progress line shows "K duplicates skipped"; commit alert distinguishes new-to-fleet vs updated-existing.</td></tr>
+      <tr><td>V5 BUILD path emitted <code>util_rate: null</code> per component even though the source XLSX had a <code>% Util</code> column and the BUILD path correctly populated the unit-level <code>utilizationProfiles</code> slice</td><td>Intake v8.3 FIX-2 — <code>compsMap[comp_id]</code> definition now reads <code>utilMap[unit_id]</code> at component build, so each V5 component carries the converted hrs/day value. Same value as the unit's utilizationProfile entry → consistent across both V5 slices. Existing V5 files built before FIX-2 need a re-BUILD to gain values; the Cadence-side unit-peer median fallback covers them in the meantime.</td></tr>
+      <tr><td>V5 UPDATE path completely skipped <code>util_rate</code> sync — operator's quarterly/shift-change refreshes never reached the JSON</td><td>Intake v8.3 FIX-3 — <code>isV17</code> gate removed from the per-component sync; V5 files now update <code>r.util_rate</code> on each component AND keep <code>masterData.utilizationProfiles</code> in sync (update-in-place if entry exists, insert matching BUILD-path shape if missing).</td></tr>
     </tbody>
   </table>
 
+  <h3>IDLING tab — bulk-load idle % from a Fleet Utilization XLSX <span class="badge done">v8.5 → v8.7 + FIX-1</span></h3>
+  <p>A fourth mode (alongside BUILD / UPDATE / CONMON) reachable from the mode bar via the ⊘ <b>IDLING</b> button. It accepts a Fleet Utilization XLSX (typically a Cat MineStar / Vitals export, or any source with per-unit idle % readings) and writes the parsed idle metrics into an existing fleet JSON — for V5 that means <code>masterData.units[].idle_pct_life</code> + <code>idle_pct_3mo</code>; for V4 Flat it writes per-component on every comp of the matched unit (mirrors v8.3 FIX-2's util_rate pattern).</p>
+
+  <h4>The 3-box source config (v8.7)</h4>
+  <p>Pre-v8.7, Intake hardcoded a column-name match against "Idle %" → silently failed on any source that named the column differently. v8.7 replaces the auto-detect with three explicit source-config boxes, one per target field:</p>
+  <table>
+    <thead><tr><th>Box</th><th>Target field</th><th>Sheet picker</th><th>Column picker</th><th>Format toggle</th></tr></thead>
+    <tbody>
+      <tr><td><b>3-Month</b></td><td><code>idle_pct_3mo</code></td><td>any sheet in the workbook</td><td>any column on the chosen sheet</td><td><b>% (0–100)</b> or <b>Decimal (0–1)</b> with auto-×100</td></tr>
+      <tr><td><b>1-Year</b></td><td><code>idle_pct_life</code></td><td>any sheet</td><td>any column</td><td>same</td></tr>
+      <tr><td><b>Max-Lifetime</b></td><td><code>idle_pct_life</code></td><td>any sheet</td><td>any column</td><td>same</td></tr>
+    </tbody>
+  </table>
+  <p>When BOTH 1-Year and Max-Lifetime are filled, the larger value wins on <code>idle_pct_life</code> (operator's "max wins" rule). 1-Year as its own separate schema field is on the deferred list — currently they share <code>idle_pct_life</code>. Empty boxes are skipped.</p>
+
+  <h4>The 4-step flow</h4>
+  <ol>
+    <li><b>Load JSON</b> — drop the client's existing fleet JSON (V5 or V4 Flat — Intake detects the shape and writes the appropriate slice).</li>
+    <li><b>Drop Fleet Utilization XLSX</b> — Intake reads all sheets + columns; pre-fills the 3 boxes with auto-defaults if any column names match common patterns (helpful but not authoritative).</li>
+    <li><b>Configure the 3 boxes</b> — pick Sheet + Column + Format per target. The auto-defaults are just suggestions; adjust as needed.</li>
+    <li><b>Preview &amp; Apply</b> — per-box stats (matched / no-data / unmatched-unit) + a per-unit preview table show what's about to be written. Apply &amp; Download writes the updated JSON; original JSON is untouched until you save.</li>
+  </ol>
+
+  <h4>What counts as "no data" — v8.7 FIX-1 lesson <span class="badge done">v8.7 FIX-1</span></h4>
+  <p>v8.6 FIX-2 had introduced an <code>IDLING_FATAL_CALLOUT_RX = /Insufficient|Missing|Invalid/i</code> filter that rejected rows whose Callouts column contained those keywords — intended as a precision safeguard. <strong>But</strong> Cat MineStar exports carry those keywords as routine precision warnings on nearly every row (e.g. <em>"Insufficient runtime meter precision for valid calculation"</em>) even when the Idle % value <em>is</em> computed and present. The filter dropped 74-of-78 rows wholesale on the operator's first live test.</p>
+  <p>v8.7 FIX-1 drops the callout filter entirely. The no-data branch is now strictly <code>!isFinite(raw)</code> — i.e. the Idle % cell is empty or non-numeric. Stats label updated from "no data (skipped)" to "empty Idle % cell (skipped)" so the operator sees exactly what the count represents. The <code>IDLING_FATAL_CALLOUT_RX</code> constant remains defined for a future "skip flagged rows" optional toggle if anyone ever wants that gate back.</p>
+  <p><strong>Operator-confirmed working on Cat XLSX 2026-05-13 morning.</strong></p>
+
+  <div class="callout">
+    <div class="callout-title">Why this is a separate mode (not part of UPDATE)</div>
+    <p>UPDATE merges new fleet-master data (SMU readings, component installs/changeouts, benchmarks) — those modify <code>components[]</code> / <code>componentHistory[]</code>. IDLING writes purely utilisation-percent fields and never touches component master data. Keeping it on its own mode bar button means a "let's refresh idle figures this week" workflow doesn't risk re-running a full UPDATE.</p>
+  </div>
+
   <div class="callout warn">
     <div class="callout-title">Run BUILD or UPDATE — never both at once</div>
-    <p>Intake doesn't merge BUILD output into an existing client file. If you accidentally BUILD over a JSON with <code>workingData</code>, the working state is preserved (Intake never writes those slices) but <code>components[]</code> is rewritten from scratch. Always UPDATE for incremental changes.</p>
+    <p>Intake doesn't merge BUILD output into an existing client file. If you accidentally BUILD over a JSON with <code>workingData</code>, the working state is preserved (Intake never writes those slices) but <code>components[]</code> is rewritten from scratch. Always UPDATE for incremental changes. IDLING is safe to re-run — it only writes idle_pct_life / idle_pct_3mo, never anything else.</p>
   </div>
 </section>
 
@@ -909,8 +1347,8 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
   </div>
 
   <div class="callout">
-    <div class="callout-title">Chunk 13 — FleetConfig location decision</div>
-    <p>Path A: keep FleetConfig separate, add Excel template upload to it (v0.2). Path B: move M1 into Intake (more consistent with reference-data role); FleetConfig keeps M4 + future M2/M3. 30-min decision sprint scheduled.</p>
+    <div class="callout-title">FleetConfig location — Path B chosen <span class="badge done">Decided</span></div>
+    <p>The Path A vs B question was resolved in favour of <b>Path B</b>: fleet / unit setup moves into Intake (more consistent with the reference-data role); FleetConfig v0.2 keeps M4 + future M2 (Component Pocket Editor) + M3 (Parts Library Manager). Build is now Chunk 9 in the <a href="#" data-jump="roadmap">Roadmap</a>, blocked on Chunk 8's operator-requested walkthrough doc.</p>
   </div>
 </section>
 
@@ -996,6 +1434,57 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
   </ul>
   <p>Both patterns resolve the symptom. Cadence's is more defensive at the read site; Lens's is cleaner at the architecture level.</p>
 
+  <h3>Recent tool-specific fixes (post-FIX-4)</h3>
+  <p>The architectural FIX-1 through FIX-4 above resolved cross-tool / cross-envelope issues. The fixes below are tool-specific iterations from the fast-iteration cycles of 2026-05-12 → 2026-05-14. Compact format — see the suite Record of Change for full root-cause analyses.</p>
+
+  <h4>Deploy v8.10 fast-iteration cycle (2026-05-12 → 2026-05-13)</h4>
+  <table>
+    <thead><tr><th>FIX</th><th>Symptom</th><th>Root cause / Fix</th></tr></thead>
+    <tbody>
+      <tr><td><b>v8.10 FIX-2</b></td><td>Six small bugs surfaced in operator's first live v8.10 test (2026-05-13 morning).</td><td>Bundle: (1) WO unit-filter regression, (2) "Order" header alias, (3) per-sheet re-use after picker, (4) empty-sheet warnings, (5) Edit Map sheet-union behaviour, (6) SAP material back-fill.</td></tr>
+      <tr><td><b>v8.10 FIX-3</b></td><td>"All materials → Unmapped" on D9T BOM despite a clean component map.</td><td>Worksheet dimension width bug — ENGINE sheet was <code>A1:H76</code>, the picker padded <code>firstHdrs.length</code> to 8 → on other sheets the <code>_sourceSheet</code> tag landed at the wrong column index, breaking the lookup.</td></tr>
+      <tr><td><b>v8.10 FIX-4</b></td><td>WO list too noisy on long-running projects; no way to hide a specific WO that the operator knew was irrelevant.</td><td>Excel-style description filter (contains / starts-with / regex). Per-WO ✕ hide button + "Show all" banner. Per-project <code>woHide[]</code> persists.</td></tr>
+      <tr><td><b>v8.10 FIX-5</b></td><td>BOM tab: variant materials (EXC / REMAN) rendered as primary rows alongside the snapshot's NEW row — duplicated.</td><td>Italic alt sub-rows for Snapshot variants when their SAP entry exists. BOM columns centered (Line / Description / Notes stay left-aligned). <code>P/N</code> added as a fuzzy alias for VPN.</td></tr>
+      <tr><td><b>v8.10 FIX-6</b></td><td>Cross-project material demand was invisible — same SAP material called by 2+ components / projects produced no warning.</td><td>Blue ⚠ flag when same material crosses projects. Per-row + component-header rollup. Surfaces LH/RH over-commit + cross-project contention.</td></tr>
+      <tr><td><b>v8.10 FIX-7</b></td><td>Phantom "DIRECT 04" rows on BOLT / O-RING variants. Empty filter chip on "+ Add filter".</td><td>FIX-7.1: synthetic DIRECT variants no longer render as alts unless the snapshot row explicitly carries one. FIX-7.2: empty chip now renders so "+ Add filter" produces a visible target.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Intake Idling tab — V4 Flat + Cat XLSX fixes (2026-05-13)</h4>
+  <table>
+    <thead><tr><th>FIX</th><th>Symptom</th><th>Root cause / Fix</th></tr></thead>
+    <tbody>
+      <tr><td><b>v8.6 FIX-1</b></td><td>Drag-drop onto Idling targets threw a ReferenceError; browse-for-file path was fine.</td><td>Temporal-dead-zone in <code>onDrop</code> — the handler referenced a target binding before its <code>const</code> declaration. Hoisted the binding.</td></tr>
+      <tr><td><b>v8.6 FIX-2</b></td><td>V4 Flat fleet JSON rejected with "no masterData.units[]" — Intake's idle-write path was V5-only.</td><td>V4 Flat path writes idle per-component on every comp of the matched unit (mirrors v8.3 FIX-2's util_rate pattern). Lens v4.3.5 FIX-1 mirrors the read side via first-non-null aggregation.</td></tr>
+      <tr><td><b>v8.7 FIX-1</b></td><td>74-of-78 Cat MineStar rows classified as no-data despite valid Idle % values present.</td><td>The <code>IDLING_FATAL_CALLOUT_RX</code> filter from v8.6 FIX-2 rejected rows whose Callouts column contained "Insufficient / Missing / Invalid" keywords. Cat exports carry those as routine precision warnings — filter was over-aggressive. Filter dropped; no-data branch now strictly <code>!isFinite(raw)</code>. Operator-confirmed working 2026-05-13.</td></tr>
+      <tr><td><b>v8.7 FIX-2</b></td><td>Operator's fleet-visibility toggles (Lens v4.3.5 autosave) were lost after running Idling apply: <em>"the 'fleet select' gets reset when I update Idling with Intake."</em></td><td><code>applyIdlingToJSON</code> was stamping <code>fleet.meta.lastSaved = new Date().toISOString()</code> on every Idling apply. Lens v4.3.5's overlay logic applies localStorage <em>only if</em> <code>localStorage.savedAt &gt; json.meta.lastSaved</code>; Intake-stamped <code>lastSaved=now</code> made the downloaded JSON look newer than the localStorage state → overlay skipped → JSON's empty visibility settings won. <strong>Fix:</strong> drop the <code>lastSaved</code> stamp in IDLING (Intake doesn't own that meta field per slice-ownership rules — IDLING is a metadata-only add, not a canonical save); track the Idling event separately via new <code>meta.lastIdlingUpdate</code> field. BUILD / UPDATE / CONMON paths still stamp <code>lastSaved</code> correctly (those produce a new canonical fleet shape).</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Lens v4.3.5 + v4.3.6 visibility autosave + toast (2026-05-13)</h4>
+  <table>
+    <thead><tr><th>FIX</th><th>Symptom</th><th>Root cause / Fix</th></tr></thead>
+    <tbody>
+      <tr><td><b>v4.3.5 FIX-1</b></td><td>Lens v4.3.5 idle tiles showed "no data" on operator's V4 Flat client file.</td><td><code>_lookupUnitMeta</code> read only <code>masterData.units[]</code> (V5 path). Fallback added: scan root <code>components[]</code> on V4 Flat, return first-non-null <code>idle_pct_life</code> / <code>idle_pct_3mo</code> across the unit's components.</td></tr>
+      <tr><td><b>v4.3.6 FIX-1 / numacore_lib v1.5.1</b></td><td>Restored-autosave toast added in v4.3.6 didn't appear on operator's reload test, despite the autosave overlay clearly running.</td><td>Operator screenshot showed Lens's <code>#legend</code> pill at the bottom-right of the viewport with same dark palette as the toast. <code>showToast</code> at <code>bottom: 24px</code> + max-width 420px center → visual collision / camouflage. Raised <code>showToast</code> to <code>bottom: 70px</code> in numacore_lib v1.5.1 → toast now clears the legend with 31px of breathing room. Suite-wide change (all five tools' toasts).</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Deploy v8.13 in-version FIX (2026-05-14)</h4>
+  <table>
+    <thead><tr><th>FIX</th><th>Symptom</th><th>Root cause / Fix</th></tr></thead>
+    <tbody>
+      <tr><td><b>v8.13 FIX-1</b></td><td>Operator: <em>"we need a 'today' vertical line on the Deploy Gantt"</em> — the line added in v8.11's anchored-Gantt work was visually swallowed.</td><td>v8.11 rendered the TODAY line at 2px amber (<code>var(--amber)</code>) with opacity 0.7 / z-index 4 in the axis area + 2px amber at opacity 0.5 / z-index 2 through the rows — too faint against the dark theme + low z-index meant row content rendered on top. <strong>Fix:</strong> bump <code>.gantt-today-line</code> to 3px gold at opacity 0.95 / z-index 30 with a soft glow (<code>box-shadow:0 0 6px rgba(255,213,79,0.45)</code>). New <code>.gantt-today-label</code> class renders a "TODAY" tag at the top of the line in the axis area. Pure CSS / inline-style change; no behavioural code touched.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Deploy v8.11 in-version notes</h4>
+  <p>Deploy v8.11 (Gates/Tasks UX bundle) was a full v-bump rather than a FIX, but two design-discovery items were ROOT-CAUSED during build and are worth noting here:</p>
+  <ul>
+    <li><b>Two-array divergence</b> — Pre-v8.11 the Gates tab read from <code>p.gates[]</code> while the Gantt right-click wrote to a separate <code>p.customTasks[]</code> array. Migration in <code>ensurePD</code> consolidates the two on load + delete()s the legacy field. See Deploy section Item 4.</li>
+    <li><b>Cadence-shift continuity gap</b> — Explicit-<code>planStart</code> gates stay at their fixed calendar dates when Cadence shifts the project window. Mixed gates produce drift after a Cadence push-out. Surfaced 2026-05-13 in design discussion; deferred to Deploy v8.13 with the prompt-pattern spec logged in <code>archive/Deploy/v8.11/Backlog.md</code>.</li>
+  </ul>
+
   <h3>Common issues — quick reference</h3>
   <table>
     <thead><tr><th>Symptom</th><th>Likely cause</th><th>Action</th></tr></thead>
@@ -1021,47 +1510,530 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 </section>
 
 <!-- ====================================================================== -->
-<!-- TAB 13 — ROADMAP (Stage 2)                                              -->
+<!-- TAB 13 — FORECAST DATES (added 2026-05-14)                              -->
+<!-- ====================================================================== -->
+<section id="tab-forecast" class="tab-panel">
+  <h2><span class="panel-num">13</span>Forecast Dates <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— how Cadence's changeout diamonds are calculated</span></h2>
+  <p class="lede">The full lifecycle of a component's changeout date — from Intake UPDATE through to two weeks of Lens use. Calculations matter; this is the canonical reference for how the solid + shadow diamonds get their positions.</p>
+
+  <h3>Primer — what the diamonds mean</h3>
+  <p>Every component on the Cadence Schedule timeline has up to three diamond markers. Their position is computed from a single formula plus a small set of rules about who's allowed to move which diamond when.</p>
+
+  <div class="fd-legend">
+    <div class="fd-legend-card">
+      <div class="fd-dm-wrap"><span class="fd-dm solid"></span></div>
+      <div class="fd-name">Solid diamond</div>
+      <div class="fd-desc">The <em>working</em> changeout date — what the planner uses. Stored as <code>changeout_date</code>.</div>
+    </div>
+    <div class="fd-legend-card">
+      <div class="fd-dm-wrap"><span class="fd-dm ghost"></span></div>
+      <div class="fd-name">Shadow (ghost) diamond</div>
+      <div class="fd-desc">The current <em>theoretical</em> date. Only rendered when it differs from the solid. Stored as <code>original_date</code>.</div>
+    </div>
+    <div class="fd-legend-card">
+      <div class="fd-dm-wrap"><span class="fd-dm proj"></span></div>
+      <div class="fd-name">Projection diamonds</div>
+      <div class="fd-desc">Optional. v18.1 multi-cycle projection ON. Hollow markers at <code>changeout_date + N × (benchmark / util_rate)</code>. Not persisted.</div>
+    </div>
+    <div class="fd-legend-card">
+      <div class="fd-dm-wrap"><span class="fd-dm cm"></span></div>
+      <div class="fd-name">CM marker (variant)</div>
+      <div class="fd-desc">A solid diamond on a condition-based component. Same position rules; different colour to flag the replacement strategy.</div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">The three dates that drive everything</div>
+    <p><span class="fd-tag erp">ERP</span> <code>changeout_date_erp</code> — the source-system prediction at the time of Intake import. <strong>Never modified after Intake.</strong> Used as an anchor for delta detection.</p>
+    <p><span class="fd-tag solid">SOLID</span> <code>changeout_date</code> — the working date. May get dragged by the planner, anchored by a project link, or recomputed from the formula.</p>
+    <p><span class="fd-tag shadow">SHADOW</span> <code>original_date</code> — the theoretical recompute. Tracks the formula's current answer on every JSON load. Used to render the ghost when it disagrees with the solid.</p>
+  </div>
+
+  <h3>Worked example — Engine on BD401</h3>
+  <p>Same component followed through all three stages. Real numbers. The same formula runs at every stage; what changes is which inputs are fresh.</p>
+  <table class="fd-st">
+    <thead><tr><th style="width:34%">Field</th><th style="width:22%">Value</th><th>What it is</th></tr></thead>
+    <tbody>
+      <tr><td class="field">unit</td>            <td class="val">BD401</td>          <td class="nt">The machine.</td></tr>
+      <tr><td class="field">component</td>       <td class="val">ENGINE</td>         <td class="nt">The tracked item.</td></tr>
+      <tr><td class="field">install_date</td>    <td class="val">2024-08-01</td>     <td class="nt">When this engine was installed.</td></tr>
+      <tr><td class="field">install_hours</td>   <td class="val">12,400</td>         <td class="nt">Unit SMU at installation.</td></tr>
+      <tr><td class="field">benchmark</td>       <td class="val">20,000 hrs</td>     <td class="nt">Manufacturer / fleet life expectation.</td></tr>
+      <tr><td class="field">util_rate</td>       <td class="val">18 hrs/day</td>     <td class="nt">Measured utilisation (set in Intake or via the Cadence Data Editor; never derived from elapsed days).</td></tr>
+      <tr><td class="field">last_smu</td>        <td class="val">18,200</td>         <td class="nt">Latest reading from the most recent SMU UPDATE.</td></tr>
+      <tr><td class="field">last_read</td>       <td class="val">2026-05-01</td>     <td class="nt">The date the last_smu reading was captured.</td></tr>
+      <tr><td class="field">changeout_date_erp</td> <td class="val">2026-09-15</td>  <td class="nt">ERP source system's prediction at Intake time. Stays here forever.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="fd-formula">
+    <div class="fd-formula-title">The one formula (Cadence _recomputeTheoreticalDates)</div>
+    <div class="fd-formula-line">hoursUsed = last_smu − install_hours</div>
+    <div class="fd-formula-line">hoursRemaining = benchmark − hoursUsed</div>
+    <div class="fd-formula-line">daysRemaining = hoursRemaining / util_rate</div>
+    <div class="fd-formula-result">newTheoretical = last_read + daysRemaining days</div>
+    <div class="fd-formula-note">Skipped when <code style="background:transparent;border:none;color:var(--text-sec)">benchmark</code> or <code style="background:transparent;border:none;color:var(--text-sec)">util_rate</code> is missing/zero. Reference date falls back to TODAY if <code style="background:transparent;border:none;color:var(--text-sec)">last_read</code> is absent.</div>
+  </div>
+
+  <p><strong>For the engine above:</strong> hoursUsed = 18,200 − 12,400 = <code>5,800</code>. hoursRemaining = 20,000 − 5,800 = <code>14,200</code>. daysRemaining = 14,200 / 18 ≈ <code>789 days</code>. newTheoretical = 2026-05-01 + 789 days ≈ <strong>2028-06-29</strong>. That's the <span class="fd-tag shadow">SHADOW</span> answer — what the formula says today.</p>
+  <p>The ERP source said <strong>2026-09-15</strong>. Difference: ~22 months. The delta-flag logic (threshold 60 days) marks this for operator visibility — could be a methodology difference (ERP using simpler math) or stale source data. Operator decides whether to honor ERP or the recompute.</p>
+
+  <h3>Stage 1 — Post-Intake "UPDATE all"</h3>
+  <p>You just ran an UPDATE pass in Intake (SMU sync + component master sync). The JSON has fresh hours data plus whatever the source ERP says about predicted changeouts. <strong>Cadence hasn't been opened on this fresh JSON yet.</strong></p>
+
+  <h4>What Intake stamped on the engine</h4>
+  <table class="fd-st">
+    <thead><tr><th style="width:34%">Field</th><th style="width:22%">Value</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td class="field">last_smu</td>           <td class="val">18,200</td>      <td class="nt">From your SMU XLSX (column mapped at BUILD time).</td></tr>
+      <tr><td class="field">last_read</td>          <td class="val">2026-05-01</td>  <td class="nt">SMU reading date from the XLSX.</td></tr>
+      <tr><td class="field">install_hours</td>      <td class="val">12,400</td>      <td class="nt">Refreshed if a replacement was detected in the source.</td></tr>
+      <tr><td class="field">benchmark</td>          <td class="val">20,000</td>      <td class="nt">From source XLSX. Pre-existing benchmark wins if source is blank.</td></tr>
+      <tr><td class="field">util_rate</td>          <td class="val">18</td>          <td class="nt">v8.3 FIX-3 — UPDATE keeps util_rate in sync. Source <code>% Util</code> column × 24 → hrs/day.</td></tr>
+      <tr><td class="field">changeout_date_erp</td> <td class="val">2026-09-15</td>  <td class="nt">Source ERP's predicted changeout. <strong>Locked here forever</strong> — UPDATE syncs new value, never wipes.</td></tr>
+      <tr><td class="field">changeout_date</td>     <td class="val">2026-09-15</td>  <td class="nt">Working date. UPDATE moves it WITH ERP only if planner hadn't already dragged it (i.e. <code>changeout_date === original_date</code> pre-update). Otherwise left alone — the ghost will surface the new ERP delta on next Cadence open.</td></tr>
+      <tr><td class="field">original_date</td>      <td class="val">2026-09-15</td>  <td class="nt">Theoretical anchor. UPDATE moves it to the new ERP date on every refresh.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <div class="callout-title">Why no separate "post-recompute" state yet</div>
+    <p>Cadence's recompute pass runs <strong>on JSON load</strong>, not in Intake. Post-Intake, the JSON's <code>original_date</code> still says "2026-09-15" (ERP-anchored). The formula's answer (2028-06-29 in our example) only writes itself in when Cadence loads the file.</p>
+  </div>
+
+  <h4>What the Schedule timeline looks like before anyone opens Cadence</h4>
+  <p>No diamonds are visible to anyone yet — Cadence hasn't rendered them. But here's where the next-Cadence-render WILL place them on this JSON's data:</p>
+
+  <div class="fd-tl">
+    <div class="fd-tl-caption">Schedule timeline · BD401 ENGINE · pre-Cadence-open state · TODAY = 2026-05-14</div>
+    <div class="fd-tl-axis">
+      <div class="fd-tl-tick" style="left:12%">2026-Jun</div>
+      <div class="fd-tl-tick" style="left:28%">2026-Sep</div>
+      <div class="fd-tl-tick" style="left:44%">2026-Dec</div>
+      <div class="fd-tl-tick" style="left:60%">2027-Jun</div>
+      <div class="fd-tl-tick" style="left:76%">2027-Dec</div>
+      <div class="fd-tl-tick" style="left:92%">2028-Jun</div>
+      <div class="fd-tl-today-line" style="left:6%"></div>
+      <div class="fd-tl-today-tag" style="left:6%">TODAY</div>
+      <div class="fd-tl-marker erp" style="left:28%"></div>
+      <div class="fd-tl-marker solid" style="left:28%"></div>
+      <div class="fd-tl-label erp" style="left:28%;top:18px">ERP &amp; solid (same date)</div>
+    </div>
+  </div>
+  <p class="note" style="text-align:center;margin-top:6px">Post-Intake: solid = ERP = original. No ghost diamond yet because <code>changeout_date === original_date</code>.</p>
+
+  <h3>Stage 2 — When you update HRS / open the JSON in Cadence</h3>
+  <p>You drop the freshly-Intake-updated JSON into Cadence (either standalone or via Lens). On load, Cadence runs <code>_recomputeTheoreticalDates</code>. <strong>This is where the dates actually move</strong> based on the new hours.</p>
+
+  <h4>The recompute pass — what changes for each diamond</h4>
+
+  <div class="fd-tree">
+    <span class="q">For every component in the file:</span>
+    <br>&nbsp;&nbsp;&nbsp;<span class="c">// skip if benchmark or util_rate missing/zero — diamonds stay where they were</span>
+    <br>&nbsp;&nbsp;&nbsp;1. Compute <span class="r">newTheoretical = last_read + (benchmark − (last_smu − install_hours)) / util_rate</span>
+    <br>&nbsp;&nbsp;&nbsp;2. <span class="q">Always</span>: r.<span class="r">original_date</span> ← newTheoretical &nbsp;<span class="c">// shadow always moves</span>
+    <br>&nbsp;&nbsp;&nbsp;3. <span class="q">If component is in componentDateOverrides</span>:
+    <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y">→ Skip solid update</span> &nbsp;<span class="c">// planner dragged it — preserve the drag</span>
+    <br>&nbsp;&nbsp;&nbsp;4. <span class="q">Else if component is linked to a project</span> (Auto-Build or manual link):
+    <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y">→ Skip solid update</span> &nbsp;<span class="c">// project anchor wins</span>
+    <br>&nbsp;&nbsp;&nbsp;5. <span class="q">Else</span>:
+    <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="n">→ r.</span><span class="r">changeout_date</span> ← newTheoretical &nbsp;<span class="c">// solid moves to match shadow</span>
+    <br>&nbsp;&nbsp;&nbsp;6. <span class="q">Delta check</span>: if |newTheoretical − changeout_date_erp| &gt; 60 days,
+    <br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="r">→ push to state.deltaFlagged[]</span> &nbsp;<span class="c">// visible in the operator UI</span>
+    <br>&nbsp;&nbsp;&nbsp;<span class="c">// after this loop, a separate today-clamp pass pulls any past-dated theoretical diamonds forward to today</span>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-title">The override + project-link interlock</div>
+    <p><span class="fd-tag shadow">SHADOW</span> always tells you what the formula says — even when the solid won't budge. That's the operator-locked rule: <em>the theoretical answer is never hidden, but you decide whether to chase it.</em></p>
+    <p>If you've dragged the solid manually, that's recorded in <code>componentDateOverrides</code> and the solid stays put. The shadow will appear next to it showing where the formula thinks it should be.</p>
+    <p>If the component is anchored to a project (its solid sits on the project's start bar), the project's date wins — the solid follows the project bar, not the formula. Auto-Build creates these links; you can break them by right-clicking the diamond and picking "Break Link".</p>
+  </div>
+
+  <h4>Engine on BD401 — post-recompute state</h4>
+  <table class="fd-st">
+    <thead><tr><th style="width:30%">Field</th><th style="width:20%">Before recompute</th><th style="width:20%">After recompute</th><th>What changed</th></tr></thead>
+    <tbody>
+      <tr><td class="field">changeout_date_erp</td> <td class="val">2026-09-15</td> <td class="val frozen">2026-09-15</td> <td class="nt">Frozen — never recomputed.</td></tr>
+      <tr><td class="field">original_date</td>      <td class="val">2026-09-15</td> <td class="val changed">2028-06-29</td> <td class="nt">Shadow moved to the formula's answer.</td></tr>
+      <tr><td class="field">changeout_date</td>     <td class="val">2026-09-15</td> <td class="val changed">2028-06-29</td> <td class="nt">Solid moved too — assumes this engine is NOT overridden and NOT linked to a project. If it WERE either, solid would stay at 2026-09-15 and the ghost would appear at 2028-06-29.</td></tr>
+      <tr><td class="field">deltaFlagged</td>       <td class="val">—</td>          <td class="val changed">{ deltaDays: 653 }</td> <td class="nt">|2028-06-29 − 2026-09-15| = 653 days &gt; 60-day threshold → flagged.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>What the timeline looks like now — three scenarios</h4>
+
+  <p><strong>(a) Not overridden, not linked — solid moves with shadow:</strong></p>
+  <div class="fd-tl">
+    <div class="fd-tl-caption">Scenario (a) — clean recompute · solid and shadow are at the SAME new date · TODAY = 2026-05-14</div>
+    <div class="fd-tl-axis">
+      <div class="fd-tl-tick" style="left:12%">2026-Jun</div>
+      <div class="fd-tl-tick" style="left:28%">2026-Sep</div>
+      <div class="fd-tl-tick" style="left:44%">2026-Dec</div>
+      <div class="fd-tl-tick" style="left:60%">2027-Jun</div>
+      <div class="fd-tl-tick" style="left:76%">2027-Dec</div>
+      <div class="fd-tl-tick" style="left:92%">2028-Jun</div>
+      <div class="fd-tl-today-line" style="left:6%"></div>
+      <div class="fd-tl-today-tag" style="left:6%">TODAY</div>
+      <div class="fd-tl-marker erp" style="left:28%"></div>
+      <div class="fd-tl-label erp" style="left:28%;top:18px">ERP anchor (reference)</div>
+      <div class="fd-tl-marker solid" style="left:88%"></div>
+      <div class="fd-tl-label solid" style="left:88%;top:18px">solid &amp; shadow (overlap)</div>
+    </div>
+  </div>
+  <p class="note" style="text-align:center;margin-top:6px">Shadow + solid land at the same new theoretical date → no ghost is drawn. ERP marker stays at its locked date for delta reference (rendered subtly).</p>
+
+  <p style="margin-top:18px"><strong>(b) Operator-overridden — solid frozen at drag, shadow shows where formula thinks it should be:</strong></p>
+  <div class="fd-tl">
+    <div class="fd-tl-caption">Scenario (b) — planner dragged the solid earlier · ghost reveals the formula's answer · TODAY = 2026-05-14</div>
+    <div class="fd-tl-axis">
+      <div class="fd-tl-tick" style="left:12%">2026-Jun</div>
+      <div class="fd-tl-tick" style="left:28%">2026-Sep</div>
+      <div class="fd-tl-tick" style="left:44%">2026-Dec</div>
+      <div class="fd-tl-tick" style="left:60%">2027-Jun</div>
+      <div class="fd-tl-tick" style="left:76%">2027-Dec</div>
+      <div class="fd-tl-tick" style="left:92%">2028-Jun</div>
+      <div class="fd-tl-today-line" style="left:6%"></div>
+      <div class="fd-tl-today-tag" style="left:6%">TODAY</div>
+      <div class="fd-tl-marker erp" style="left:28%"></div>
+      <div class="fd-tl-label erp" style="left:28%;top:18px">ERP anchor</div>
+      <div class="fd-tl-marker solid" style="left:44%"></div>
+      <div class="fd-tl-label solid" style="left:44%;top:18px">solid (dragged)</div>
+      <div class="fd-tl-marker ghost" style="left:88%"></div>
+      <div class="fd-tl-label ghost" style="left:88%;top:18px">shadow (formula)</div>
+    </div>
+  </div>
+
+  <p style="margin-top:18px"><strong>(c) Linked to a project — solid follows the project bar, shadow elsewhere:</strong></p>
+  <div class="fd-tl">
+    <div class="fd-tl-caption">Scenario (c) — solid pinned to the linked project's start date · shadow drifted from the formula · TODAY = 2026-05-14</div>
+    <div class="fd-tl-axis">
+      <div class="fd-tl-tick" style="left:12%">2026-Jun</div>
+      <div class="fd-tl-tick" style="left:28%">2026-Sep</div>
+      <div class="fd-tl-tick" style="left:44%">2026-Dec</div>
+      <div class="fd-tl-tick" style="left:60%">2027-Jun</div>
+      <div class="fd-tl-tick" style="left:76%">2027-Dec</div>
+      <div class="fd-tl-tick" style="left:92%">2028-Jun</div>
+      <div class="fd-tl-today-line" style="left:6%"></div>
+      <div class="fd-tl-today-tag" style="left:6%">TODAY</div>
+      <div class="fd-tl-marker erp" style="left:28%"></div>
+      <div class="fd-tl-label erp" style="left:28%;top:18px">ERP anchor</div>
+      <div class="fd-tl-marker solid" style="left:36%"></div>
+      <div class="fd-tl-label solid" style="left:36%;top:18px">solid (project anchor)</div>
+      <div class="fd-tl-marker ghost" style="left:88%"></div>
+      <div class="fd-tl-label ghost" style="left:88%;top:18px">shadow (formula)</div>
+    </div>
+  </div>
+
+  <div class="callout tip">
+    <div class="callout-title">v18.1 Projections toggle adds future cycles</div>
+    <p>Click <code>◇ Projections</code> in the toolbar to also draw hollow forecast markers at <code>changeout_date + N × (benchmark / util_rate)</code> out to the visible-window edge (capped at 20 cycles). These aren't persisted in the JSON — pure render-time math. Condition-based components get dashed-outline diamonds to flag the strategy.</p>
+  </div>
+
+  <h3>Stage 3 — Two weeks of Lens use between updates</h3>
+  <p>You've recomputed in Cadence, possibly dragged a few diamonds, and you're now working day-to-day in Lens. Two weeks pass before the next SMU UPDATE. Here's what moves and what doesn't.</p>
+
+  <h4>The inputs that <span class="fd-tag frozen">DON'T CHANGE</span> between updates</h4>
+  <table class="fd-st">
+    <thead><tr><th style="width:34%">Field</th><th>Why it stays frozen</th></tr></thead>
+    <tbody>
+      <tr><td class="field">last_smu</td>        <td class="nt">No new reading until the next SMU UPDATE in Intake.</td></tr>
+      <tr><td class="field">last_read</td>       <td class="nt">Pinned to the date of the latest reading — moves only when last_smu moves.</td></tr>
+      <tr><td class="field">install_hours</td>   <td class="nt">Only refreshes when Intake detects a component replacement on UPDATE.</td></tr>
+      <tr><td class="field">benchmark</td>       <td class="nt">Static unless the source XLSX changes it.</td></tr>
+      <tr><td class="field">util_rate</td>       <td class="nt">Set / measured — not derived from elapsed days. Editable in the Cadence Data Editor for ad-hoc tweaks; persists.</td></tr>
+      <tr><td class="field">changeout_date_erp</td> <td class="nt">The ERP anchor. Never changes after Intake UPDATE writes it.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>What that means for the diamonds</h4>
+  <p>Since every input to the formula is frozen, <code>newTheoretical</code> is also frozen — Cadence runs the recompute every load but the answer is identical. The <span class="fd-tag shadow">SHADOW</span> doesn't move. The <span class="fd-tag solid">SOLID</span> only moves if you drag it (creating / updating an override) or if you link/unlink it from a project.</p>
+
+  <div class="callout">
+    <div class="callout-title">The single moving part for two weeks: TODAY</div>
+    <p>Calendar days pass. The amber TODAY line on the Cadence Schedule walks across the static diamonds. If a theoretical date falls into the past, the <strong>today-clamp pass</strong> pulls that diamond forward to TODAY on the next load — so you never see a "should have been done last week" diamond floating in the past; it sticks to TODAY as a visual signal.</p>
+  </div>
+
+  <h4>Engine on BD401 — same component, two weeks later</h4>
+  <table class="fd-st">
+    <thead><tr><th style="width:30%">Field</th><th style="width:20%">Day 1 (post-recompute)</th><th style="width:20%">Day 15 (two weeks later)</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td class="field">last_smu</td>          <td class="val">18,200</td>      <td class="val frozen">18,200</td>      <td><span class="fd-tag frozen">FROZEN</span></td></tr>
+      <tr><td class="field">last_read</td>         <td class="val">2026-05-01</td>  <td class="val frozen">2026-05-01</td>  <td><span class="fd-tag frozen">FROZEN</span></td></tr>
+      <tr><td class="field">changeout_date_erp</td><td class="val">2026-09-15</td>  <td class="val frozen">2026-09-15</td>  <td><span class="fd-tag frozen">FROZEN</span></td></tr>
+      <tr><td class="field">original_date</td>     <td class="val">2028-06-29</td>  <td class="val frozen">2028-06-29</td>  <td><span class="fd-tag frozen">FROZEN</span> — recompute gives same answer every time inputs are frozen</td></tr>
+      <tr><td class="field">changeout_date</td>    <td class="val">2028-06-29</td>  <td class="val frozen">2028-06-29</td>  <td><span class="fd-tag frozen">FROZEN</span> — unless operator dragged or linked it in between</td></tr>
+      <tr><td class="field">TODAY</td>             <td class="val">2026-05-14</td>  <td class="val changed">2026-05-28</td>  <td><span class="fd-tag recompute">MOVED</span> — +14 days</td></tr>
+    </tbody>
+  </table>
+
+  <h4>The same timeline, two weeks later</h4>
+  <div class="fd-tl">
+    <div class="fd-tl-caption">Same diamonds, TODAY walked forward 14 days · still 2028-Jun for both shadow and solid</div>
+    <div class="fd-tl-axis">
+      <div class="fd-tl-tick" style="left:12%">2026-Jun</div>
+      <div class="fd-tl-tick" style="left:28%">2026-Sep</div>
+      <div class="fd-tl-tick" style="left:44%">2026-Dec</div>
+      <div class="fd-tl-tick" style="left:60%">2027-Jun</div>
+      <div class="fd-tl-tick" style="left:76%">2027-Dec</div>
+      <div class="fd-tl-tick" style="left:92%">2028-Jun</div>
+      <div class="fd-tl-today-line" style="left:9%"></div>
+      <div class="fd-tl-today-tag" style="left:9%">TODAY</div>
+      <div class="fd-tl-marker erp" style="left:28%"></div>
+      <div class="fd-tl-label erp" style="left:28%;top:18px">ERP</div>
+      <div class="fd-tl-marker solid" style="left:88%"></div>
+      <div class="fd-tl-label solid" style="left:88%;top:18px">solid &amp; shadow</div>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <div class="callout-title">When a theoretical date passes TODAY — clamp behaviour</div>
+    <p>If <code>newTheoretical</code> from the formula is already in the past on the next Cadence load (e.g. SMU finally caught up but the diamond was always behind), the today-clamp pass pulls the shadow forward to TODAY. The solid follows the same rule unless overridden / linked. You see the diamond at TODAY as a "needs attention now" signal rather than floating off the left of the timeline.</p>
+  </div>
+
+  <h3>Summary matrix — who moves what, when</h3>
+  <table class="fd-matrix">
+    <thead><tr><th style="width:24%">Field</th><th style="width:25%">Stage 1 — Post-Intake UPDATE</th><th style="width:25%">Stage 2 — Cadence load + recompute</th><th>Stage 3 — Two weeks of Lens use</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="col-field">last_smu / last_read / install_hours / benchmark / util_rate</td>
+        <td class="changed">Set / refreshed from source XLSX (whichever UPDATE sub-mode ran)</td>
+        <td class="no">No change — Cadence reads, doesn't write</td>
+        <td class="no">No change — these are the frozen inputs</td>
+      </tr>
+      <tr>
+        <td class="col-field">changeout_date_erp</td>
+        <td class="changed">Synced from source XLSX (UPDATE replaces only if new value present)</td>
+        <td class="no">Locked — never modified after Intake</td>
+        <td class="no">Locked</td>
+      </tr>
+      <tr>
+        <td class="col-field">original_date <span class="fd-tag shadow">SHADOW</span></td>
+        <td class="changed">Mirrored to <code>changeout_date_erp</code></td>
+        <td class="changed">ALWAYS recomputed to <code>newTheoretical</code></td>
+        <td class="no">Frozen (recompute returns same value with frozen inputs)</td>
+      </tr>
+      <tr>
+        <td class="col-field">changeout_date <span class="fd-tag solid">SOLID</span></td>
+        <td class="cond">Moves WITH ERP only if <code>changeout_date === original_date</code> pre-update; otherwise left alone</td>
+        <td class="cond">Recomputed ONLY IF NOT overridden AND NOT linked-to-project</td>
+        <td class="cond">Frozen unless operator drags / links / unlinks</td>
+      </tr>
+      <tr>
+        <td class="col-field">deltaFlagged</td>
+        <td class="no">Not computed</td>
+        <td class="changed">Populated for components where |theoretical − ERP| &gt; 60 days</td>
+        <td class="no">Stale until next Cadence load</td>
+      </tr>
+      <tr>
+        <td class="col-field">TODAY line position</td>
+        <td class="changed">Wherever today is on Cadence load</td>
+        <td class="changed">Drawn at calendar-today on each render</td>
+        <td class="changed">Walks across as days pass — the only moving part</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Stage 4 — Long-term accumulation: orphan overrides &amp; v18.5 visual indicators</h3>
+  <p>Stages 1–3 cover one file load and a couple of weeks of use. This stage covers what happens over <em>months</em> — and how Cadence v18.5 surfaces it.</p>
+
+  <h4>The accumulation problem</h4>
+  <p>Every drag of a solid diamond, every project link Auto-Build creates, and every direct write to a component's changeout date adds an entry to the file's <code>componentDateOverrides</code> slot (or its V4-shape sibling <code>componentDates</code>). Once that entry is in the file, it is permanent — Intake's <strong>Update Everything</strong> deliberately preserves it (slice ownership; see callout below). Recompute correctly skips the solid-update for any component flagged in that slot — that's how dragging and project-anchoring are supposed to work.</p>
+  <p>Over months, the slot accumulates two kinds of entries: <strong>legitimate</strong> (tied to a project that is currently active — the solid genuinely should be held by the project bar) and <strong>orphan</strong> (entries from a drag the operator did once and forgot, or from a project that has since been edited, deleted, or re-linked elsewhere — the cause that created the override is gone, but the override entry survives forever).</p>
+
+  <div class="callout warn">
+    <div class="callout-title">A real example from the current file (audit 2026-05-14)</div>
+    <p>This operator file has <strong>1,457 override entries</strong>. Of those: <strong>306</strong> are tied to currently-active project links (legitimate); <strong>1,151</strong> are orphans with no current project link (most are from early-product-use exploration drags that were saved to the file and never cleaned). About 1,000 are <em>visibly</em> diverged today; the other ~457 are silently overridden — solid happens to coincide with the recomputed shadow today, but they're locked from following the shadow if hours advance.</p>
+  </div>
+
+  <h4>Cause 4 — the file-baked orphan override</h4>
+  <p>Re-stating the full causes list with v18.5's finding:</p>
+  <table class="fd-st">
+    <thead><tr><th style="width:8%">Cause</th><th style="width:24%">Name</th><th>What it means · how it shows in the tree (v18.5)</th></tr></thead>
+    <tbody>
+      <tr><td class="field" style="text-align:center">1</td><td class="field">Explicit override (current drag)</td><td class="nt">You dragged the solid; the override is current and intentional. Solid stays, shadow shows the formula's answer next to it. Row shows the <strong>Lock</strong> icon.</td></tr>
+      <tr><td class="field" style="text-align:center">2</td><td class="field">Active project link</td><td class="nt">Component is in a project's <code>linkedIds</code>; the project bar holds the solid. Row shows the <strong>P</strong> icon (with the project name in the tooltip).</td></tr>
+      <tr><td class="field" style="text-align:center">3</td><td class="field">Today-clamp</td><td class="nt">The formula's <code>newTheoretical</code> landed in the past; the today-clamp pass snapped <code>changeout_date</code> forward to TODAY. Solid stuck at TODAY; shadow at the past theoretical. No icon — render-time only.</td></tr>
+      <tr><td class="field" style="text-align:center">4</td><td class="field">Orphan override (file-baked, no current cause)</td><td class="nt">An override entry exists in the file but the project that created it is gone (or no project ever existed — it was a manual drag from early use). Solid is held by the orphan; shadow is wherever the recompute lands. Row shows the <strong>Lock</strong> icon.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>v18.5 visual indicators — P &amp; Lock</h4>
+  <p>The legacy amber ✱ asterisk that lived on every row with shadow ≠ solid has been <strong>retired</strong> in v18.5 — it conflated all the causes into one indistinct marker and had no tooltip on the tree row. In its place, two explicit per-row icons, mutually exclusive:</p>
+  <ul style="margin-left:22px;line-height:1.7">
+    <li><strong>P</strong> (cyan italic, after the component name) → the component is in an active project's <code>linkedIds</code>. Hover for the project name + ID. The solid is held by this project's bar (Cause 2).</li>
+    <li><strong>Lock</strong> (small amber padlock SVG) → the component has an override entry that is NOT explained by a currently-active project. Either Cause 1 (current intentional drag) or Cause 4 (orphan from past activity). Hover to see the solid date + the shadow date.</li>
+    <li><strong>No icon</strong> → clean. The component is neither linked nor overridden; solid and shadow track the formula together.</li>
+  </ul>
+  <p>With the current operator file you'd see <strong>306 P icons + 1,151 Lock icons + ~536 clean rows</strong>. The v18.4 asterisk-count was ~1,000 (visible-divergence-only); the v18.5 Lock count is higher (1,151) because it catches the ~400 invisible-orphans that are latent problems waiting to surface as hours advance.</p>
+
+  <div class="callout">
+    <div class="callout-title">Why Intake's Update Everything doesn't clean Cadence overrides — slice ownership</div>
+    <p>Each tool in the suite owns specific slices of the fleet JSON. <strong>Intake</strong> owns <code>masterData</code> (the equipment list, SMU readings, util_rate, idle %, last_read — the truth-from-ERP data). <strong>Cadence</strong> owns <code>workingData.componentDateOverrides</code>, <code>workingData.projects</code>, <code>workingData.decisionLog</code> (the planning work — the <em>service deliverable</em>). Other tools' slices are similarly partitioned.</p>
+    <p>When Intake does <strong>Update Everything</strong>, it deliberately preserves the Cadence working slice. Anything written into <code>componentDateOverrides</code> is sticky for the life of the file. This is correct behaviour — blowing it away on every monthly SMU update would erase the operator's planning work. The trade-off is that orphan overrides accumulate until something explicitly cleans them.</p>
+    <p>v18.5 surfaces the orphans via the Lock icon. The cleanup tools (audit panel + reconcile button) ship in a later version.</p>
+  </div>
+
+  <h4>What v18.5.1 added — the cleanup toolkit</h4>
+  <p>Same problem domain as v18.5, so this ships as a point release (v18.5.1) rather than a new minor version. Three new affordances, all paths converge on the same code (<code>_resetOverride(id)</code>):</p>
+  <ul style="margin-left:22px;line-height:1.7">
+    <li><strong>Right-click "Reset"</strong> on any locked tree row. Single-component clear. Confirms in a dialog, snaps solid to shadow, Lock icon disappears. <em>SAVE FILE</em> to persist to the JSON.</li>
+    <li><strong>Override Audit panel</strong> (Sketch 1) under <code>⚙ Config → Settings</code>. Lists every override entry with All / Currently linked / Orphans filter chips. Sortable by Unit then Component. Per-row Reset button. Live count of total / linked / orphan.</li>
+    <li><strong>Reconcile Orphans button</strong> (Sketch 2) in the same panel. Bulk-clears every orphan in one click after a count-preview confirm dialog. Appends a single summary entry to the Decision Log for forensic trail.</li>
+  </ul>
+  <p>Nothing is destructive until you SAVE FILE — clean up freely in-memory, save when you're happy. The save path filters out cleared overrides automatically via the existing <code>r.changeout_date !== r.original_date</code> filter at L6654, so no special save-side code was needed.</p>
+
+  <h4>What v18.5.2 added — the save-time safety net</h4>
+  <p>The Sketch 3 investigation (2026-05-16) found that <strong>most lifecycle paths already have proper symmetric cleanup</strong> via the existing <code>doLink → _preLinkDate save → breakLinkSilent restore</code> pattern. Project deletes fan out through <code>breakLinkSilent</code>. Auto-Build uses <code>doLinkSilent</code>. The 1,151 historical orphans were most likely from pre-discipline state in earlier Cadence versions, not from a missing-cleanup bug in current code. v18.5.2 therefore doesn't add new prevention logic — it adds an <strong>observability layer</strong>.</p>
+
+  <div class="callout">
+    <div class="callout-title">Operator framing — why drag-without-project matters</div>
+    <p>Project / shutdown creation is the scheduling primitive in this suite. A component with shadow ≠ solid that isn't in any active project <strong>won't appear on the deployment schedule</strong> — it can't be deployed. Whether it's a historical orphan or an operator drag that never made it to a project, it's stranded. Manual drag is a legitimate first move, but it has to be followed up with a project assignment to enter the scheduling pipeline.</p>
+  </div>
+
+  <p>Concretely: every <strong>SAVE FILE</strong> click now fires a follow-up toast 1.8s after the "Fleet data saved" success message, telling you how many overrides aren't in any current project. <em>"⚠ N override(s) not in any project — won't appear on the deployment schedule. Review via ⚙ Config → Override Audit → 🧹 Reconcile Orphans."</em> Silent if zero. No auto-deletion — operator-controlled via v18.5.1's existing Reconcile button.</p>
+  <p>The detector reads from <code>state.data</code> directly (not from <code>state.fileOverrideIds</code>), so it catches BOTH file-loaded entries AND new drags / new project deletions made within this session. The count matches what will land in <code>componentDateOverrides</code> on this save (since the JSON save filter at L6654 uses the same <code>r.changeout_date !== r.original_date</code> predicate).</p>
+
+  <h4>What's still deferred</h4>
+  <ul style="margin-left:22px;line-height:1.7">
+    <li><strong>Multi-select bulk-reset</strong> from the audit panel (intermediate between "one row" and "all orphans"). Defer until v18.5.1 has been used enough to know if it's wanted.</li>
+    <li><strong>Auto-backup of the JSON before reconcile</strong> (file-system permission territory; v18.5.1 default is warning text only).</li>
+    <li><strong>Provenance tagging</strong> on override entries (the rejected Option γ from v18.5.2 scoping). Would let cleanup distinguish "drag" from "project-write" definitively, but requires a schema field. Defer until v18.5.2's nudge proves insufficient.</li>
+    <li><strong>Drag-time nudge</strong> (toast immediately after a drag if the component isn't in a project). Considered for v18.5.2 but deferred — save-time toast is less intrusive.</li>
+  </ul>
+
+  <h3>When in doubt</h3>
+
+  <h4>Why is the solid diamond not where the formula says it should be?</h4>
+  <p>Check in this order:</p>
+  <ol style="margin-left:22px;line-height:1.7">
+    <li><strong>Is the component overridden?</strong> Right-click the diamond — if there's a "Reset to theoretical" / "Break override" option, it's in <code>componentDateOverrides</code>. The solid is frozen at your drag.</li>
+    <li><strong>Is it linked to a project?</strong> If the diamond sits exactly on a project bar's start date, the project anchor is winning. Right-click → "Break Link" to release it; on the next recompute the solid will move to the formula's answer.</li>
+    <li><strong>Is the shadow visible?</strong> If you see a ghost diamond next to the solid, the formula and the solid disagree — that's the signal that one of the above rules is in play.</li>
+    <li><strong>Check the delta flag.</strong> If |theoretical − ERP| &gt; 60 days, the component is in <code>state.deltaFlagged</code> — Cadence surfaces these for operator review (filter chip / list).</li>
+  </ol>
+
+  <h4>Why did the shadow not move after an SMU update?</h4>
+  <p>Most common cause: missing <code>benchmark</code> or zero <code>util_rate</code> — those components are skipped by the recompute (their <code>original_date</code> stays as-is). Look at the V5 <em>Inferred util_rate</em> blue ⓘ badge — if it's there for the unit, the component's util_rate came from the unit-peer median fallback, not an explicit value. If NO components on the unit have explicit util_rate, none can be inferred.</p>
+
+  <h4>Why did ALL my dates jump after an Intake UPDATE?</h4>
+  <p>Intake's UPDATE re-stamps <code>changeout_date_erp</code> if the source XLSX has a new ERP-predicted date. For components where <code>changeout_date === original_date</code> at the moment of UPDATE (planner hadn't dragged them), Intake also moves <code>changeout_date</code> with ERP — so the solid tracks the new ERP. For components you HAD dragged, Intake leaves the solid alone — on next Cadence load you'll see a ghost diamond appear next to the solid showing the new ERP delta. That's the intentional surfacing pattern.</p>
+
+  <h4>I dragged a diamond and it sprung back next load — what happened?</h4>
+  <p>The drag should have been written to <code>componentDateOverrides</code> via autosave (debounced 1.5s) — if Cadence wasn't on screen long enough after the drag for autosave to fire, the override might not have persisted. Also: the v18.3 FIX-4 auto-clear logic wipes localStorage drag overrides on file re-load if the file's <code>meta.lastSaved</code> is newer than the localStorage savedAt (Intake just re-built). Click <strong>SAVE FILE</strong> in Cadence after dragging to commit the override to the JSON before any rebuild.</p>
+
+  <h4>Are projections persisted?</h4>
+  <p>No. Projection diamonds (toggled via <code>◇ Projections</code>) are pure render-time math — <code>changeout_date + N × (benchmark / util_rate)</code> out to the timeline edge, capped at 20 cycles. Nothing is written to the JSON. They don't appear in Auto-Build. Toggling them off hides them; toggling back on recomputes from current state.</p>
+
+  <h4>What's the <em>P</em> next to some component names? What's the lock icon?</h4>
+  <p>v18.5 visual indicators — see <strong>Stage 4</strong> above for the full story. Quick version: <strong>P</strong> (cyan italic) = the component is currently linked to a project — hover to see which one. <strong>Lock</strong> (amber padlock) = the component has an override entry that's not tied to a currently-active project (either an intentional drag or an orphan from past activity) — hover to see the solid date vs. the shadow date. <strong>No icon</strong> = clean. The amber <strong>✱ asterisk</strong> that used to fire on any divergent row in v18.4 has been retired — it had no tooltip and didn't distinguish between project-anchored (legitimate) and orphan-overridden (cleanup candidate).</p>
+
+  <h4>How do I clean up the orphan overrides?</h4>
+  <p>The cleanup toolkit has four paths now (v18.5.4), all safe (nothing persists until you SAVE FILE):</p>
+  <ul style="margin-left:22px;line-height:1.7">
+    <li><strong>One row at a time</strong> — right-click any locked tree row → "Reset" → confirm.</li>
+    <li><strong>Browse-and-clear single rows</strong> — click the <strong>🔓 Override Audit</strong> tab. Filter by Orphans. Click Reset per row.</li>
+    <li><strong>Multi-select bulk-clear</strong> (v18.5.4) — check per-row boxes, OR click a machine-header checkbox to select every component on that machine, OR a mix across multiple machines. <strong>"Clear Selected (N)"</strong> button shows live count and fires a count-preview confirm dialog with the linked-vs-orphan breakdown. Selection persists across filter changes so you can curate a list while browsing different filter views.</li>
+    <li><strong>Bulk clear all orphans</strong> — <strong>🧹 Reconcile Orphans</strong>. Two-step confirm with count preview. Decision Log records the bulk action.</li>
+  </ul>
+  <p>All four paths converge on <code>_resetOverride(id)</code> — single source of truth. <strong>Always SAVE FILE after a cleanup session</strong> to persist the change to the JSON.</p>
+  <p><strong>v18.5.2 helps you notice them.</strong> Every SAVE FILE fires a follow-up toast counting overrides not in any project.</p>
+  <p><strong>v18.5.3 gives the audit room to breathe.</strong> Full-screen tab with table that fills the viewport. Config keeps a compact summary.</p>
+  <p><strong>v18.5.4 organises and curates.</strong> Audit rows now group by machine with roll-up counts (e.g. <em>"BD203 · 13 of 17 components · 5 linked · 8 orphan"</em>). Per-row + per-machine checkboxes (tri-state on machine: full / partial / none). Operator-curated multi-select clear that's faster than per-row Reset but more focused than blanket Reconcile.</p>
+
+  <h4>How do I refresh the Override Audit during a working session?</h4>
+  <p><strong>v18.5.8</strong> added a <strong>🩺 Health Check</strong> button in the audit controls (row 1, next to Expand All / Collapse All). Click it any time to rescan the in-memory data and refresh the audit view to current runtime.</p>
+  <p><strong>Why this button exists.</strong> The Override Audit reads from <code>state.fileOverrideIds</code>, a Set that's populated only when you LOAD a file. In-session changes — drags, project-link writes, breakLink restores, Auto-Build cluster applies — mutate the underlying records but don't touch that Set. Without the button, you wouldn't see new drags or new project links in the audit view until SAVE FILE + RELOAD. The Health Check button closes that gap on demand.</p>
+  <p><strong>What it does.</strong> Sweeps every component in <code>state.data</code>, finds the ones where <em>changeout_date ≠ original_date</em> (real overrides), filters out today-clamp artefacts (so it stays consistent with the v18.5.6 save filter), and rebuilds <code>state.fileOverrideIds</code> from scratch. Re-renders both the audit table and the equipment tree (Lock icons). A toast confirms the result: <em>"Health Check: 1,154 overrides now (+3 since last view)"</em> or <em>"Health Check: no change — still 1,151 overrides"</em>.</p>
+  <p><strong>What it does NOT do.</strong> It doesn't modify any saved data. It doesn't clear anything. It doesn't persist anything to the JSON. It's purely a refresh of what the audit pane shows you. After clicking it, your next <strong>SAVE FILE</strong> will write exactly the same set of overrides it would have written anyway — the button reveals the current state, it doesn't change it.</p>
+  <p>Decision Log records each non-trivial Health Check click as <code>type: 'override_health_check'</code> with before / after / delta counts. Silent if nothing changed.</p>
+
+  <p class="note" style="margin-top:18px">Source code references: <code>Cadence v18.5.2.html</code> <code>_recomputeTheoreticalDates</code> (L6090+) · renderTree icon injection + right-click ctx menu wire (L1814–1894) · <code>state.fileOverrideIds</code> stash on load (L6485+) · CSS for <code>.comp-flag.flag-proj</code> / <code>.flag-lock</code> (L106–112) · <code>_resetOverride</code> / <code>_reconcileOrphanOverrides</code> / <code>_treeComponentCtxMenu</code> (L1392+) · <code>_orphanSaveCheck</code> (L1443) · <code>renderOverrideAudit</code> (L1579+) · audit panel CSS (L113+) · Override Audit Config section (L1119+) · <code>saveToFile</code> + orphan-nudge hook (L6960+) · Intake v8.7 UPDATE sync (L2843).</p>
+</section>
+
+<!-- ====================================================================== -->
+<!-- TAB 14 — ROADMAP (renumbered from 13 when Forecast Dates landed 2026-05-14) -->
 <!-- ====================================================================== -->
 <section id="tab-roadmap" class="tab-panel">
-  <h2><span class="panel-num">13</span>Roadmap &amp; Pending</h2>
+  <h2><span class="panel-num">14</span>Roadmap &amp; Pending</h2>
   <p class="lede">Aggregated Coming-Soon items, deferred features, and unresolved architectural decisions. Always cross-checked against the suite Record of Change.</p>
+
+  <h3>Recently shipped (was Coming Soon)</h3>
+  <p>Items below were on the "Coming Soon" list at manual v1 creation; all are now live on Pages. Cross-checked against the suite Record of Change at the most recent revision (see header).</p>
+  <table>
+    <thead><tr><th>Was</th><th>Shipped as</th><th>Section</th></tr></thead>
+    <tbody>
+      <tr><td>Chunk 11 — Filename convention</td><td><code>numacore_lib.buildSaveFilename()</code> at v1.2.0 — <code>&lt;ClientCode&gt;_YYYY-MM-DD_HH-MM-SS[_suffix].ext</code> across all five tools.</td><td>Setup / Intake</td></tr>
+      <tr><td>Chunk 12 — Currency + timezone</td><td>Intake v8.3 Client Settings (CAD / Mountain / en-CA defaults) at <code>masterData.clientSettings</code>. <code>numacore_lib</code> v1.3.0 + v1.5.0 added <code>fmtMoney</code> / <code>fmtTime</code> / <code>normaliseVPN</code>.</td><td>Intake</td></tr>
+      <tr><td>Chunk 5 — Category vocabulary unification</td><td>Suite-wide canonicalisation (Cadence v18.4, Lens / Deploy / Intake) with <code>numacore_lib.canonicalCategory</code>. 9 canonical categories; legacy aliases normalised at read time.</td><td>Cadence v18.4</td></tr>
+      <tr><td>Lens autosave + reload persistence (was "wired but unloaded")</td><td>Lens v4.3.5 — debounced 400 ms autosave of <code>ui_settings</code> to per-client localStorage; load-side overlay when localStorage is newer than <code>meta.lastSaved</code>. v4.3.6 wired a visible toast.</td><td>Lens</td></tr>
+      <tr><td>Deploy reload persistence (was Deploy v8.6 deferred)</td><td>Deploy v8.9 FIX-4 — silent restore of edits from localStorage on reload + the "Restored Deploy edits from HH:MM" toast.</td><td>Deploy</td></tr>
+      <tr><td>Intake util_rate write on BUILD path</td><td>Intake v8.3 FIX-2 + FIX-3 — V5 BUILD now writes <code>util_rate</code> per component; UPDATE also keeps it synced.</td><td>Intake / Resolved issues</td></tr>
+      <tr><td>Mission Control consolidation</td><td>Lens v4 — five-panel host with iframe-embedded Cadence + Deploy. Native Pulse / Vitals / Horizon.</td><td>Lens</td></tr>
+      <tr><td>Deploy v8.11+ — Persistent WO memory + closed-transition surfacing (operator review V2 slide 3 items 3+4)</td><td>Deploy v8.13 — <code>p.knownWOs</code> map + carried-over glow + Recently Closed bucket for REL/CRTD → TECO/CLSD/CNCL transitions. v8.12 number reserved for the dual-shape cleanup.</td><td>Deploy v8.13 subsection</td></tr>
+    </tbody>
+  </table>
 
   <h3>Coming Soon — by chunk</h3>
 
-  <h4>Chunk 10 — ConMon + Capital Plan</h4>
+  <h4>Chunk 10 — ConMon Mode B + Horizon Capital Plan + V4 Flat decommission</h4>
   <ul>
-    <li>Vitals Mode B (ConMon severity) full implementation — filter chips, trend graph, detail panel</li>
-    <li>Horizon capital plan chart — stacked bar by fiscal year, drill-down from segment, mine-plan input</li>
-    <li>V4 Flat decommission readiness check (no V4-only readers remaining)</li>
+    <li><b>Vitals Mode B</b> (ConMon severity heatmap) — filter chips, trend graph, detail panel. Mode A (% benchmark) is shipped.</li>
+    <li><b>Horizon Capital Plan chart</b> — stacked bar by fiscal year, drill-down from segment, mine-plan input.</li>
+    <li><b>V4 Flat decommission readiness check</b> — confirm no V4-only readers remain across the suite. Triggered by operator's production cutover + 30-day soak passing.</li>
   </ul>
 
-  <h4>Chunk 11 — Filename convention</h4>
+  <h4>Chunk 8 — FleetConfig v0.2 walkthrough doc <span class="badge wip">Operator-requested doc-first</span></h4>
   <ul>
-    <li>Standardise <code>[ClientCode]_fleet_YYYY-MM-DD_HH-MM.json</code> naming on Save Final</li>
-    <li>Detect collisions on load; warn before overwrite</li>
+    <li>Written walkthrough explaining every field in the new FleetConfig before any code is built.</li>
+    <li>Lives at <code>_Hand-over docs/FleetConfig v0.2 design walkthrough.md</code> once drafted.</li>
+    <li>Operator reads, marks up, signs off → unblocks Chunk 9 build.</li>
   </ul>
 
-  <h4>Chunk 12 — Currency and timezone config</h4>
+  <h4>Chunk 9 — FleetConfig v0.2 build (Path B chosen) <span class="badge wip">Blocked on Chunk 8</span></h4>
   <ul>
-    <li>Currency selector (currently AUD-only)</li>
-    <li>Timezone awareness for sample dates and project dates</li>
+    <li>Path B locked: fleet / unit setup moves into Intake (more consistent with reference-data role).</li>
+    <li>FleetConfig v0.2 keeps M4 (Utilization Profile Editor) + M2 (Component Pocket Editor) + M3 (Parts Library Manager).</li>
+    <li>Blocked on the Chunk 8 doc + Q17 / Q18 / Q19 decisions.</li>
   </ul>
 
-  <h4>Chunk 13 — FleetConfig location decision</h4>
+  <h4>Deploy v8.12 — Dual-shape data model cleanup</h4>
   <ul>
-    <li>Path A: keep FleetConfig separate; add Excel template upload to v0.2</li>
-    <li>Path B: move M1 (fleets/units) into Intake; FleetConfig keeps M4 + future M2/M3</li>
-    <li>30-min decision sprint scheduled</li>
+    <li>Drop the dual-write of project data (V4 + V5 shapes) — historical compat shim that's now a footgun (caused FIX-4).</li>
+    <li>Update Lens allow-list to accept Deploy's native location. No operator-visible change; reduces bug surface.</li>
   </ul>
 
-  <h4>Per-tool deferred items</h4>
+  <h4>Deploy v8.14 — Cadence-shift continuity <span class="badge wip">Surfaced 2026-05-13</span></h4>
   <ul>
-    <li><b>Lens v4.0:</b> autosave + reload persistence — <code>_restoreState()</code> wired but unloaded</li>
-    <li><b>Cadence v18:</b> Resource Loading crew-availability constraints (currently shows utilisation only)</li>
-    <li><b>Deploy v8.6:</b> reload persistence — same pattern as Lens</li>
-    <li><b>Intake v8:</b> util_rate write on BUILD path (currently UPDATE-only)</li>
-    <li><b>FleetConfig v0.1:</b> M2 (Component Pocket Editor), M3 (Parts Library Manager)</li>
+    <li>When Cadence shifts a project's start/end, prompt operator to shift gate planStart/planEnd by Δ to maintain relative position.</li>
+    <li>Mirrors the v8.11 reactivation prompt pattern. Full spec in <code>archive/Deploy/v8.11/Backlog.md</code>.</li>
+  </ul>
+
+  <h4>Suite — Audit log + Admin pane</h4>
+  <ul>
+    <li><code>meta.auditLog[]</code> field in fleet JSON tracking chronological save events.</li>
+    <li><code>numacore_lib.appendAuditEntry()</code> helper; new Lens Admin panel showing the timeline.</li>
+  </ul>
+
+  <h4>Lens — Pulse redesign session</h4>
+  <ul>
+    <li>30–60 min operator-led conversation + spec capture. Identify noise, define 4 priority areas (deployed / blockers / overdue / oil), mock 3–4 layouts.</li>
+    <li>Followed by Lens Pulse rebuild (own chunk).</li>
+  </ul>
+
+  <h4>idle_pct_1y as its own field + 4th Hero tile <span class="badge todo">Operator-deferred 2026-05-13</span></h4>
+  <ul>
+    <li>Currently 1-Year and Max-Lifetime both target <code>idle_pct_life</code> with "max wins". Adding a separate field would be a coordinated Intake schema add + Lens display change.</li>
+    <li>Revisit when operator surfaces a fleet where 1-Year ≠ Max meaningfully and they want both visible.</li>
+  </ul>
+
+  <h4>Per-tool deferred items (refreshed)</h4>
+  <ul>
+    <li><b>Lens v4.3.6:</b> cross-tab BroadcastChannel autosave conflict resolution (low-priority — single tab is normal flow). Manual "clear local cache" button in Settings (F12 works in the meantime).</li>
+    <li><b>Cadence v18.4:</b> Resource Loading crew-availability constraints (currently shows utilisation only). Promote <code>_componentTrend</code> / <code>_idleBandClass</code> helpers to <code>numacore_lib</code> if a 3rd tool needs the same semantic (evaluated 2026-05-13: no current adopter — defer).</li>
+    <li><b>Deploy v8.13:</b> Cadence-shift continuity (v8.14 spec'd). knownWOs pruning if long-running projects start bloating. Recently Closed bucket per-row ✓ dismiss. Inline templates editor on Gates tab (vs current jump-to-Config). Touch / tablet drag-reorder support.</li>
+    <li><b>Intake v8.7:</b> <code>idle_pct_1y</code> as separate field (operator-deferred 2026-05-13). Continued refinement of mapping-profile UX as new client formats surface.</li>
+    <li><b>FleetConfig v0.1:</b> M2 (Component Pocket Editor) and M3 (Parts Library Manager) still pending behind Chunks 8/9 + Q17–Q19.</li>
   </ul>
 
   <h3>Unresolved architectural decisions</h3>
@@ -1088,7 +2060,7 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 <!-- TAB 14 — GLOSSARY (Stage 2)                                             -->
 <!-- ====================================================================== -->
 <section id="tab-glossary" class="tab-panel">
-  <h2><span class="panel-num">14</span>Glossary</h2>
+  <h2><span class="panel-num">15</span>Glossary</h2>
   <p class="lede">Vocabulary used across the suite. Alphabetical.</p>
 
   <dl class="glossary">
@@ -1151,7 +2123,7 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 <!-- TAB 15 — SPIN-OFF PROMPTS (Stage 2)                                     -->
 <!-- ====================================================================== -->
 <section id="tab-prompts" class="tab-panel">
-  <h2><span class="panel-num">15</span>Spin-off Prompts</h2>
+  <h2><span class="panel-num">16</span>Spin-off Prompts</h2>
   <p class="lede">Two ready-to-paste agent prompts that build a client-facing manual or a future-operator manual against the suite's current state. Each prompt re-reads the suite at run time, so the resulting manual is never stale.</p>
 
   <div class="callout tip">
