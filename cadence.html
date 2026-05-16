@@ -110,6 +110,16 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .comp-flag.flag-proj{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;color:#7dd3fc;font-size:11px;letter-spacing:-0.02em}
 .comp-flag.flag-lock{color:#e3b341;vertical-align:-1px}
 .comp-flag:hover{filter:brightness(1.3)}
+/* v18.5.4 — Override Audit grouped rendering + checkbox columns */
+.audit-tbl tr.audit-group-row td{background:#161b22;padding:7px 10px;border-bottom:1px solid #21262d;border-top:1px solid #21262d}
+.audit-tbl tr.audit-group-row td strong{color:#7dd3fc;font-size:12px;letter-spacing:0.04em}
+.audit-group-rollup{color:#8b949e;font-size:11px;margin-left:8px}
+.audit-tbl .checkbox-cell{width:34px;padding-left:12px;padding-right:4px;text-align:center}
+.audit-tbl .checkbox-cell input[type="checkbox"]{cursor:pointer;width:14px;height:14px;accent-color:#7dd3fc;vertical-align:middle}
+.audit-tbl tr.audit-component-row td:nth-child(2){width:0;padding:0}   /* hide the unit column on component rows */
+#clearSelectedBtn:disabled{opacity:0.35;cursor:not-allowed}
+#clearSelectedBtn:not(:disabled){background:#21262d;color:#e3b341;border-color:#e3b341}
+#clearSelectedBtn:not(:disabled):hover{background:#30363d;border-color:#f0883e;color:#f0883e}
 /* v18.5.1 — Override Audit panel (Config overlay) */
 .audit-filter-chip{display:inline-block;padding:4px 11px;border:1px solid #30363d;border-radius:12px;font-size:11px;color:#8b949e;cursor:pointer;background:transparent;user-select:none;transition:all .12s}
 .audit-filter-chip.active{background:#388bfd;color:#fff;border-color:#388bfd}
@@ -1179,13 +1189,14 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 <!-- Override Audit Panel (Tab 8 — v18.5.3) -->
 <div id="overrideAuditPanel">
   <h2>&#128272; Override Audit</h2>
-  <p class="audit-intro">Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON. <span class="lk">Linked</span> entries are tied to a currently-active project (legitimate). <span class="or">Orphan</span> entries are not — they're left over from past project edits / deleted projects / early-use drags. Clear one at a time via the row Reset button, or bulk-clear all orphans via the Reconcile button below. <em>SAVE FILE</em> to persist after any change.</p>
+  <p class="audit-intro">Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON, grouped by machine. <span class="lk">Linked</span> entries are tied to a currently-active project (legitimate). <span class="or">Orphan</span> entries are not — they're left over from past project edits / deleted projects / early-use drags. Three cleanup paths: row-by-row Reset · multi-select via per-row or per-machine checkboxes + Clear Selected · all-orphans Reconcile. <em>SAVE FILE</em> to persist after any change.</p>
   <div class="audit-controls">
     <span class="audit-filter-chip active" data-filter="all">All</span>
     <span class="audit-filter-chip" data-filter="linked">Currently linked</span>
     <span class="audit-filter-chip" data-filter="orphan">Orphans</span>
     <span id="auditCount"></span>
-    <button class="btn btn-danger" id="reconcileOrphansBtn" style="margin-left:auto">&#129529; Reconcile Orphans — bulk clear</button>
+    <button class="btn btn-import" id="clearSelectedBtn" style="margin-left:auto" disabled>Clear Selected</button>
+    <button class="btn btn-danger" id="reconcileOrphansBtn">&#129529; Reconcile Orphans</button>
   </div>
   <div id="auditTableWrap">
     <!-- populated by renderOverrideAudit() -->
@@ -1295,7 +1306,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.3';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.4';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1647,9 +1658,12 @@ function trackActivity(type) {
   if (panel && panel.style.display !== 'none') renderUsageReport();
 }
 
-// v18.5.1 — Override Audit panel render. Lazy: called from _setMainTab when
-// tabConfig is activated, AND after any per-row reset / bulk reconcile.
+// v18.5.4 — Override Audit panel render: grouped by machine + per-row + per-machine
+// checkboxes + Clear Selected button. Selection state (_auditSelected) is module-local
+// and persists across filter changes / re-renders within the session. Cleared on page reload.
 let _auditFilter = 'all';
+let _auditSelected = new Set();
+
 function renderOverrideAudit() {
   const wrap = document.getElementById('auditTableWrap');
   const countEl = document.getElementById('auditCount');
@@ -1657,6 +1671,8 @@ function renderOverrideAudit() {
   if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
     wrap.innerHTML = '<div style="padding:18px;color:#8b949e;font-size:11px;text-align:center">No override entries in this file.</div>';
     countEl.textContent = '';
+    _updateClearSelectedBtn();
+    _updateAuditSummaryInConfig();
     return;
   }
   const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
@@ -1664,47 +1680,74 @@ function renderOverrideAudit() {
   (state.projects || []).forEach(p => {
     if (Array.isArray(p.linkedIds)) p.linkedIds.forEach(id => linkedIdToProj.set(id, p));
   });
-  let rows = [...state.fileOverrideIds]
+  const allRows = [...state.fileOverrideIds]
     .map(id => {
       const rec = state.data.find(r => r.id === id);
       if (!rec) return null;
       return { rec, isLinked: linkedIds.has(id), proj: linkedIdToProj.get(id) };
     })
     .filter(Boolean);
-  const totalLinked = rows.filter(r => r.isLinked).length;
-  const totalOrphan = rows.length - totalLinked;
-  let viewRows = rows;
-  if (_auditFilter === 'linked') viewRows = rows.filter(r => r.isLinked);
-  else if (_auditFilter === 'orphan') viewRows = rows.filter(r => !r.isLinked);
-  viewRows.sort((a, b) =>
-    (a.rec.unit || '').localeCompare(b.rec.unit || '') ||
-    (a.rec.component || '').localeCompare(b.rec.component || '')
-  );
+  const totalLinked = allRows.filter(r => r.isLinked).length;
+  const totalOrphan = allRows.length - totalLinked;
+  let viewRows = allRows;
+  if (_auditFilter === 'linked') viewRows = allRows.filter(r => r.isLinked);
+  else if (_auditFilter === 'orphan') viewRows = allRows.filter(r => !r.isLinked);
+  // Group view rows by unit
+  const groups = new Map();
+  viewRows.forEach(r => {
+    const u = r.rec.unit || '(no unit)';
+    if (!groups.has(u)) groups.set(u, { unit: u, rows: [] });
+    groups.get(u).rows.push(r);
+  });
+  // Compute roll-up counts per unit (against the FULL override set, not filter-restricted)
+  groups.forEach((g, u) => {
+    const allOnUnit = allRows.filter(r => (r.rec.unit || '(no unit)') === u);
+    g.overridesOnUnit = allOnUnit.length;
+    g.linkedOnUnit = allOnUnit.filter(r => r.isLinked).length;
+    g.orphanOnUnit = g.overridesOnUnit - g.linkedOnUnit;
+    g.totalCompsOnUnit = (state.data || []).filter(d => (d.unit || '(no unit)') === u).length;
+  });
+  // Sort groups (unit ascending) + sort component rows within each group
+  const sortedGroups = [...groups.values()].sort((a, b) => (a.unit || '').localeCompare(b.unit || ''));
+  sortedGroups.forEach(g => g.rows.sort((a, b) => (a.rec.component || '').localeCompare(b.rec.component || '')));
   countEl.textContent = `Showing ${viewRows.length.toLocaleString()} of ${state.fileOverrideIds.size.toLocaleString()} entries · ${totalLinked.toLocaleString()} linked · ${totalOrphan.toLocaleString()} orphan`;
   const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   let html = '<table class="audit-tbl"><thead><tr>'
+    + '<th class="checkbox-cell"></th>'
     + '<th>Unit</th><th>Component</th><th>Shadow</th><th>Solid</th><th>Status</th><th></th>'
     + '</tr></thead><tbody>';
-  viewRows.forEach(r => {
-    const projLabel = r.proj ? (r.proj.name || r.proj.id || '').substring(0, 18) : '';
-    const status = r.isLinked
-      ? `<span class="audit-badge linked" title="Linked to project: ${_esc(r.proj?.name||r.proj?.id||'')}">P ${_esc(projLabel)}</span>`
-      : '<span class="audit-badge orphan">orphan</span>';
-    html += `<tr data-id="${r.rec.id}">`
-      + `<td>${_esc(r.rec.unit)}</td>`
-      + `<td>${_esc(r.rec.component)}</td>`
-      + `<td>${_esc(r.rec.original_date)}</td>`
-      + `<td>${_esc(r.rec.changeout_date)}</td>`
-      + `<td>${status}</td>`
-      + `<td><button class="audit-reset-btn" data-id="${r.rec.id}">Reset</button></td>`
-      + '</tr>';
+  sortedGroups.forEach(g => {
+    const unitEsc = _esc(g.unit);
+    html += `<tr class="audit-group-row" data-unit="${unitEsc}">`
+      + `<td class="checkbox-cell"><input type="checkbox" class="audit-grp-cb" data-unit="${unitEsc}"></td>`
+      + `<td><strong>${unitEsc}</strong></td>`
+      + `<td colspan="5"><span class="audit-group-rollup">${g.overridesOnUnit} of ${g.totalCompsOnUnit} components &middot; ${g.linkedOnUnit} linked &middot; ${g.orphanOnUnit} orphan</span></td>`
+      + `</tr>`;
+    g.rows.forEach(r => {
+      const projLabel = r.proj ? (r.proj.name || r.proj.id || '').substring(0, 18) : '';
+      const status = r.isLinked
+        ? `<span class="audit-badge linked" title="Linked to project: ${_esc(r.proj?.name||r.proj?.id||'')}">P ${_esc(projLabel)}</span>`
+        : '<span class="audit-badge orphan">orphan</span>';
+      const checked = _auditSelected.has(r.rec.id) ? ' checked' : '';
+      html += `<tr class="audit-component-row" data-id="${r.rec.id}" data-unit="${unitEsc}">`
+        + `<td class="checkbox-cell"><input type="checkbox" class="audit-row-cb" data-id="${r.rec.id}"${checked}></td>`
+        + `<td></td>`
+        + `<td>${_esc(r.rec.component)}</td>`
+        + `<td>${_esc(r.rec.original_date)}</td>`
+        + `<td>${_esc(r.rec.changeout_date)}</td>`
+        + `<td>${status}</td>`
+        + `<td><button class="audit-reset-btn" data-id="${r.rec.id}">Reset</button></td>`
+        + '</tr>';
+    });
   });
   html += '</tbody></table>';
   wrap.innerHTML = html;
+  // Wire per-row Reset buttons
   wrap.querySelectorAll('.audit-reset-btn').forEach(btn => {
     btn.onclick = () => {
       const id = Number(btn.dataset.id);
       if (_resetOverride(id)) {
+        _auditSelected.delete(id);
         _scheduleSave();
         renderOverrideAudit();
         render();
@@ -1712,8 +1755,88 @@ function renderOverrideAudit() {
       }
     };
   });
-  // v18.5.3 — keep the in-Config summary line in sync whenever the audit re-renders
+  // Wire per-row checkboxes
+  wrap.querySelectorAll('.audit-row-cb').forEach(cb => {
+    cb.onchange = () => {
+      const id = Number(cb.dataset.id);
+      if (cb.checked) _auditSelected.add(id); else _auditSelected.delete(id);
+      _updateGroupCheckboxes(wrap);
+      _updateClearSelectedBtn();
+    };
+  });
+  // Wire per-machine (group) checkboxes — select/deselect all visible component rows on that unit
+  wrap.querySelectorAll('.audit-grp-cb').forEach(grpCb => {
+    grpCb.onchange = () => {
+      const unit = grpCb.dataset.unit;
+      const targetState = grpCb.checked;
+      wrap.querySelectorAll(`.audit-component-row[data-unit="${unit}"] .audit-row-cb`).forEach(rcb => {
+        rcb.checked = targetState;
+        const id = Number(rcb.dataset.id);
+        if (targetState) _auditSelected.add(id); else _auditSelected.delete(id);
+      });
+      grpCb.indeterminate = false;
+      _updateClearSelectedBtn();
+    };
+  });
+  _updateGroupCheckboxes(wrap);
+  _updateClearSelectedBtn();
   _updateAuditSummaryInConfig();
+}
+
+// Sync per-machine checkbox state (checked / unchecked / indeterminate) based on
+// the row checkboxes currently visible in each group.
+function _updateGroupCheckboxes(wrap) {
+  if (!wrap) wrap = document.getElementById('auditTableWrap');
+  if (!wrap) return;
+  wrap.querySelectorAll('.audit-grp-cb').forEach(grpCb => {
+    const unit = grpCb.dataset.unit;
+    const rowCbs = wrap.querySelectorAll(`.audit-component-row[data-unit="${unit}"] .audit-row-cb`);
+    if (rowCbs.length === 0) { grpCb.checked = false; grpCb.indeterminate = false; return; }
+    const checkedCount = [...rowCbs].filter(rcb => rcb.checked).length;
+    if (checkedCount === 0)              { grpCb.checked = false; grpCb.indeterminate = false; }
+    else if (checkedCount === rowCbs.length) { grpCb.checked = true;  grpCb.indeterminate = false; }
+    else                                 { grpCb.checked = false; grpCb.indeterminate = true; }
+  });
+}
+
+// Update the Clear Selected button label + enabled state. Called whenever
+// _auditSelected mutates.
+function _updateClearSelectedBtn() {
+  const btn = document.getElementById('clearSelectedBtn');
+  if (!btn) return;
+  const n = _auditSelected.size;
+  btn.textContent = n > 0 ? `Clear Selected (${n.toLocaleString()})` : 'Clear Selected';
+  btn.disabled = (n === 0);
+}
+
+// v18.5.4 — bulk clear operator-curated selection. Mirror of _reconcileOrphanOverrides
+// but iterates _auditSelected. Appends a single decisionLog entry with breakdown
+// (linked vs orphan counts) so operator can audit what they cleared after the fact.
+function _clearSelectedOverrides() {
+  if (!_auditSelected || _auditSelected.size === 0) return { removed: 0, linked: 0, orphan: 0 };
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const ids = [..._auditSelected];
+  let linkedCleared = 0, orphanCleared = 0;
+  const removedRecs = [];
+  ids.forEach(id => {
+    const rec = state.data.find(r => r.id === id);
+    if (!rec) return;
+    if (linkedIds.has(id)) linkedCleared++; else orphanCleared++;
+    if (_resetOverride(id) && rec) removedRecs.push({ id, unit: rec.unit, component: rec.component });
+  });
+  _auditSelected.clear();
+  if (removedRecs.length > 0) {
+    state.decisionLog = state.decisionLog || [];
+    state.decisionLog.push({
+      type: 'clear_selected_overrides',
+      date: new Date().toISOString(),
+      removed: removedRecs.length,
+      linked_cleared: linkedCleared,
+      orphan_cleared: orphanCleared,
+      sample: removedRecs.slice(0, 10).map(r => `${r.unit}/${r.component}`).join('; ')
+    });
+  }
+  return { removed: removedRecs.length, linked: linkedCleared, orphan: orphanCleared };
 }
 
 function renderUsageReport() {
@@ -5292,6 +5415,39 @@ document.querySelectorAll('.audit-filter-chip').forEach(chip => {
     renderOverrideAudit();
   };
 });
+// v18.5.4 — Clear Selected button (operator-curated bulk clear)
+document.getElementById('clearSelectedBtn').onclick = () => {
+  if (!_auditSelected || _auditSelected.size === 0) return;
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const ids = [..._auditSelected];
+  const linkedCount = ids.filter(id => linkedIds.has(id)).length;
+  const orphanCount = ids.length - linkedCount;
+  const breakdownLine = linkedCount > 0 && orphanCount > 0
+    ? `${linkedCount.toLocaleString()} currently linked · ${orphanCount.toLocaleString()} orphan`
+    : (linkedCount > 0 ? `${linkedCount.toLocaleString()} currently linked` : `${orphanCount.toLocaleString()} orphan`);
+  const linkedWarn = linkedCount > 0
+    ? `<br><strong style="color:#f0883e">${linkedCount.toLocaleString()} linked-component override${linkedCount === 1 ? '' : 's'}</strong> will revert solid → shadow, breaking the project anchor display until you re-link or re-drag.`
+    : '';
+  showPopup(
+    `Clear <strong>${ids.length.toLocaleString()}</strong> selected override${ids.length === 1 ? '' : 's'}?<br>` +
+    `<span style="color:#8b949e;font-size:11px">` +
+    `Breakdown: ${breakdownLine}.${linkedWarn}<br>` +
+    `<strong style="color:#f0883e">Take a backup of your JSON first.</strong> This writes to memory but won't persist until you SAVE FILE.` +
+    `</span>`,
+    [
+      { label: `Clear ${ids.length.toLocaleString()} selected`, cls: 'danger', action: () => {
+          const result = _clearSelectedOverrides();
+          _scheduleSave();
+          renderOverrideAudit();
+          render();
+          showToast(`✓ Cleared ${result.removed.toLocaleString()} overrides (${result.linked} linked · ${result.orphan} orphan) — SAVE FILE to persist. Decision Log updated.`);
+        }
+      },
+      { label: 'Cancel' }
+    ]
+  );
+};
+
 document.getElementById('reconcileOrphansBtn').onclick = () => {
   if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
     showToast('No override entries in this file — nothing to reconcile.');
