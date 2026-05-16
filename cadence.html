@@ -110,6 +110,21 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .comp-flag.flag-proj{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:700;color:#7dd3fc;font-size:11px;letter-spacing:-0.02em}
 .comp-flag.flag-lock{color:#e3b341;vertical-align:-1px}
 .comp-flag:hover{filter:brightness(1.3)}
+/* v18.5.1 — Override Audit panel (Config overlay) */
+.audit-filter-chip{display:inline-block;padding:4px 11px;border:1px solid #30363d;border-radius:12px;font-size:11px;color:#8b949e;cursor:pointer;background:transparent;user-select:none;transition:all .12s}
+.audit-filter-chip.active{background:#388bfd;color:#fff;border-color:#388bfd}
+.audit-filter-chip:hover:not(.active){border-color:#7dd3fc;color:#c9d1d9}
+.audit-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.audit-tbl th{background:#161b22;color:#7dd3fc;text-align:left;padding:7px 10px;border-bottom:1px solid #21262d;position:sticky;top:0;letter-spacing:0.04em;text-transform:uppercase;font-size:10px;font-weight:600;z-index:1}
+.audit-tbl td{padding:6px 10px;border-bottom:1px solid #161b22;color:#c9d1d9;vertical-align:middle}
+.audit-tbl tr:hover td{background:rgba(56,139,253,0.05)}
+.audit-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;font-weight:600;letter-spacing:0.04em}
+.audit-badge.linked{background:rgba(125,211,252,0.15);color:#7dd3fc;border:1px solid rgba(125,211,252,0.35)}
+.audit-badge.orphan{background:rgba(227,179,65,0.15);color:#e3b341;border:1px solid rgba(227,179,65,0.35)}
+.audit-reset-btn{padding:3px 11px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;font-size:10px;cursor:pointer;transition:all .12s}
+.audit-reset-btn:hover{background:#30363d;border-color:#f0883e;color:#f0883e}
+.btn-danger{background:#da3633;color:#fff;border:1px solid #da3633;padding:6px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-weight:600}
+.btn-danger:hover{background:#f85149;border-color:#f85149}
 .toggle{width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#484f58;font-size:10px;flex-shrink:0;border-radius:4px;transition:all .1s}
 .toggle:hover{background:#21262d;color:#8b949e}
 .toggle.expanded::before{content:'▼';font-size:8px}
@@ -1115,6 +1130,22 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
       <p>Work is automatically saved to this browser after each change and restored when you re-open the file. Clearing removes the saved session but does not affect the source data.</p>
       <button class="btn btn-import" id="clearSaveBtn" style="margin-top:6px">&#128465; Clear Saved Session</button>
     </div>
+
+    <!-- v18.5.1 — Override Audit (Sketches 1 + 2): see and clean file-resident overrides -->
+    <div class="cfg-section" id="cfgOverrideAudit">
+      <h3>Override Audit</h3>
+      <p>Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON. <strong>Linked</strong> entries are tied to a currently-active project (legitimate). <strong>Orphan</strong> entries are not — they're left over from past project edits / deleted projects / early-use drags. Clear one at a time via the row Reset button, or bulk-clear all orphans via the button below. <em>SAVE FILE</em> to persist after any change.</p>
+      <div style="margin:12px 0 8px;display:flex;align-items:center;flex-wrap:wrap;gap:6px">
+        <span class="audit-filter-chip active" data-filter="all">All</span>
+        <span class="audit-filter-chip" data-filter="linked">Currently linked</span>
+        <span class="audit-filter-chip" data-filter="orphan">Orphans</span>
+        <span id="auditCount" style="margin-left:12px;color:#8b949e;font-size:11px"></span>
+      </div>
+      <button class="btn btn-danger" id="reconcileOrphansBtn" style="margin-top:6px">&#129529; Reconcile Orphans — bulk clear</button>
+      <div id="auditTableWrap" style="max-height:340px;overflow:auto;margin-top:12px;border:1px solid #21262d;border-radius:6px">
+        <!-- populated by renderOverrideAudit() -->
+      </div>
+    </div>
   </div>
 
   <!-- Usage Report pane -->
@@ -1244,7 +1275,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5';             // single source of truth for version-scoped keys
+const VERSION  = '18.5.1';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1352,6 +1383,64 @@ function _restoreState() {
 function _clearSave() {
   localStorage.removeItem(getSaveKey());
   _setSaveIndicator('cleared');
+}
+
+// ─── v18.5.1: ORPHAN-OVERRIDE CLEANUP HELPERS ────────────────────
+// Single source of truth for clearing a file-resident override entry.
+// Caller is responsible for follow-up _scheduleSave() + render().
+// Returns true on success, false on no-op (unknown id / no override / no record).
+function _resetOverride(id) {
+  if (!state.fileOverrideIds || !state.fileOverrideIds.has(id)) return false;
+  const rec = state.data.find(r => r.id === id);
+  if (!rec) return false;
+  state.fileOverrideIds.delete(id);
+  rec.changeout_date = rec.original_date;   // solid snaps to shadow
+  return true;
+}
+
+// Bulk clear orphan overrides (those NOT tied to a currently-active project link).
+// Appends ONE summary entry to state.decisionLog. Returns {removed, kept}.
+function _reconcileOrphanOverrides() {
+  if (!state.fileOverrideIds) return { removed: 0, kept: 0 };
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const orphanIds = [...state.fileOverrideIds].filter(id => !linkedIds.has(id));
+  const removedRecs = [];
+  orphanIds.forEach(id => {
+    const rec = state.data.find(r => r.id === id);
+    if (_resetOverride(id) && rec) removedRecs.push({ id, unit: rec.unit, component: rec.component });
+  });
+  if (removedRecs.length > 0) {
+    state.decisionLog = state.decisionLog || [];
+    state.decisionLog.push({
+      type: 'reconcile_orphans',
+      date: new Date().toISOString(),
+      removed: removedRecs.length,
+      kept: state.fileOverrideIds.size,
+      sample: removedRecs.slice(0, 10).map(r => `${r.unit}/${r.component}`).join('; ')
+    });
+  }
+  return { removed: removedRecs.length, kept: state.fileOverrideIds.size };
+}
+
+// Right-click context menu for a LOCKED component tree row (one-off reset).
+function _treeComponentCtxMenu(e, rec) {
+  e.preventDefault();
+  showPopup(
+    `Reset override for <strong>${rec.unit||''} / ${rec.component||''}</strong>?<br>
+     <span style="color:#8b949e;font-size:11px">Solid will snap to the shadow date (${rec.original_date||'—'}). SAVE FILE to persist to the JSON.</span>`,
+    [
+      { label: 'Reset', cls: 'danger', action: () => {
+          if (_resetOverride(rec.id)) {
+            _scheduleSave();
+            render();
+            if (typeof renderOverrideAudit === 'function') renderOverrideAudit();
+            showToast(`✓ Reset override on ${rec.unit||''}/${rec.component||''} — SAVE FILE to persist`);
+          }
+        }
+      },
+      { label: 'Cancel' }
+    ]
+  );
 }
 
 function _setSaveIndicator(status, isoTs) {
@@ -1482,6 +1571,73 @@ function trackActivity(type) {
   try { localStorage.setItem(USAGE_KEY, JSON.stringify(_usageRolling)); } catch(e) {}
   const panel = document.getElementById('cfgPaneReport');
   if (panel && panel.style.display !== 'none') renderUsageReport();
+}
+
+// v18.5.1 — Override Audit panel render. Lazy: called from _setMainTab when
+// tabConfig is activated, AND after any per-row reset / bulk reconcile.
+let _auditFilter = 'all';
+function renderOverrideAudit() {
+  const wrap = document.getElementById('auditTableWrap');
+  const countEl = document.getElementById('auditCount');
+  if (!wrap || !countEl) return;
+  if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
+    wrap.innerHTML = '<div style="padding:18px;color:#8b949e;font-size:11px;text-align:center">No override entries in this file.</div>';
+    countEl.textContent = '';
+    return;
+  }
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const linkedIdToProj = new Map();
+  (state.projects || []).forEach(p => {
+    if (Array.isArray(p.linkedIds)) p.linkedIds.forEach(id => linkedIdToProj.set(id, p));
+  });
+  let rows = [...state.fileOverrideIds]
+    .map(id => {
+      const rec = state.data.find(r => r.id === id);
+      if (!rec) return null;
+      return { rec, isLinked: linkedIds.has(id), proj: linkedIdToProj.get(id) };
+    })
+    .filter(Boolean);
+  const totalLinked = rows.filter(r => r.isLinked).length;
+  const totalOrphan = rows.length - totalLinked;
+  let viewRows = rows;
+  if (_auditFilter === 'linked') viewRows = rows.filter(r => r.isLinked);
+  else if (_auditFilter === 'orphan') viewRows = rows.filter(r => !r.isLinked);
+  viewRows.sort((a, b) =>
+    (a.rec.unit || '').localeCompare(b.rec.unit || '') ||
+    (a.rec.component || '').localeCompare(b.rec.component || '')
+  );
+  countEl.textContent = `Showing ${viewRows.length.toLocaleString()} of ${state.fileOverrideIds.size.toLocaleString()} entries · ${totalLinked.toLocaleString()} linked · ${totalOrphan.toLocaleString()} orphan`;
+  const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  let html = '<table class="audit-tbl"><thead><tr>'
+    + '<th>Unit</th><th>Component</th><th>Shadow</th><th>Solid</th><th>Status</th><th></th>'
+    + '</tr></thead><tbody>';
+  viewRows.forEach(r => {
+    const projLabel = r.proj ? (r.proj.name || r.proj.id || '').substring(0, 18) : '';
+    const status = r.isLinked
+      ? `<span class="audit-badge linked" title="Linked to project: ${_esc(r.proj?.name||r.proj?.id||'')}">P ${_esc(projLabel)}</span>`
+      : '<span class="audit-badge orphan">orphan</span>';
+    html += `<tr data-id="${r.rec.id}">`
+      + `<td>${_esc(r.rec.unit)}</td>`
+      + `<td>${_esc(r.rec.component)}</td>`
+      + `<td>${_esc(r.rec.original_date)}</td>`
+      + `<td>${_esc(r.rec.changeout_date)}</td>`
+      + `<td>${status}</td>`
+      + `<td><button class="audit-reset-btn" data-id="${r.rec.id}">Reset</button></td>`
+      + '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  wrap.querySelectorAll('.audit-reset-btn').forEach(btn => {
+    btn.onclick = () => {
+      const id = Number(btn.dataset.id);
+      if (_resetOverride(id)) {
+        _scheduleSave();
+        renderOverrideAudit();
+        render();
+        showToast('✓ Reset override — SAVE FILE to persist');
+      }
+    };
+  });
 }
 
 function renderUsageReport() {
@@ -1897,7 +2053,7 @@ function renderTree() {
       } else if (_fileOverrideIds.has(rec.id)) {
         const _sd  = rec.changeout_date || '—';
         const _od  = rec.original_date  || '—';
-        const _ttl = `Manual override — solid held at ${_sd}; shadow says ${_od}. Right-click row → Reset to baseline (coming in v18.6).`;
+        const _ttl = `Manual override — solid held at ${_sd}; shadow says ${_od}. Right-click row → Reset to baseline.`;
         labelInner += `<span class="comp-flag flag-lock" title="${_ttl}"><svg width="9" height="10" viewBox="0 0 9 10" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="4.5" width="6" height="5" rx="0.5"/><path d="M3 4.5V3a1.5 1.5 0 113 0v1.5"/></svg></span>`;
       }
     }
@@ -1906,6 +2062,9 @@ function renderTree() {
     // Right-click context menu for fleet/model/unit rows
     if (row.type !== 'component') {
       div.addEventListener('contextmenu', e => _treeHeaderCtxMenu(e, row));
+    } else if (rec && state.fileOverrideIds && state.fileOverrideIds.has(rec.id)) {
+      // v18.5.1 — right-click reset on locked component rows
+      div.addEventListener('contextmenu', e => _treeComponentCtxMenu(e, rec));
     }
     frag.appendChild(div);
   });
@@ -3590,7 +3749,7 @@ function _setMainTab(tab) {
   if (tab === 'tabProjectList')  renderProjectList();
   if (tab === 'tabOptimiser')    renderProjectOptimiser();
   if (tab === 'tabConfig') {
-    renderFleetConfig(); renderUsageReport();
+    renderFleetConfig(); renderUsageReport(); renderOverrideAudit();   // v18.5.1 — audit on Config open
     const vmSel = document.getElementById('cfgVisibleMonths');
     if (vmSel) {
       const closest = [...vmSel.options].reduce((a,b) =>
@@ -5038,6 +5197,48 @@ document.getElementById('clearSaveBtn').onclick = () => {
       { label: 'Clear', cls: 'danger', action: () => {
           _clearSave();
           showToast('Saved session cleared — refresh to start fresh');
+        }
+      },
+      { label: 'Cancel' }
+    ]
+  );
+};
+
+// ─── v18.5.1: OVERRIDE AUDIT — filter chips + reconcile button ────
+document.querySelectorAll('.audit-filter-chip').forEach(chip => {
+  chip.onclick = () => {
+    _auditFilter = chip.dataset.filter || 'all';
+    document.querySelectorAll('.audit-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+    renderOverrideAudit();
+  };
+});
+document.getElementById('reconcileOrphansBtn').onclick = () => {
+  if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
+    showToast('No override entries in this file — nothing to reconcile.');
+    return;
+  }
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const orphanCount = [...state.fileOverrideIds].filter(id => !linkedIds.has(id)).length;
+  const linkedCount = state.fileOverrideIds.size - orphanCount;
+  if (orphanCount === 0) {
+    showToast(`No orphans to reconcile — all ${linkedCount.toLocaleString()} override entries are tied to active projects.`);
+    return;
+  }
+  showPopup(
+    `Reconcile <strong>${orphanCount.toLocaleString()}</strong> orphan override entries?<br>` +
+    `<span style="color:#8b949e;font-size:11px">` +
+    `Will clear ${orphanCount.toLocaleString()} entries not tied to any currently-active project link.<br>` +
+    `Will preserve ${linkedCount.toLocaleString()} entries tied to active projects.<br>` +
+    `Affected solid diamonds snap to their recomputed shadow dates.<br>` +
+    `<strong style="color:#f0883e">Take a backup of your JSON first.</strong> This writes to memory but won't persist until you SAVE FILE.` +
+    `</span>`,
+    [
+      { label: `Reconcile ${orphanCount.toLocaleString()} orphans`, cls: 'danger', action: () => {
+          const result = _reconcileOrphanOverrides();
+          _scheduleSave();
+          renderOverrideAudit();
+          render();
+          showToast(`✓ Removed ${result.removed.toLocaleString()} orphan overrides — SAVE FILE to persist. Decision Log updated.`);
         }
       },
       { label: 'Cancel' }
