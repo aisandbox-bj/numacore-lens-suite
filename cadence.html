@@ -1284,6 +1284,44 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 </div>
 
 <script>
+// ─── v18.5.7 — DEFENSIVE DOCUMENT-LEVEL DRAG-AND-DROP ─────────────
+// Operator-reported 2026-05-16 post-v18.5.6 push: "JSON drop on open just
+// does not work any more... can load file via click and point... please
+// restore drop and load."
+//
+// The per-element wiring on #ndsDropZone at the bottom of this script is
+// character-identical to v18.4 (verified via diff). So the regression is
+// either (a) a later JS error silently aborts the IIFE-wiring block before
+// it runs, or (b) the browser default file-drop navigation is intercepting
+// the drop before our handlers fire (modern browsers steal file drops as
+// "navigate to file" if no top-level dragover preventDefault is in scope).
+//
+// FIX: belt-and-braces. Attach handlers at the TOP of the script block —
+// before any code that could potentially throw. preventDefault on every
+// file dragover so the browser never navigates. Catch drops anywhere on
+// the document while the pre-load #noDataState is visible and route to
+// processFleetJSON. The existing #ndsDropZone IIFE at L7339 is left in
+// place; this is additive, not replacement.
+document.addEventListener('dragover', function(e) {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') !== -1) {
+    e.preventDefault();   // tell the browser this is a valid drop target
+  }
+}, false);
+document.addEventListener('drop', function(e) {
+  if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+  // Only intercept top-level if the pre-load splash is visible. Otherwise
+  // let in-tool drag-drop (tree-row drags, project bar drags, etc.) work.
+  const nds = document.getElementById('noDataState');
+  if (!nds) return;
+  const ndsVisible = !nds.classList.contains('hidden') && nds.offsetParent !== null;
+  if (!ndsVisible) return;
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (typeof processFleetJSON === 'function' && file && file.name && file.name.toLowerCase().endsWith('.json')) {
+    processFleetJSON(file);
+  }
+}, false);
+
 let DATA = [];  // populated from JSON data file
 let HIST = [];  // componentHistory[] — loaded from JSON via _initFromJSON; populated by Import History from Excel
 // v18.4 (Chunk 5 / Slide 6) — vocabulary unified across the suite. Canonical
@@ -1318,7 +1356,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.6';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.7';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
