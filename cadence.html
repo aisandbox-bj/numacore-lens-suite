@@ -307,6 +307,17 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 /* ── CONFIG TAB ── */
 #configPanel{flex:1;display:none;flex-direction:column;overflow-y:auto;padding:24px;gap:0;background:#0d1117}
 #configPanel.active{display:flex}
+/* v18.5.3 — Override Audit gets its own full-screen panel */
+#overrideAuditPanel{flex:1;display:none;flex-direction:column;overflow:hidden;padding:24px;background:#0d1117}
+#overrideAuditPanel.active{display:flex}
+#overrideAuditPanel h2{font-size:18px;color:#7dd3fc;margin-bottom:8px;font-weight:600;letter-spacing:0.2px}
+#overrideAuditPanel .audit-intro{font-size:13px;color:#8b949e;margin-bottom:14px;max-width:980px;line-height:1.55}
+#overrideAuditPanel .audit-intro code{background:#161b22;padding:1px 6px;border-radius:3px;color:#7dd3fc;font-size:11px}
+#overrideAuditPanel .audit-intro .lk{color:#7dd3fc;font-weight:600}
+#overrideAuditPanel .audit-intro .or{color:#e3b341;font-weight:600}
+#overrideAuditPanel .audit-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:6px 0 14px}
+#overrideAuditPanel #auditCount{color:#8b949e;font-size:11px;margin-left:8px}
+#overrideAuditPanel #auditTableWrap{flex:1;overflow:auto;border:1px solid #21262d;border-radius:6px;min-height:240px}
 .cfg-section{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:18px;margin-bottom:18px;max-width:420px}
 /* ── CONFIG SUB-TABS ── */
 .cfg-subtabs{display:flex;gap:0;border-bottom:1px solid #21262d;margin-bottom:22px;flex-shrink:0}
@@ -767,6 +778,7 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
     <button class="tab-btn" id="tabProjectList">&#128203; &nbsp;Project List</button>
     <button class="tab-btn" id="tabAutoBuild">&#9889; &nbsp;Auto-Build</button>
     <button class="tab-btn" id="tabDataEditor">&#9998; &nbsp;Data Editor</button>
+    <button class="tab-btn" id="tabOverrideAudit">&#128272; &nbsp;Override Audit</button>
     <button class="tab-btn" id="tabConfig">&#9881; &nbsp;Config</button>
   </div>
   <div class="tab-controls">
@@ -1131,20 +1143,12 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
       <button class="btn btn-import" id="clearSaveBtn" style="margin-top:6px">&#128465; Clear Saved Session</button>
     </div>
 
-    <!-- v18.5.1 — Override Audit (Sketches 1 + 2): see and clean file-resident overrides -->
-    <div class="cfg-section" id="cfgOverrideAudit">
+    <!-- v18.5.3 — Audit relocated to its own full-screen tab. Config keeps a compact entry point. -->
+    <div class="cfg-section" id="cfgOverrideAuditSummary">
       <h3>Override Audit</h3>
-      <p>Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON. <strong>Linked</strong> entries are tied to a currently-active project (legitimate). <strong>Orphan</strong> entries are not — they're left over from past project edits / deleted projects / early-use drags. Clear one at a time via the row Reset button, or bulk-clear all orphans via the button below. <em>SAVE FILE</em> to persist after any change.</p>
-      <div style="margin:12px 0 8px;display:flex;align-items:center;flex-wrap:wrap;gap:6px">
-        <span class="audit-filter-chip active" data-filter="all">All</span>
-        <span class="audit-filter-chip" data-filter="linked">Currently linked</span>
-        <span class="audit-filter-chip" data-filter="orphan">Orphans</span>
-        <span id="auditCount" style="margin-left:12px;color:#8b949e;font-size:11px"></span>
-      </div>
-      <button class="btn btn-danger" id="reconcileOrphansBtn" style="margin-top:6px">&#129529; Reconcile Orphans — bulk clear</button>
-      <div id="auditTableWrap" style="max-height:340px;overflow:auto;margin-top:12px;border:1px solid #21262d;border-radius:6px">
-        <!-- populated by renderOverrideAudit() -->
-      </div>
+      <p>See and clean file-resident overrides. The full audit panel opens in its own full-screen view with filter chips, sortable table, per-row Reset buttons, and the 🧹 Reconcile Orphans bulk-clear action.</p>
+      <p id="cfgAuditSummaryCount" style="font-size:12px;color:#8b949e;margin:8px 0 0">—</p>
+      <button class="btn btn-import" id="openOverrideAuditBtn" style="margin-top:10px">&#128272; Open Override Audit</button>
     </div>
   </div>
 
@@ -1169,6 +1173,22 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
         <button class="btn btn-import" id="usageResetAll" style="color:#f85149;border-color:rgba(248,81,73,.4)">&#9888;&nbsp; Reset All Counts</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Override Audit Panel (Tab 8 — v18.5.3) -->
+<div id="overrideAuditPanel">
+  <h2>&#128272; Override Audit</h2>
+  <p class="audit-intro">Every component date override (drag, project-link write, Auto-Build cluster, anything carried in <code>componentDateOverrides</code> / <code>componentDates</code>) currently in this fleet JSON. <span class="lk">Linked</span> entries are tied to a currently-active project (legitimate). <span class="or">Orphan</span> entries are not — they're left over from past project edits / deleted projects / early-use drags. Clear one at a time via the row Reset button, or bulk-clear all orphans via the Reconcile button below. <em>SAVE FILE</em> to persist after any change.</p>
+  <div class="audit-controls">
+    <span class="audit-filter-chip active" data-filter="all">All</span>
+    <span class="audit-filter-chip" data-filter="linked">Currently linked</span>
+    <span class="audit-filter-chip" data-filter="orphan">Orphans</span>
+    <span id="auditCount"></span>
+    <button class="btn btn-danger" id="reconcileOrphansBtn" style="margin-left:auto">&#129529; Reconcile Orphans — bulk clear</button>
+  </div>
+  <div id="auditTableWrap">
+    <!-- populated by renderOverrideAudit() -->
   </div>
 </div>
 
@@ -1275,7 +1295,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.2';           // single source of truth for version-scoped keys
+const VERSION  = '18.5.3';           // single source of truth for version-scoped keys
 // SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
 // Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
 const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
@@ -1453,10 +1473,27 @@ function _orphanSaveCheck() {
     const noun = orphanCount === 1 ? 'override' : 'overrides';
     showToast(
       `⚠ ${orphanCount.toLocaleString()} ${noun} not in any project — won't appear on the deployment schedule. ` +
-      `Review via ⚙ Config → Override Audit → 🧹 Reconcile Orphans.`,
+      `Review via 🔓 Override Audit → 🧹 Reconcile Orphans.`,
       6800
     );
   }, 1800);
+}
+
+// v18.5.3 — Update the in-Config "Override Audit" summary line.
+// Called when Config tab opens AND after any reset / reconcile from the audit panel.
+// Lightweight: just count + paint the cfgAuditSummaryCount span.
+function _updateAuditSummaryInConfig() {
+  const el = document.getElementById('cfgAuditSummaryCount');
+  if (!el) return;
+  if (!state.fileOverrideIds || state.fileOverrideIds.size === 0) {
+    el.textContent = 'No override entries in this file.';
+    return;
+  }
+  const linkedIds = new Set((state.projects || []).flatMap(p => Array.isArray(p.linkedIds) ? p.linkedIds : []));
+  const total = state.fileOverrideIds.size;
+  const linked = [...state.fileOverrideIds].filter(id => linkedIds.has(id)).length;
+  const orphan = total - linked;
+  el.textContent = `${total.toLocaleString()} total · ${linked.toLocaleString()} linked · ${orphan.toLocaleString()} orphan`;
 }
 
 // Right-click context menu for a LOCKED component tree row (one-off reset).
@@ -1675,6 +1712,8 @@ function renderOverrideAudit() {
       }
     };
   });
+  // v18.5.3 — keep the in-Config summary line in sync whenever the audit re-renders
+  _updateAuditSummaryInConfig();
 }
 
 function renderUsageReport() {
@@ -3768,6 +3807,9 @@ function _setMainTab(tab) {
   // Config
   const cp = document.getElementById('configPanel');
   if (cp) { cp.classList.toggle('active', tab==='tabConfig'); }
+  // v18.5.3 — Override Audit (own full-screen tab)
+  const oap = document.getElementById('overrideAuditPanel');
+  if (oap) { oap.classList.toggle('active', tab==='tabOverrideAudit'); }
   // Auto-Build
   const abp = document.getElementById('autoBuildPanel');
   if (abp) { abp.classList.toggle('active', tab==='tabAutoBuild'); }
@@ -3786,7 +3828,7 @@ function _setMainTab(tab) {
   if (tab === 'tabProjectList')  renderProjectList();
   if (tab === 'tabOptimiser')    renderProjectOptimiser();
   if (tab === 'tabConfig') {
-    renderFleetConfig(); renderUsageReport(); renderOverrideAudit();   // v18.5.1 — audit on Config open
+    renderFleetConfig(); renderUsageReport(); _updateAuditSummaryInConfig();   // v18.5.3 — audit moved to its own tab; Config shows summary line only
     const vmSel = document.getElementById('cfgVisibleMonths');
     if (vmSel) {
       const closest = [...vmSel.options].reduce((a,b) =>
@@ -3797,6 +3839,7 @@ function _setMainTab(tab) {
   }
   if (tab === 'tabAutoBuild')    renderAutoBuildScope();
   if (tab === 'tabDataEditor')   renderDataEditor();
+  if (tab === 'tabOverrideAudit') renderOverrideAudit();   // v18.5.3 — full-screen audit
 }
 
 // ─── RENDER ──────────────────────────────────────────────────────
@@ -5291,6 +5334,9 @@ document.getElementById('tabOptimiser').onclick   = () => _setMainTab('tabOptimi
 document.getElementById('tabConfig').onclick      = () => _setMainTab('tabConfig');
 document.getElementById('tabDataEditor').onclick = () => _setMainTab('tabDataEditor');
 document.getElementById('tabAutoBuild').onclick   = () => _setMainTab('tabAutoBuild');
+document.getElementById('tabOverrideAudit').onclick = () => _setMainTab('tabOverrideAudit');   // v18.5.3
+// v18.5.3 — open audit from Config summary button
+document.getElementById('openOverrideAuditBtn').onclick = () => _setMainTab('tabOverrideAudit');
 
 // ─── NAMING CONVENTION TOGGLE ─────────────────────────────────────
 function _updateResByProjectsLabel() {
