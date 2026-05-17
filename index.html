@@ -6336,14 +6336,29 @@ let _rrepCurrentBrief = null;   // captured on open, reused on Done
 const IW39_FRESHNESS_DAYS = 30;
 
 function _checkIW39Freshness(brief) {
-  const isos = (brief.projects || [])
-    .map(p => (p.deploy && p.deploy.knownWOsLastLoadIso) ? p.deploy.knownWOsLastLoadIso : null)
-    .filter(Boolean);
-  if (isos.length === 0) {
+  // v4.4 FIX-1 (2026-05-17 evening) — Primary signal is the top-level
+  // deployData.fleetWideIW39AsOf field, set by Deploy v8.15 FIX-2 on every
+  // fleet-wide IW39 upload. This is a single fact ("operator confirmed a
+  // fresh IW39") not dependent on per-unit FLOC matches. Per-project
+  // knownWOsLastLoadIso / knownWOsLastFleetAsOf remain as fallback for
+  // older JSONs (pre-FIX-2) where the top-level field isn't yet populated.
+  const candidates = [];
+  // Top-level signal (Deploy v8.15 FIX-2)
+  const topLevel = (typeof lensRawData !== 'undefined' && lensRawData
+                    && lensRawData.workingData && lensRawData.workingData.deployData
+                    && lensRawData.workingData.deployData.fleetWideIW39AsOf) || null;
+  if (topLevel) candidates.push(topLevel);
+  // Per-project fallback signals
+  (brief.projects || []).forEach(p => {
+    if (p.deploy && p.deploy.knownWOsLastLoadIso)   candidates.push(p.deploy.knownWOsLastLoadIso);
+    if (p.deploy && p.deploy.knownWOsLastFleetAsOf) candidates.push(p.deploy.knownWOsLastFleetAsOf);
+  });
+  if (candidates.length === 0) {
     return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
   }
-  isos.sort();
-  const newest = isos[isos.length - 1];
+  // Most recent wins
+  candidates.sort();
+  const newest = candidates[candidates.length - 1];
   const t = Date.parse(newest);
   if (isNaN(t)) return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
   const daysSince = Math.floor((Date.now() - t) / 86400000);

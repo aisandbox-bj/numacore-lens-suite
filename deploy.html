@@ -3985,6 +3985,17 @@ function confirmIW39FleetImport() {
   _fleetWideIW39 = wos;
   _iw39AsOf      = new Date().toISOString();
   _woHdrs = []; _woRaw = null;
+  // v8.15 FIX-2 (2026-05-17 evening) — Top-level fleet-wide IW39 timestamp
+  // on the Deploy slice. Operator-reported the per-project FIX-1 signal was
+  // too brittle (relied on knownWOs population which requires unit-FLOC
+  // matches; if the IW39 had no matches for a unit, no timestamp got set).
+  // The top-level signal is "operator confirmed a fresh IW39 upload" — a
+  // single fact, single source of truth. Lens Risk Report gate reads this
+  // first; per-project signals stay as fallback for older JSONs.
+  if (deploy) {
+    deploy.fleetWideIW39AsOf = _iw39AsOf;
+    if (typeof _markUnsaved === 'function') _markUnsaved();
+  }
   // v8.15 FIX-1 (2026-05-17 evening) — Eager per-project knownWOs population
   // on fleet-wide IW39 load. Previously, knownWOs + knownWOsLastLoadIso only
   // advanced when the operator OPENED each project's WO tab (lazy via
