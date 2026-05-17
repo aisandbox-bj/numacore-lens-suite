@@ -6063,17 +6063,26 @@ const _depInShell = (function() { try { return window.parent !== window; } catch
 function _depMsgTarget() { return (window.location.protocol === 'file:') ? '*' : window.location.origin; }
 
 function _depOwnedSliceForShell() {
-  // Deploy owns workingData.deployData.* — but our slice contract emits
-  // workingData.{projectDetails,checklistItems,actionItems,projectNotes} per
-  // the V5 plan §slice ownership. Map deploy.projects → projectDetails for
-  // the parent's merge. Everything else stays inside fleetData.
+  // Deploy owns workingData.deployData.* — the legacy slice contract emitted
+  // workingData.{projectDetails,checklistItems,actionItems,projectNotes} only,
+  // which excluded any TOP-LEVEL deployData fields (like fleetWideIW39AsOf in
+  // v8.15 FIX-2). v8.15 FIX-3 (2026-05-17 evening): ALSO emit the full
+  // workingData.deployData (V5 shape) so cross-tool consumers (Lens Risk
+  // Report freshness gate) see Deploy-owned top-level metadata. Lens's
+  // allow-list must include 'workingData.deployData' for this to merge.
+  // Wasteful (projects duplicate between projectDetails and deployData.projects)
+  // but correct — and the dual-shape gets cleaned up in the v8.12 chunk.
   const dep = (fleetData && fleetData.workingData && fleetData.workingData.deployData) || {};
   return {
     workingData: {
       projectDetails: dep.projects || {},
       checklistItems: dep.checklistItems || {},
       actionItems:    dep.actionItems    || {},
-      projectNotes:   dep.projectNotes   || {}
+      projectNotes:   dep.projectNotes   || {},
+      // v8.15 FIX-3 — full V5-shape deployData slice. Lens wholesale-replaces
+      // its lensRawData.workingData.deployData on receipt (Deploy owns this
+      // slice per slice-ownership rule).
+      deployData:     dep
     }
   };
 }

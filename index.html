@@ -5248,7 +5248,14 @@ const EMBED_OWNED_SLICES = {
   cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder',
             'working.projects', 'working.componentDates', 'working.decisionLog'],  // V4 Flat fallback shapes
   deploy:  ['workingData.projectDetails', 'workingData.checklistItems', 'workingData.actionItems', 'workingData.projectNotes',
-            'working.projectDetails', 'working.checklistItems', 'working.actionItems', 'working.projectNotes']  // V4 Flat fallback shapes
+            'working.projectDetails', 'working.checklistItems', 'working.actionItems', 'working.projectNotes',  // V4 Flat fallback shapes
+            // v4.4 FIX-2 (2026-05-17 evening) — paired with Deploy v8.15 FIX-3.
+            // Deploy now emits the full V5-shape workingData.deployData slice so
+            // Lens-side consumers see Deploy-owned top-level metadata (e.g. the
+            // Risk Report freshness gate reads fleetWideIW39AsOf from here).
+            // Wholesale-replaces lensRawData.workingData.deployData on receipt
+            // (Deploy owns this slice per slice-ownership rule).
+            'workingData.deployData']
 };
 
 let embedReady = { cadence: false, deploy: false };
