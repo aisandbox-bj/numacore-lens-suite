@@ -1122,7 +1122,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.14';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
+const VERSION = '8.15';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1168,6 +1168,12 @@ const WO_FIELDS = [
   // v8.9 — Order Type column (e.g. YBA2 for planned maintenance). Filter at
   // render time when surfacing WOs for a unit. Optional.
   { key:'order_type',   label:'Order Type (YBA2 etc)', required:false },
+  // v8.15 — Schedule + completion dates. Drives the Lens Risk Report's
+  // "open WO with basic start in next N months" filter + "completed WOs
+  // last 4mo" history page. Both optional; missing values → UNVERIFIED
+  // downstream (per Rex's standing protocol — blank beats a guess).
+  { key:'basic_start',     label:'Basic Start Date',     required:false },
+  { key:'completion_date', label:'Completion / Finish',  required:false },
   // v8.9 FIX-1 (2026-05-12) — sap_material REMOVED from WO_FIELDS. Operator
   // confirmed 2026-05-12: "the IW39 report does not include materials".
   // The v8.8 BOM↔IW39 material-match badge was always going to return zero
@@ -1234,6 +1240,10 @@ const ALIASES = {
   line_no:      ['line','item','pos','position','seq','item no'],
   // v8.9 — additions for IW39 order type + Component Snapshot + Inventory Master columns
   order_type:   ['order type','art','order cat','category','type'],
+  // v8.15 — IW39 schedule + completion date columns. Operator-mapped at import
+  // time; auto-match catches the common SAP IW39 header variants.
+  basic_start:     ['basic start','basic start date','bsd','planned start','start date','bas. start dt','sched start'],
+  completion_date: ['actual finish','actual finish date','actl. finish','completion date','completed','completion','finish date','act. finish','date complete'],
   fleet:        ['fleet','fleet type','equipment type'],
   model:        ['model','machine model','asset model'],
   sn_prefix:    ['s/n prefix','sn prefix','serial prefix','sn pre','prefix'],
@@ -3148,6 +3158,13 @@ function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
   if (!p.knownWOs) p.knownWOs = {};
   if (!Array.isArray(sourceWOs)) return false;
   const nowIso = sourceAsOfIso || new Date().toISOString();
+  // v8.15 — Schedule + cost + order-type fields, additive on every record.
+  // Helper: capture only when the source has a non-empty value (don't
+  // wipe a previously-recorded value if the latest IW39 row left it blank).
+  const _setIf = (obj, key, val) => {
+    const s = (val == null ? '' : String(val)).trim();
+    if (s) obj[key] = s;
+  };
   let changed = false;
   sourceWOs.forEach(wo => {
     const num = String(wo.wo_number || '').trim();
@@ -3155,13 +3172,20 @@ function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
     const newStatus = String(wo.status || '').trim();
     if (!p.knownWOs[num]) {
       changed = true;
-      p.knownWOs[num] = {
+      const entry = {
         first_seen_iso: nowIso,
         last_seen_iso:  nowIso,
         last_status:    newStatus,
         description:    String(wo.description || '').trim(),
         component:      String(wo.component || '').trim()
       };
+      // v8.15 — capture schedule + cost + classification (additive — null/missing OK)
+      _setIf(entry, 'basic_start',     wo.basic_start);
+      _setIf(entry, 'completion_date', wo.completion_date);
+      _setIf(entry, 'planned_cost',    wo.planned_cost);
+      _setIf(entry, 'actual_cost',     wo.actual_cost);
+      _setIf(entry, 'order_type',      wo.order_type);
+      p.knownWOs[num] = entry;
     } else {
       const existing = p.knownWOs[num];
       if (existing.last_status !== newStatus) changed = true;
@@ -3169,6 +3193,15 @@ function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
       existing.last_status   = newStatus || existing.last_status;
       if (wo.description) existing.description = String(wo.description).trim();
       if (wo.component)   existing.component   = String(wo.component).trim();
+      // v8.15 — refresh schedule + cost + classification when present on
+      // the latest IW39 row. Sticky semantics via _setIf (blank value =>
+      // no overwrite, so previously-recorded basic_start survives if it
+      // dropped off a later IW39 export).
+      _setIf(existing, 'basic_start',     wo.basic_start);
+      _setIf(existing, 'completion_date', wo.completion_date);
+      _setIf(existing, 'planned_cost',    wo.planned_cost);
+      _setIf(existing, 'actual_cost',     wo.actual_cost);
+      _setIf(existing, 'order_type',      wo.order_type);
     }
   });
   if (changed) {
@@ -3473,7 +3506,7 @@ function renderWorkOrders(id) {
   const _hiddenCount      = _woHideSet.size;
   const _sourceBadge = _woSource === 'fleet'
     ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(76,175,80,0.10);color:var(--green);border:1px solid var(--green);margin-left:8px">⚙ Fleet-wide IW39 · filtered to ${esc(_unitId || 'unit')} · ${esc(_orderTypesLbl)} · open only</span>`
-    : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(91,156,246,0.10);color:var(--blue);border:1px solid var(--border);margin-left:8px">📁 Per-project upload · ${esc(_orderTypesLbl)} · open only</span>` : '');
+    : (_woSource === 'project' && wos.length ? `<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:rgba(240,136,62,0.10);color:var(--gold);border:1px solid var(--gold);margin-left:8px" title="Legacy per-project data from a prior session. Load a fleet-wide IW39 from the header pill to refresh.">📁 Legacy per-project data · ${esc(_orderTypesLbl)} · open only</span>` : '');
 
   // v8.10 FIX-4.1 (2026-05-13) — Inline filter config: order types text input
   // + advanced description-filter chip-rules editor. Each rule is an Excel-style
@@ -3559,10 +3592,11 @@ function renderWorkOrders(id) {
   el.innerHTML = `
     <div class="tab-toolbar">
       <div class="tab-toolbar-title">SAP Work Orders (IW39)${wos.length ? ` <span style="color:var(--muted);font-weight:400">(${wos.length} of ${_sourcePool.length} after filter)</span>` : ''}${_sourceBadge}</div>
-      <div style="display:flex;gap:8px">
-        ${_woSource === 'project' && _sourcePool.length ? `<button class="btn-clear" onclick="clearWOs('${id}')">Clear WOs</button>` : ''}
-        ${_woSource === 'fleet' ? `` : `<button class="btn-upload" onclick="document.getElementById('woIn').click()">📂 Upload IW39 (Excel)</button>`}
-      </div>
+      <!-- v8.15 — Per-project IW39 upload + Clear WOs buttons removed. Operator
+           workflow: load IW39 once via the fleet-wide header pill (next to
+           Material Master). Each project's WO tab auto-filters to its unit.
+           Legacy per-project p.workOrders[] still renders as a fallback when
+           no fleet-wide IW39 is loaded (see _sourcePool resolution above). -->
     </div>
     ${_filterConfigBar}
     ${_recentlyClosedHtml}`;
@@ -3571,7 +3605,10 @@ function renderWorkOrders(id) {
     if (_fleetWideLoaded) {
       el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No <strong>open</strong> work orders match the current filter for unit <strong>${esc(_unitId || '—')}</strong>.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total; ${_filteredOutCount.toLocaleString()} excluded by the active filter).<br><br><span style="color:var(--faint);font-size:11px">Active filter: Order types = <strong>${esc(_orderTypesLbl)}</strong> · Hide descriptions containing = <strong>${esc(_excludeKwsLbl)}</strong> · Status = REL/CRTD only.<br>Adjust filters above or check the Sort Field is set on this project.</span></div>`;
     } else {
-      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No open work orders match the current filter.<br>${_sourcePool.length === 0 ? 'No IW39 loaded yet — upload one above, or load a fleet-wide IW39 from the header pill.' : `${_sourcePool.length} WOs uploaded but all excluded by the filter (status not in REL/CRTD, wrong order type, or description matched the exclusion keyword).`}<br><br><span style="color:var(--faint);font-size:11px">Expected columns: WO Number · Description · User Status · Planned Cost · Actual Cost · FLOC / Sort Field · Order Type</span></div>`;
+      // v8.15 — empty-state now directs operator to the fleet-wide IW39 pill
+      // exclusively (per-project upload removed). Legacy p.workOrders[] still
+      // displays if present (no-data branch only fires when both pools are empty).
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No open work orders for this unit.<br>${_sourcePool.length === 0 ? '<strong>No fleet-wide IW39 loaded yet</strong> — click the IW39 pill in the Deploy header (next to Material Master) to upload one. All projects auto-filter to their unit.' : `${_sourcePool.length} WOs in legacy per-project data but all excluded by the filter (status not in REL/CRTD, wrong order type, or description matched the exclusion keyword). Refresh by loading a current fleet-wide IW39 from the header pill.`}<br><br><span style="color:var(--faint);font-size:11px">v8.15: per-project IW39 upload removed. Single fleet-wide entry point. Expected columns include WO Number · Description · System Status · Planned/Actual Cost · FLOC · Order Type · Basic Start · Completion.</span></div>`;
     }
     return;
   }

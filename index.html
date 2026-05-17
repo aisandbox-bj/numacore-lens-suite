@@ -1741,6 +1741,67 @@ body { background: #030f0c; }
 /* Hide right panel's blueprint/hero area when canvas-hero is active */
 #unit-detail.side-mode #blueprint-area { display: none !important; }
 
+/* ════════════════════════════════════════════════════════════════════════
+   v4.4 — RISK REPORT (per-unit) — button + overlay + print stylesheet.
+   Operator-flagged 2026-05-17: per-machine summary of risk signals from
+   the fleet JSON, formatted as a Markdown prompt for Rex (external KB
+   agent) → paste-back parser → 2-page printable PDF.
+   ════════════════════════════════════════════════════════════════════════ */
+.ud-risk-btn {
+  margin-left:auto; padding:6px 14px; font-size:0.6rem; letter-spacing:2px;
+  text-transform:uppercase; cursor:pointer; transition:all 0.2s;
+  font-family:'Segoe UI',Arial,sans-serif; border-radius:18px;
+  border:1px solid #e3b341; background:rgba(227,179,65,0.08);
+  color:#e3b341;
+}
+.ud-risk-btn:hover { background:rgba(227,179,65,0.18); border-color:#f0883e; color:#f0883e; }
+.ud-risk-btn:active { transform:translateY(1px); }
+
+#rrep-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9500; display:none; overflow:auto; backdrop-filter:blur(4px); }
+#rrep-overlay.open { display:block; }
+#rrep-panel { max-width:1200px; margin:24px auto; background:#0a1018; border:1px solid #0f6e56; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.5); padding:20px 28px; color:#e8f4ee; }
+#rrep-head { display:flex; align-items:center; gap:16px; padding-bottom:12px; margin-bottom:18px; border-bottom:1px solid #0f6e56; }
+#rrep-head h2 { flex:1; margin:0; font-size:1.3rem; color:#3dc9a0; letter-spacing:2px; text-transform:uppercase; }
+#rrep-close-btn { padding:6px 14px; font-size:0.6rem; letter-spacing:2px; text-transform:uppercase; cursor:pointer; background:transparent; border:1px solid #0f6e56; color:#5dcaa5; border-radius:18px; font-family:'Segoe UI',Arial,sans-serif; }
+#rrep-close-btn:hover { border-color:#3dc9a0; color:#3dc9a0; }
+
+.rrep-section { margin-bottom:18px; border:1px solid #0f6e56; border-radius:8px; padding:14px 16px; background:rgba(15,110,86,0.04); }
+.rrep-section-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:0.7rem; letter-spacing:2px; text-transform:uppercase; color:#3dc9a0; }
+.rrep-section-num { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%; background:rgba(61,201,160,0.15); border:1px solid #3dc9a0; font-size:0.7rem; font-family:monospace; color:#3dc9a0; }
+.rrep-section-hint { font-size:0.6rem; color:#5dcaa5; letter-spacing:1px; margin-left:auto; opacity:0.7; }
+#rrep-prompt-box, #rrep-paste-box { width:100%; min-height:220px; max-height:400px; resize:vertical; padding:12px; font-family:'Consolas','Courier New',monospace; font-size:0.72rem; line-height:1.5; color:#cce8d8; background:#050a12; border:1px solid #0f6e56; border-radius:6px; box-sizing:border-box; }
+.rrep-btn-row { display:flex; gap:10px; margin-top:10px; }
+.rrep-btn { padding:7px 16px; font-size:0.62rem; letter-spacing:2px; text-transform:uppercase; cursor:pointer; font-family:'Segoe UI',Arial,sans-serif; border-radius:18px; border:1px solid #1d9e75; background:rgba(29,158,117,0.12); color:#3dc9a0; transition:all 0.2s; }
+.rrep-btn:hover { background:rgba(29,158,117,0.26); border-color:#3dc9a0; }
+.rrep-btn:disabled { opacity:0.35; cursor:not-allowed; }
+.rrep-btn-primary { background:rgba(227,179,65,0.18); border-color:#e3b341; color:#e3b341; }
+.rrep-btn-primary:hover { background:rgba(227,179,65,0.32); border-color:#f0883e; color:#f0883e; }
+
+.rrep-signals-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; }
+.rrep-sig-stat { padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(61,201,160,0.18); border-radius:6px; }
+.rrep-sig-stat .lbl { font-size:0.55rem; letter-spacing:1.5px; color:#5dcaa5; text-transform:uppercase; }
+.rrep-sig-stat .val { font-size:1.1rem; color:#e8f4ee; margin-top:2px; font-weight:600; }
+
+/* PDF view is hidden on screen — only renders during print */
+#rrep-pdf-view { display:none; }
+
+@media print {
+  body * { visibility:hidden; }
+  #rrep-pdf-view { display:block !important; position:absolute; top:0; left:0; width:100%; background:white; color:#1a1a1a; padding:0; font-family:'Calibri','Segoe UI','Arial',sans-serif; }
+  #rrep-pdf-view, #rrep-pdf-view * { visibility:visible; }
+  #rrep-pdf-view h1 { color:#0a4d3a; font-size:18pt; margin:0 0 8px 0; }
+  #rrep-pdf-view h2 { color:#0a4d3a; font-size:13pt; margin:14px 0 6px 0; border-bottom:1px solid #6b8c80; padding-bottom:3px; }
+  #rrep-pdf-view h3 { color:#0a4d3a; font-size:11pt; margin:10px 0 4px 0; }
+  #rrep-pdf-view p { font-size:10pt; line-height:1.45; margin:4px 0; }
+  #rrep-pdf-view table { width:100%; border-collapse:collapse; margin:6px 0 14px; }
+  #rrep-pdf-view table th, #rrep-pdf-view table td { border:1px solid #6b8c80; padding:4px 6px; text-align:left; font-size:9pt; vertical-align:top; }
+  #rrep-pdf-view table th { background:#cce4d6; font-weight:700; }
+  #rrep-pdf-view .rrep-pdf-pagebreak { page-break-after:always; break-after:always; height:0; margin:0; }
+  #rrep-pdf-view .rrep-pdf-prose { font-size:10pt; line-height:1.45; }
+  #rrep-pdf-view .rrep-pdf-meta { font-size:9pt; color:#6b8c80; margin-top:18px; border-top:1px solid #6b8c80; padding-top:6px; }
+  @page { size: letter; margin: 0.5in 0.6in; }
+}
+
 </style>
 </head>
 <body>
@@ -1937,6 +1998,7 @@ body { background: #030f0c; }
                 <h2 id="ud-title"></h2>
                 <div class="unit-meta" id="ud-meta"></div>
               </div>
+              <button id="ud-risk-report-btn" class="ud-risk-btn" onclick="openRiskReport()" title="Generate a Risk Report prompt for the specialist agent (Rex) using this unit's data">&#x1F6E1; Risk Report</button>
             </div>
             <div id="blueprint-area">
               <!-- v3.5 sub5c — Hero View -->
@@ -2082,7 +2144,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.3.6';
+const VERSION = '4.4';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -6255,6 +6317,629 @@ function renderHeatmapBoth(fleet, model) {
 }
 
 
+// ════════════════════════════════════════════════════════════════════════
+// v4.4 — RISK REPORT (per-unit)
+// Operator-flagged 2026-05-17. Per-machine summary of risk signals from
+// the loaded fleet JSON → Markdown prompt for Rex (external KB agent) →
+// paste-back parser → 2-page printable PDF via browser print stylesheet.
+// Slice-ownership: Lens READS from masterData / workingData / deployData
+// but does NOT write back. Risk reports are session-only (no persistence
+// in Phase 1).
+// Placeholder prompt template — operator will refine via Rex.
+// ════════════════════════════════════════════════════════════════════════
+let _rrepCurrentBrief = null;   // captured on open, reused on Done
+
+// v4.4 refinement — IW39 freshness gate. Risk Report requires a recent IW39
+// load for at least one project on this unit. "Recent" = max knownWOsLastLoadIso
+// across the unit's projects is within IW39_FRESHNESS_DAYS days. Operator
+// can tune the constant if a different staleness threshold is desired.
+const IW39_FRESHNESS_DAYS = 30;
+
+function _checkIW39Freshness(brief) {
+  const isos = (brief.projects || [])
+    .map(p => (p.deploy && p.deploy.knownWOsLastLoadIso) ? p.deploy.knownWOsLastLoadIso : null)
+    .filter(Boolean);
+  if (isos.length === 0) {
+    return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
+  }
+  isos.sort();
+  const newest = isos[isos.length - 1];
+  const t = Date.parse(newest);
+  if (isNaN(t)) return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
+  const daysSince = Math.floor((Date.now() - t) / 86400000);
+  if (daysSince > IW39_FRESHNESS_DAYS) {
+    return { ok: false, reason: 'stale', daysSince: daysSince, asOf: newest };
+  }
+  return { ok: true, reason: 'fresh', daysSince: daysSince, asOf: newest };
+}
+
+function openRiskReport() {
+  if (!mmState || mmState.level !== 'unit-detail') return;
+  const fleet = mmState.fleet, model = mmState.model, unit = mmState.unit;
+  const brief = _buildUnitRiskBrief(fleet, model, unit);
+  _rrepCurrentBrief = brief;
+  document.getElementById('rrep-head-title').textContent = 'RISK REPORT — ' + unit;
+  // v4.4 refinement — IW39 freshness gate before generating prompt.
+  const freshness = _checkIW39Freshness(brief);
+  const blocked = document.getElementById('rrep-iw39-block');
+  const normalSections = document.getElementById('rrep-normal-sections');
+  if (!freshness.ok) {
+    let msg;
+    if (freshness.reason === 'no-iw39') {
+      msg = 'No IW39 data on file for any project on this unit. Open Deploy, load a fresh fleet-wide IW39, SAVE FILE, then reload Lens before generating the Risk Report.';
+    } else {
+      msg = 'IW39 data is stale (last recorded ' + freshness.daysSince + ' days ago, on ' + String(freshness.asOf).substring(0, 10) + '). Open Deploy, load a fresh IW39, SAVE FILE, then reload Lens. Threshold: ' + IW39_FRESHNESS_DAYS + ' days.';
+    }
+    if (blocked) {
+      blocked.style.display = 'block';
+      const txt = document.getElementById('rrep-iw39-block-msg');
+      if (txt) txt.textContent = msg;
+    }
+    if (normalSections) normalSections.style.display = 'none';
+    document.getElementById('rrep-overlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+    return;
+  }
+  if (blocked) blocked.style.display = 'none';
+  if (normalSections) normalSections.style.display = 'block';
+  _renderRiskSignals(brief, freshness);
+  document.getElementById('rrep-prompt-box').value = _renderRiskPrompt(brief, freshness);
+  const pasteBox = document.getElementById('rrep-paste-box');
+  pasteBox.value = '';
+  _updateRrepDoneBtn();
+  document.getElementById('rrep-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeRiskReport() {
+  document.getElementById('rrep-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+  _rrepCurrentBrief = null;
+}
+
+function _updateRrepDoneBtn() {
+  const btn = document.getElementById('rrep-done-btn');
+  const txt = document.getElementById('rrep-paste-box');
+  if (!btn || !txt) return;
+  btn.disabled = (txt.value.trim().length < 50);
+}
+
+function _buildUnitRiskBrief(fleet, model, unit) {
+  const components = (typeof FLEET_DATA !== 'undefined' && FLEET_DATA && FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit])
+    ? FLEET_DATA[fleet][model][unit] : [];
+  // v4.4 — Pull unit-level metadata from the V5/V4-Flat-compatible helpers
+  // already in Lens (_lookupUnitMeta at L2598, _computeUnitUtilPct at L2574).
+  // SMU + smu_date are denormalized per-component as last_smu / last_read —
+  // aggregate via max across this unit's comps.
+  const unitMetaRaw = (typeof _lookupUnitMeta === 'function') ? _lookupUnitMeta(unit) : {};
+  let smu = null, smuDateMs = null, smuDate = null;
+  components.forEach(c => {
+    if (typeof c.last_smu === 'number' && isFinite(c.last_smu) && (smu === null || c.last_smu > smu)) smu = c.last_smu;
+    if (c.last_read) {
+      const t = Date.parse(c.last_read);
+      if (!isNaN(t) && (smuDateMs === null || t > smuDateMs)) { smuDateMs = t; smuDate = c.last_read; }
+    }
+  });
+  // v4.4 fix — utilPct intentionally NOT pulled into the brief. The
+  // _computeUnitUtilPct helper at L2574 derives a value from util_rate, which
+  // is FORECAST input for Cadence's multi-cycle math (hrs/day × cycle days),
+  // NOT historical operating %. Putting it in the Rex prompt would mislead the
+  // KB lookup. Actual operating % is not in the V4/V5 schema today (per
+  // Intake v8.7 comment at L4308-4311 — "util_pct stays a render-time roll-up
+  // in Lens (no Intake field) — that's v8.5"). Derive operating % downstream
+  // as 100 - idle_pct_X if Rex needs it.
+  const idleLife = (unitMetaRaw && typeof unitMetaRaw.idle_pct_life === 'number' && isFinite(unitMetaRaw.idle_pct_life)) ? unitMetaRaw.idle_pct_life : null;
+  const idle3Mo  = (unitMetaRaw && typeof unitMetaRaw.idle_pct_3mo  === 'number' && isFinite(unitMetaRaw.idle_pct_3mo))  ? unitMetaRaw.idle_pct_3mo  : null;
+  const snPrefix = (unitMetaRaw && (unitMetaRaw.sn_prefix || unitMetaRaw.sn || unitMetaRaw.serial_number)) || null;
+  const unitMeta = { smu, smuDate, idleLife, idle3Mo, snPrefix };
+  // Site context from meta slice
+  const meta = (typeof lensRawData !== 'undefined' && lensRawData && lensRawData.meta) ? lensRawData.meta : {};
+  const siteContext = { clientName: meta.clientName || null, site: meta.site || null };
+  const oilSamples = (typeof conMonByUnit !== 'undefined' && conMonByUnit && conMonByUnit[String(unit).toLowerCase()])
+    ? conMonByUnit[String(unit).toLowerCase()] : [];
+  const projRaw = (typeof lensRawData !== 'undefined' && lensRawData && lensRawData.workingData && lensRawData.workingData.projects)
+               || (typeof lensRawData !== 'undefined' && lensRawData && lensRawData.working && lensRawData.working.projects)
+               || [];
+  const projects = projRaw.filter(p => {
+    const u = String(p.unit || p.unit_id || '').toUpperCase();
+    return u === String(unit).toUpperCase();
+  }).map(p => ({
+    id: p.id,
+    name: p.name || p.id,
+    start: p.start_date || p.start || '',
+    end:   p.end_date   || p.end   || '',
+    status: p.status || '',
+    linkedComponents: Array.isArray(p.linkedIds) ? p.linkedIds.length : 0,
+    deploy: _readDeployForProject(p.id)
+  }));
+  return { unit, fleet, model, components, oilSamples, projects };
+}
+
+function _readDeployForProject(projId) {
+  const dp = (typeof lensRawData !== 'undefined' && lensRawData
+              && lensRawData.workingData && lensRawData.workingData.deployData
+              && lensRawData.workingData.deployData.projects
+              && lensRawData.workingData.deployData.projects[projId]) || null;
+  if (!dp) return null;
+  const gates = Array.isArray(dp.gates) ? dp.gates : [];
+  const woMap = (dp.knownWOs && typeof dp.knownWOs === 'object') ? dp.knownWOs : {};
+  const tok = s => String(s || '').toUpperCase().split(/[\s,;|/]+/)[0];
+  const _OPEN = new Set(['REL', 'CRTD']);     // currently in the system
+  const _PMOK = new Set(['TECO', 'CLSD']);    // PM-completed flavours
+  const _CNCL = new Set(['CNCL']);            // cancelled
+  // 4-month cutoff for "PMs completed in last 4 months" — uses last_seen_iso
+  // (knownWOs doesn't carry basic_start; v8.15 schema extension will add it).
+  const FOUR_MO_MS = 4 * 30 * 86400000;
+  const cutoff4mo = Date.now() - FOUR_MO_MS;
+  const allWOs = Object.keys(woMap).map(wo => Object.assign({ wo_number: wo }, woMap[wo]));
+  const openWORows = allWOs.filter(w => _OPEN.has(tok(w.last_status)));
+  const pmsCompletedRows = allWOs.filter(w => {
+    if (!_PMOK.has(tok(w.last_status))) return false;
+    const t = w.last_seen_iso ? Date.parse(w.last_seen_iso) : NaN;
+    return !isNaN(t) && t >= cutoff4mo;
+  });
+  const cancelledRows = allWOs.filter(w => _CNCL.has(tok(w.last_status)));
+  let plannedTotal = 0, actualTotal = 0;
+  openWORows.forEach(w => { plannedTotal += parseFloat(w.planned_cost) || 0; actualTotal += parseFloat(w.actual_cost) || 0; });
+  const bomRows = Array.isArray(dp.bom) ? dp.bom.length : 0;
+  return {
+    gatesTotal: gates.length,
+    gatesComplete: gates.filter(g => g.status === 'complete' || g.status === 'completed').length,
+    openWOs: openWORows.length,
+    woCostGap: plannedTotal - actualTotal,
+    bomRows,
+    // v4.4 refinement — full row arrays for the WO-history page + freshness signal
+    knownWOsLastLoadIso: dp.knownWOsLastLoadIso || null,
+    knownWOsLastFleetAsOf: dp.knownWOsLastFleetAsOf || null,
+    totalKnownWOs: allWOs.length,
+    openWORows: openWORows,
+    pmsCompletedRows: pmsCompletedRows,
+    cancelledRows: cancelledRows
+  };
+}
+
+function _renderRiskSignals(brief, freshness) {
+  const totalOpenWOs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.openWOs : 0), 0);
+  const totalPMs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.pmsCompletedRows.length : 0), 0);
+  const totalCnl = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.cancelledRows.length : 0), 0);
+  const iw39Label = (freshness && freshness.asOf) ? (String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + 'd ago)') : '—';
+  const um = brief.unitMeta || {};
+  const fmtSmu  = (um.smu  != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : '—';
+  const fmtDate = um.smuDate ? String(um.smuDate).substring(0, 10) : '—';
+  const fmtIdleL = (um.idleLife != null) ? um.idleLife.toFixed(0) + '%' : '—';
+  const fmtIdle3 = (um.idle3Mo  != null) ? um.idle3Mo.toFixed(0)  + '%' : '—';
+  // v4.4 fix 2026-05-17: dropped "Util %" tile — was misleadingly derived from
+  // util_rate (which is FORECAST input for Cadence's multi-cycle math, not
+  // historical operating %). No actual operating % field in current schema
+  // (Intake v8.7 comment at L4308-4311 confirms util_pct is a v8.5 future
+  // enhancement). Rex can derive operating % as 100 - idle_pct if needed.
+  const stats = [
+    { lbl: 'Unit',                  val: brief.unit },
+    { lbl: 'SMU',                   val: fmtSmu },
+    { lbl: 'SMU as-of',             val: fmtDate },
+    { lbl: 'Idle % (life)',         val: fmtIdleL },
+    { lbl: 'Idle % (3mo)',          val: fmtIdle3 },
+    { lbl: 'Components',            val: brief.components.length },
+    { lbl: 'Oil samples',           val: brief.oilSamples.length },
+    { lbl: 'Active projects',       val: brief.projects.length },
+    { lbl: 'IW39 last loaded',      val: iw39Label },
+    { lbl: 'Open WOs',              val: totalOpenWOs },
+    { lbl: 'PMs done (4mo)',        val: totalPMs },
+    { lbl: 'Cancelled',             val: totalCnl }
+  ];
+  const html = stats.map(s => '<div class="rrep-sig-stat"><div class="lbl">' + s.lbl + '</div><div class="val">' + s.val + '</div></div>').join('');
+  document.getElementById('rrep-signals').innerHTML = html;
+}
+
+function _renderRiskPrompt(brief, freshness) {
+  // PLACEHOLDER prompt — operator will refine via Rex v0.2 in a follow-up chunk.
+  // Structure now mirrors Rex v0.2 placeholder sections (EQUIPMENT / OPERATING
+  // PROFILE / COMPONENT BENCHMARK STATUS / OIL SAMPLES / WORK ORDER CONTEXT /
+  // DATA QUALITY FLAGS) so the data substitution is consistent when we wire
+  // the full Rex v0.2 template + parser in the next chunk.
+  const u = brief.unit, fl = brief.fleet, mo = brief.model;
+  const um = brief.unitMeta || {};
+  const sc = brief.siteContext || {};
+  const fmtNum = (v, suf) => (v == null) ? 'UNVERIFIED' : (Math.round(v).toLocaleString('en-CA') + (suf || ''));
+  const fmtPct = v => (v == null) ? 'UNVERIFIED' : (v.toFixed(0) + '%');
+  let md = '# Risk Assessment Request — Unit ' + u + '\n\n';
+  md += 'Hi Rex — please assess the exposure on this unit. Use your KB context for oil sample trends, model-specific failure modes, component life benchmarks, and recent WO patterns. Apply your standing protocol: confidence levels on every claim, blank/UNVERIFIED beats a guess.\n\n';
+  md += '## EQUIPMENT\n\n';
+  md += '- **Unit ID:** ' + u + '\n';
+  md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
+  md += '- **Make:** UNVERIFIED — derive from model + class via your KB lookup (CAT Application Profile if applicable)\n';
+  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)') + '\n';
+  md += '- **Site:** ' + (sc.clientName || 'UNVERIFIED') + (sc.site ? ' — ' + sc.site : '') + '\n';
+  md += '\n## OPERATING PROFILE\n\n';
+  // v4.4 fix — dropped "Util %" line. The util_rate field is FORECAST input
+  // for Cadence (hrs/day used in multi-cycle changeout math), NOT historical
+  // operating %. No actual operating % field in current schema — derive as
+  // (100 - idle_pct_X) downstream if needed.
+  md += '- **Idle % (life):** ' + fmtPct(um.idleLife) + '  (operating % = 100 − idle % if needed)\n';
+  md += '- **Idle % (3-month):** ' + fmtPct(um.idle3Mo) + '\n';
+  md += '- **Active projects:** ' + brief.projects.length + '\n';
+  // Next scheduled PCR — earliest project start
+  let nextPcr = null;
+  brief.projects.forEach(p => {
+    if (!p.start) return;
+    const t = Date.parse(p.start);
+    if (isNaN(t)) return;
+    if (!nextPcr || t < nextPcr.ms) nextPcr = { name: p.name, start: p.start, ms: t };
+  });
+  md += '- **Next scheduled PCR:** ' + (nextPcr ? (nextPcr.name + ' on ' + String(nextPcr.start).substring(0, 10)) : 'none') + '\n';
+  if (freshness && freshness.asOf) {
+    md += '- **IW39 last loaded:** ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + ' days ago)\n';
+  }
+  md += '\n## Source data (from current fleet JSON)\n\n';
+  md += '### Component life vs benchmark\n\n';
+  md += '| Component | Position | Est. hours | Benchmark | Life used | Predicted changeout | Strategy |\n';
+  md += '|---|---|---:|---:|---:|---|---|\n';
+  const compsSorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0));
+  compsSorted.slice(0, 30).forEach(c => {
+    md += '| ' + (c.component || '—')
+       + ' | ' + (c.position || '—')
+       + ' | ' + (c.est_hours != null ? c.est_hours : '—')
+       + ' | ' + (c.benchmark != null ? c.benchmark : '—')
+       + ' | ' + (c.pct != null ? c.pct + '%' : '—')
+       + ' | ' + (c.pred_changeout || '—')
+       + ' | ' + (c.replacement_strategy || '—')
+       + ' |\n';
+  });
+  if (brief.oilSamples.length > 0) {
+    md += '\n### Oil sample history (latest first, up to 12)\n\n';
+    md += '| Target / location | Sample date | Band / rank | Coolant? |\n';
+    md += '|---|---|---|---|\n';
+    brief.oilSamples.slice(0, 12).forEach(s => {
+      md += '| ' + (s.target || s.location || '—')
+         + ' | ' + (s.sample_date || '—')
+         + ' | ' + (s.band || s.sample_rank || '—')
+         + ' | ' + (s.is_coolant ? 'Y' : 'N')
+         + ' |\n';
+    });
+  } else {
+    md += '\n### Oil sample history\n\n*(no oil sample data for this unit in the current fleet JSON)*\n';
+  }
+  if (brief.projects.length > 0) {
+    md += '\n### Upcoming PCRs / shutdowns\n\n';
+    md += '| Project | Start | End | Status | Components linked | Gates done | Open WOs | WO cost gap |\n';
+    md += '|---|---|---|---|---:|---|---:|---:|\n';
+    brief.projects.forEach(p => {
+      const d = p.deploy || {};
+      const gatesStr = (d.gatesTotal != null) ? (d.gatesComplete + '/' + d.gatesTotal) : '—';
+      const costStr  = (d.woCostGap != null) ? d.woCostGap.toLocaleString('en-CA', { style:'currency', currency:'CAD', maximumFractionDigits:0 }) : '—';
+      md += '| ' + p.name
+         + ' | ' + (p.start || '—')
+         + ' | ' + (p.end || '—')
+         + ' | ' + (p.status || '—')
+         + ' | ' + p.linkedComponents
+         + ' | ' + gatesStr
+         + ' | ' + (d.openWOs != null ? d.openWOs : '—')
+         + ' | ' + costStr
+         + ' |\n';
+    });
+  } else {
+    md += '\n### Upcoming PCRs / shutdowns\n\n*(no scheduled projects for this unit)*\n';
+  }
+  // v4.4 refinement — Work Order activity (last 4 months history + currently open + cancelled)
+  // Aggregates p.knownWOs across the unit's projects. Note: knownWOs schema today
+  // doesn't carry basic_start_date — so "next 3 months" filter on open WOs is
+  // approximated as "currently in the system (last seen as REL/CRTD)". Precise
+  // scheduled-start filter requires a Deploy v8.15 schema extension.
+  const allPMs = [];
+  const allOpen = [];
+  const allCnl = [];
+  brief.projects.forEach(p => {
+    if (!p.deploy) return;
+    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name }, w)));
+    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
+    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
+  });
+  // v4.4 + Deploy v8.15 enrichment — show basic_start / completion_date / cost
+  // / order_type when the underlying knownWOs entries carry them. Missing values
+  // render as '—' so the table still works on older Deploy JSONs (pre-v8.15).
+  const fmtCost = v => {
+    const n = parseFloat(v);
+    if (isNaN(n) || !isFinite(n)) return '—';
+    return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
+  };
+  md += '\n### PMs completed (last 4 months)\n\n';
+  if (allPMs.length === 0) {
+    md += '*(no closed/TECO WOs in the last 4 months for this unit)*\n';
+  } else {
+    md += '| WO # | Description | Component | Type | Completed | Planned $ | Actual $ | Project |\n';
+    md += '|---|---|---|---|---|---:|---:|---|\n';
+    allPMs.slice(0, 30).forEach(w => {
+      const completed = w.completion_date || (w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—');
+      md += '| ' + (w.wo_number || '—')
+         + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
+         + ' | ' + (w.component || '—')
+         + ' | ' + (w.order_type || w.last_status || '—')
+         + ' | ' + (completed.length > 10 ? completed.substring(0, 10) : completed)
+         + ' | ' + fmtCost(w.planned_cost)
+         + ' | ' + fmtCost(w.actual_cost)
+         + ' | ' + w._proj
+         + ' |\n';
+    });
+    if (allPMs.length > 30) md += '\n*(+' + (allPMs.length - 30) + ' more — truncated for prompt length)*\n';
+  }
+  md += '\n### Currently open WOs (REL / CRTD on the most recent IW39)\n\n';
+  md += '*Where `basic_start` is available (Deploy v8.15+), use it to assess scheduled-start vs the next 3-month window. Where missing, fall back to `last_seen` as a proxy for "currently in the system".*\n\n';
+  if (allOpen.length === 0) {
+    md += '*(no open WOs in the system for this unit)*\n';
+  } else {
+    md += '| WO # | Description | Component | Type | Basic start | Status | Planned $ | Actual $ | Project |\n';
+    md += '|---|---|---|---|---|---|---:|---:|---|\n';
+    allOpen.slice(0, 30).forEach(w => {
+      const start = w.basic_start || (w.last_seen_iso ? '(last seen ' + String(w.last_seen_iso).substring(0, 10) + ')' : '—');
+      md += '| ' + (w.wo_number || '—')
+         + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
+         + ' | ' + (w.component || '—')
+         + ' | ' + (w.order_type || '—')
+         + ' | ' + start
+         + ' | ' + (w.last_status || '—')
+         + ' | ' + fmtCost(w.planned_cost)
+         + ' | ' + fmtCost(w.actual_cost)
+         + ' | ' + w._proj
+         + ' |\n';
+    });
+    if (allOpen.length > 30) md += '\n*(+' + (allOpen.length - 30) + ' more — truncated for prompt length)*\n';
+  }
+  if (allCnl.length > 0) {
+    md += '\n### Cancelled WOs (issues for review)\n\n';
+    md += '| WO # | Description | Component | Last seen | Project |\n';
+    md += '|---|---|---|---|---|\n';
+    allCnl.slice(0, 15).forEach(w => {
+      md += '| ' + (w.wo_number || '—')
+         + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
+         + ' | ' + (w.component || '—')
+         + ' | ' + (w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—')
+         + ' | ' + w._proj
+         + ' |\n';
+    });
+  }
+  md += '\n## Asked of you\n\n';
+  md += 'Return your assessment in this exact structure (the report parser expects these headers):\n\n';
+  md += '### Table: Component-level risk\n\nMarkdown table with columns: Component | Risk level (Low/Medium/High/Critical) | Reason | Suggested action.\n\n';
+  md += '### Table: Shutdown readiness\n\nMarkdown table with columns: Project | Readiness (Ready/At risk/Blocked) | Top risk | Mitigation.\n\n';
+  md += '### Narrative\n\n2-3 paragraphs describing the overall risk posture on this unit + your top recommended action.\n\n';
+  md += 'Be specific (component names, project IDs) rather than generic. Skip dimensions where you have nothing meaningful to say. Reference the data above + your KB.\n';
+  return md;
+}
+
+function copyRiskPrompt() {
+  const box = document.getElementById('rrep-prompt-box');
+  if (!box) return;
+  box.select();
+  try {
+    document.execCommand('copy');
+    const btn = document.getElementById('rrep-copy-btn');
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(function() { btn.textContent = orig; }, 1500);
+    }
+  } catch (e) { console.warn('Copy failed:', e); }
+  window.getSelection().removeAllRanges();
+}
+
+function generateRiskReport() {
+  const txt = document.getElementById('rrep-paste-box');
+  const text = txt ? txt.value : '';
+  if (!text || text.trim().length < 50 || !_rrepCurrentBrief) return;
+  const parsed = _parseRiskResponse(text);
+  _renderRiskReportPDF(_rrepCurrentBrief, parsed);
+  setTimeout(function() { window.print(); }, 250);
+}
+
+function _parseRiskResponse(text) {
+  // Extracts markdown tables under `### Table: <name>` headers, and narrative
+  // under `### Narrative`. Free-text outside those sections falls through.
+  const lines = String(text || '').split(/\r?\n/);
+  const tables = [];
+  let curTable = null;
+  let collectingNarrative = false;
+  const narrativeBuf = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const tableHeader = line.match(/^#{1,4}\s+Table:\s*(.+)$/i);
+    if (tableHeader) {
+      if (curTable) tables.push(curTable);
+      curTable = { name: tableHeader[1].trim(), rows: [] };
+      collectingNarrative = false;
+      continue;
+    }
+    const narrHeader = line.match(/^#{1,4}\s+Narrative\s*$/i);
+    if (narrHeader) {
+      if (curTable) { tables.push(curTable); curTable = null; }
+      collectingNarrative = true;
+      continue;
+    }
+    if (curTable && /^\s*\|.*\|\s*$/.test(line)) {
+      if (/^\s*\|[\s\-:|]+\|\s*$/.test(line)) continue;   // separator row
+      const cells = line.trim().replace(/^\||\|$/g, '').split('|').map(s => s.trim());
+      curTable.rows.push(cells);
+      continue;
+    }
+    if (collectingNarrative) {
+      narrativeBuf.push(line);
+    }
+  }
+  if (curTable) tables.push(curTable);
+  return { tables: tables, narrative: narrativeBuf.join('\n').trim(), raw: text };
+}
+
+function _renderRiskReportPDF(brief, parsed) {
+  const view = document.getElementById('rrep-pdf-view');
+  const dateStr = new Date().toISOString().split('T')[0];
+  const totalOpenWOs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.openWOs : 0), 0);
+  const um = brief.unitMeta || {};
+  const sc = brief.siteContext || {};
+  const fmtSmu  = (um.smu  != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : 'UNVERIFIED';
+  const fmtDate = um.smuDate ? String(um.smuDate).substring(0, 10) : 'UNVERIFIED';
+  const fmtIdleL = (um.idleLife != null) ? um.idleLife.toFixed(0) + '%' : 'UNVERIFIED';
+  const fmtIdle3 = (um.idle3Mo  != null) ? um.idle3Mo.toFixed(0)  + '%' : 'UNVERIFIED';
+  let h = '';
+  // Page 1 — equipment + operating profile + source data
+  // v4.4 fix — dropped Util % column. util_rate is FORECAST (Cadence input),
+  // not actual operating %. No actual operating % field in schema today.
+  h += '<h1>Unit Risk Report — ' + _pdfEsc(brief.unit) + '</h1>';
+  h += '<p><strong>' + _pdfEsc(brief.fleet) + ' · ' + _pdfEsc(brief.model) + '</strong>' + (sc.clientName ? ' · ' + _pdfEsc(sc.clientName) : '') + (sc.site ? ' / ' + _pdfEsc(sc.site) : '') + ' · Generated ' + dateStr + '</p>';
+  h += '<h2>Equipment &amp; operating profile</h2>';
+  h += '<table>';
+  h += '<tr><th>SMU</th><th>SMU as-of</th><th>Idle % (life)</th><th>Idle % (3mo)</th></tr>';
+  h += '<tr><td>' + fmtSmu + '</td><td>' + fmtDate + '</td><td>' + fmtIdleL + '</td><td>' + fmtIdle3 + '</td></tr>';
+  h += '</table>';
+  h += '<h2>Source data summary</h2>';
+  h += '<table><tr><th>Components</th><th>Oil samples</th><th>Active projects</th><th>Open WOs (sum)</th></tr>';
+  h += '<tr><td>' + brief.components.length + '</td><td>' + brief.oilSamples.length + '</td><td>' + brief.projects.length + '</td><td>' + totalOpenWOs + '</td></tr></table>';
+  if (brief.components.length > 0) {
+    h += '<h2>Component life vs benchmark (top 12 by life used)</h2>';
+    const sorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0)).slice(0, 12);
+    h += '<table><tr><th>Component</th><th>Position</th><th>Est. hours</th><th>Benchmark</th><th>Life used</th><th>Predicted changeout</th></tr>';
+    sorted.forEach(c => {
+      h += '<tr><td>' + _pdfEsc(c.component || '—')
+        + '</td><td>' + _pdfEsc(c.position || '—')
+        + '</td><td>' + (c.est_hours != null ? c.est_hours : '—')
+        + '</td><td>' + (c.benchmark != null ? c.benchmark : '—')
+        + '</td><td>' + (c.pct != null ? c.pct + '%' : '—')
+        + '</td><td>' + _pdfEsc(c.pred_changeout || '—')
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  if (brief.oilSamples.length > 0) {
+    h += '<h2>Latest oil samples</h2>';
+    h += '<table><tr><th>Target / location</th><th>Sample date</th><th>Band / rank</th><th>Coolant?</th></tr>';
+    brief.oilSamples.slice(0, 8).forEach(s => {
+      h += '<tr><td>' + _pdfEsc(s.target || s.location || '—')
+        + '</td><td>' + _pdfEsc(s.sample_date || '—')
+        + '</td><td>' + _pdfEsc(s.band || s.sample_rank || '—')
+        + '</td><td>' + (s.is_coolant ? 'Y' : 'N')
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  if (brief.projects.length > 0) {
+    h += '<h2>Upcoming PCRs / shutdowns</h2>';
+    h += '<table><tr><th>Project</th><th>Start</th><th>End</th><th>Status</th><th>Gates done</th><th>Open WOs</th></tr>';
+    brief.projects.forEach(p => {
+      const d = p.deploy || {};
+      const gatesStr = (d.gatesTotal != null) ? (d.gatesComplete + '/' + d.gatesTotal) : '—';
+      h += '<tr><td>' + _pdfEsc(p.name)
+        + '</td><td>' + _pdfEsc(p.start || '—')
+        + '</td><td>' + _pdfEsc(p.end || '—')
+        + '</td><td>' + _pdfEsc(p.status || '—')
+        + '</td><td>' + gatesStr
+        + '</td><td>' + (d.openWOs != null ? d.openWOs : 0)
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  h += '<div class="rrep-pdf-pagebreak"></div>';
+  // v4.4 refinement — Page 2: Work Order activity (PMs completed last 4mo,
+  // currently open, cancelled). Aggregated across the unit's projects.
+  const allPMs = [], allOpen = [], allCnl = [];
+  brief.projects.forEach(p => {
+    if (!p.deploy) return;
+    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name }, w)));
+    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
+    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
+  });
+  h += '<h1>Work Order Activity — ' + _pdfEsc(brief.unit) + '</h1>';
+  h += '<p style="font-size:9pt;color:#6b8c80">Source: <code>p.knownWOs</code> across this unit\'s projects · IW39 last loaded ' + (allOpen.length || allPMs.length || allCnl.length ? '(see Source data summary on page 1)' : 'N/A') + '</p>';
+  // v4.4 + Deploy v8.15 enrichment — uses basic_start / completion_date / costs
+  // / order_type when knownWOs carries them. Sticky fallback to '—' for older
+  // JSONs (pre-v8.15) so the PDF still renders sensibly on legacy data.
+  const _fmtCostPdf = v => {
+    const n = parseFloat(v);
+    if (isNaN(n) || !isFinite(n)) return '—';
+    return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
+  };
+  h += '<h2>PMs completed (last 4 months) — ' + allPMs.length + '</h2>';
+  if (allPMs.length === 0) {
+    h += '<p><em>No closed/TECO WOs in the last 4 months for this unit.</em></p>';
+  } else {
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Completed</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
+    allPMs.forEach(w => {
+      const completed = w.completion_date || (w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—');
+      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
+        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
+        + '</td><td>' + _pdfEsc(w.component || '—')
+        + '</td><td>' + _pdfEsc(w.order_type || w.last_status || '—')
+        + '</td><td>' + _pdfEsc(completed.length > 10 ? completed.substring(0, 10) : completed)
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
+        + '</td><td>' + _pdfEsc(w._proj)
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  h += '<h2>Currently open work orders — ' + allOpen.length + '</h2>';
+  h += '<p style="font-size:9pt;color:#6b8c80"><em>Where <code>basic_start</code> is populated (Deploy v8.15+), uses it for scheduled-start. Falls back to "last seen" for legacy entries (pre-v8.15).</em></p>';
+  if (allOpen.length === 0) {
+    h += '<p><em>No open WOs in the system for this unit.</em></p>';
+  } else {
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Basic start</th><th>Status</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
+    allOpen.forEach(w => {
+      const start = w.basic_start || (w.last_seen_iso ? '(last seen ' + String(w.last_seen_iso).substring(0, 10) + ')' : '—');
+      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
+        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
+        + '</td><td>' + _pdfEsc(w.component || '—')
+        + '</td><td>' + _pdfEsc(w.order_type || '—')
+        + '</td><td>' + _pdfEsc(start)
+        + '</td><td>' + _pdfEsc(w.last_status || '—')
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
+        + '</td><td>' + _pdfEsc(w._proj)
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  if (allCnl.length > 0) {
+    h += '<h2>Cancelled WOs (issues for review) — ' + allCnl.length + '</h2>';
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Last seen</th><th>Project</th></tr>';
+    allCnl.forEach(w => {
+      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
+        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
+        + '</td><td>' + _pdfEsc(w.component || '—')
+        + '</td><td>' + _pdfEsc(w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—')
+        + '</td><td>' + _pdfEsc(w._proj)
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  h += '<div class="rrep-pdf-pagebreak"></div>';
+  // Page 3 — Rex's verdict
+  h += '<h1>Specialist assessment (Rex) — ' + _pdfEsc(brief.unit) + '</h1>';
+  if (parsed.tables.length === 0 && !parsed.narrative) {
+    h += '<p><em>Response did not contain recognised "### Table:" or "### Narrative" headers. Raw response below:</em></p>';
+    h += '<p class="rrep-pdf-prose">' + _pdfEsc(parsed.raw).replace(/\n/g, '<br>') + '</p>';
+  } else {
+    parsed.tables.forEach(t => {
+      h += '<h3>' + _pdfEsc(t.name) + '</h3>';
+      if (t.rows.length === 0) { h += '<p><em>(no rows returned)</em></p>'; return; }
+      const headerRow = t.rows[0] || [];
+      const dataRows = t.rows.slice(1);
+      h += '<table><tr>' + headerRow.map(c => '<th>' + _pdfEsc(c) + '</th>').join('') + '</tr>';
+      dataRows.forEach(r => {
+        h += '<tr>' + r.map(c => '<td>' + _pdfEsc(c) + '</td>').join('') + '</tr>';
+      });
+      h += '</table>';
+    });
+    if (parsed.narrative) {
+      h += '<h3>Narrative</h3>';
+      const paras = parsed.narrative.split(/\n\n+/);
+      paras.forEach(pg => { h += '<p class="rrep-pdf-prose">' + _pdfEsc(pg).replace(/\n/g, '<br>') + '</p>'; });
+    }
+  }
+  h += '<p class="rrep-pdf-meta">Source: NumaCore Lens v' + VERSION + ' · Fleet JSON · Specialist agent (Rex) · ' + dateStr + '</p>';
+  view.innerHTML = h;
+}
+
+function _pdfEsc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 </script>
 
 <!-- ══ LOAD SCREEN ══ -->
@@ -6432,6 +7117,62 @@ function renderHeatmapBoth(fleet, model) {
 <div id="config-overlay" onclick="closeSettings()"></div>
 <!-- legacy config-panel stub (keeps JS refs alive) -->
 <div id="config-panel" style="display:none"><div id="cfg-fleet-visibility"></div><span id="cfg-file-note"></span><span id="cfg-schema-note"></span></div>
+
+<!-- ══ v4.4 RISK REPORT OVERLAY ══ -->
+<div id="rrep-overlay">
+  <div id="rrep-panel">
+    <div id="rrep-head">
+      <h2 id="rrep-head-title">RISK REPORT</h2>
+      <button id="rrep-close-btn" onclick="closeRiskReport()">&#x2715; CLOSE</button>
+    </div>
+
+    <!-- v4.4 refinement — blocked-mode banner (hidden by default; shown when IW39 freshness gate fails) -->
+    <div id="rrep-iw39-block" style="display:none; border:1px solid #f0883e; background:rgba(240,136,62,0.08); border-radius:8px; padding:18px 22px; margin-bottom:18px; color:#f0883e;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:0.85rem; letter-spacing:1.5px; text-transform:uppercase; font-weight:600;">
+        &#x26A0; Report blocked &mdash; IW39 data required
+      </div>
+      <p id="rrep-iw39-block-msg" style="margin:0; font-size:0.78rem; line-height:1.5; color:#e8d4a3;">IW39 data is missing or stale.</p>
+    </div>
+
+    <!-- Normal flow sections (hidden when blocked-mode is active) -->
+    <div id="rrep-normal-sections">
+      <div class="rrep-section">
+        <div class="rrep-section-head">
+          <span class="rrep-section-num">1</span>
+          <span>Source signals (from this fleet JSON)</span>
+          <span class="rrep-section-hint">read-only summary</span>
+        </div>
+        <div id="rrep-signals" class="rrep-signals-summary"></div>
+      </div>
+
+      <div class="rrep-section">
+        <div class="rrep-section-head">
+          <span class="rrep-section-num">2</span>
+          <span>Prompt for Rex &mdash; copy and paste into your specialist agent</span>
+        </div>
+        <textarea id="rrep-prompt-box" readonly></textarea>
+        <div class="rrep-btn-row">
+          <button class="rrep-btn" id="rrep-copy-btn" onclick="copyRiskPrompt()">&#x1F4CB; Copy prompt</button>
+        </div>
+      </div>
+
+      <div class="rrep-section">
+        <div class="rrep-section-head">
+          <span class="rrep-section-num">3</span>
+          <span>Paste Rex's response here</span>
+          <span class="rrep-section-hint">markdown tables + narrative</span>
+        </div>
+        <textarea id="rrep-paste-box" placeholder="Paste Rex's full response here (must include ### Table: ... headers + ### Narrative section)..." oninput="_updateRrepDoneBtn()"></textarea>
+        <div class="rrep-btn-row">
+          <button class="rrep-btn rrep-btn-primary" id="rrep-done-btn" onclick="generateRiskReport()" disabled>&#x2705; Done &rarr; Generate PDF</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- v4.4 PDF view container (hidden on screen; populated by generateRiskReport, only visible during print) -->
+<div id="rrep-pdf-view"></div>
 
 
 </body>
