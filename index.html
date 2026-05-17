@@ -6474,7 +6474,7 @@ function _buildUnitRiskBrief(fleet, model, unit) {
     linkedComponents: Array.isArray(p.linkedIds) ? p.linkedIds.length : 0,
     deploy: _readDeployForProject(p.id)
   }));
-  return { unit, fleet, model, components, oilSamples, projects };
+  return { unit, fleet, model, components, oilSamples, projects, unitMeta, siteContext };
 }
 
 function _readDeployForProject(projId) {
