@@ -6598,11 +6598,16 @@ function _renderRiskPrompt(brief, freshness) {
   md += '|---|---|---:|---:|---:|---|---|\n';
   const compsSorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0));
   compsSorted.slice(0, 30).forEach(c => {
+    // v4.4 fix 2026-05-17 (Rex feedback): c.pct is stored as a RATIO (0.0-1.0)
+    // not a percentage. Every Lens render site multiplies by 100. Without this,
+    // Rex saw "1.386611%" instead of "138.7%" and had to back-derive the real
+    // value. Match the canonical Lens hero-panel pattern.
+    const lifeUsedStr = (typeof c.pct === 'number' && isFinite(c.pct)) ? (c.pct * 100).toFixed(1) + '%' : '—';
     md += '| ' + (c.component || '—')
        + ' | ' + (c.position || '—')
        + ' | ' + (c.est_hours != null ? c.est_hours : '—')
        + ' | ' + (c.benchmark != null ? c.benchmark : '—')
-       + ' | ' + (c.pct != null ? c.pct + '%' : '—')
+       + ' | ' + lifeUsedStr
        + ' | ' + (c.pred_changeout || '—')
        + ' | ' + (c.replacement_strategy || '—')
        + ' |\n';
@@ -6671,12 +6676,16 @@ function _renderRiskPrompt(brief, freshness) {
     md += '| WO # | Description | Component | Type | Completed | Planned $ | Actual $ | Project |\n';
     md += '|---|---|---|---|---|---:|---:|---|\n';
     allPMs.slice(0, 30).forEach(w => {
-      const completed = w.completion_date || (w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—');
+      // v4.4 fix 2026-05-17 (Rex feedback): do NOT fall back to last_seen_iso
+      // for "Completed" — last_seen_iso is the IW39 UPLOAD timestamp, which
+      // made every WO appear completed on the extract date and broke any
+      // temporal-trend analysis. Rex protocol: blank/UNVERIFIED beats a guess.
+      const completed = w.completion_date ? String(w.completion_date).substring(0, 10) : 'UNVERIFIED';
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
          + ' | ' + (w.component || '—')
          + ' | ' + (w.order_type || w.last_status || '—')
-         + ' | ' + (completed.length > 10 ? completed.substring(0, 10) : completed)
+         + ' | ' + completed
          + ' | ' + fmtCost(w.planned_cost)
          + ' | ' + fmtCost(w.actual_cost)
          + ' | ' + w._proj
@@ -6819,11 +6828,14 @@ function _renderRiskReportPDF(brief, parsed) {
     const sorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0)).slice(0, 12);
     h += '<table><tr><th>Component</th><th>Position</th><th>Est. hours</th><th>Benchmark</th><th>Life used</th><th>Predicted changeout</th></tr>';
     sorted.forEach(c => {
+      // v4.4 fix 2026-05-17 — c.pct is a ratio (0.0-1.0); multiply by 100 to
+      // get the percentage Rex / operator expect to see.
+      const lifeUsedStr = (typeof c.pct === 'number' && isFinite(c.pct)) ? (c.pct * 100).toFixed(1) + '%' : '—';
       h += '<tr><td>' + _pdfEsc(c.component || '—')
         + '</td><td>' + _pdfEsc(c.position || '—')
         + '</td><td>' + (c.est_hours != null ? c.est_hours : '—')
         + '</td><td>' + (c.benchmark != null ? c.benchmark : '—')
-        + '</td><td>' + (c.pct != null ? c.pct + '%' : '—')
+        + '</td><td>' + lifeUsedStr
         + '</td><td>' + _pdfEsc(c.pred_changeout || '—')
         + '</td></tr>';
     });
@@ -6883,12 +6895,14 @@ function _renderRiskReportPDF(brief, parsed) {
   } else {
     h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Completed</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
     allPMs.forEach(w => {
-      const completed = w.completion_date || (w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—');
+      // v4.4 fix 2026-05-17 — drop last_seen_iso fallback (was IW39 extract
+      // date, not actual completion). UNVERIFIED if completion_date missing.
+      const completed = w.completion_date ? String(w.completion_date).substring(0, 10) : 'UNVERIFIED';
       h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
         + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
         + '</td><td>' + _pdfEsc(w.component || '—')
         + '</td><td>' + _pdfEsc(w.order_type || w.last_status || '—')
-        + '</td><td>' + _pdfEsc(completed.length > 10 ? completed.substring(0, 10) : completed)
+        + '</td><td>' + _pdfEsc(completed)
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
         + '</td><td>' + _pdfEsc(w._proj)
