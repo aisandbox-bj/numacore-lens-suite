@@ -3985,6 +3985,28 @@ function confirmIW39FleetImport() {
   _fleetWideIW39 = wos;
   _iw39AsOf      = new Date().toISOString();
   _woHdrs = []; _woRaw = null;
+  // v8.15 FIX-1 (2026-05-17 evening) — Eager per-project knownWOs population
+  // on fleet-wide IW39 load. Previously, knownWOs + knownWOsLastLoadIso only
+  // advanced when the operator OPENED each project's WO tab (lazy via
+  // renderWorkOrders L3454-3466). For the Lens Risk Report freshness gate,
+  // that meant operator had to open every project tab + SAVE FILE before
+  // Lens could see the fresh IW39. Now: walk every project here, unit-filter
+  // the fresh fleet-wide pool, call _recordKnownWOs eagerly. After this loop
+  // every project's knownWOsLastLoadIso reflects the new IW39, _markUnsaved()
+  // has fired, and operator just needs to SAVE FILE to persist for Lens.
+  let _eagerProjectsRecorded = 0;
+  let _eagerProjectsTouched = 0;
+  Object.keys(deploy.projects || {}).forEach(pid => {
+    const _fpEager = (typeof fleetProjects !== 'undefined') ? fleetProjects.find(x => x.id === pid) : null;
+    const _unitId = (_fpEager && _fpEager.unit) ? String(_fpEager.unit).trim().toUpperCase() : '';
+    if (!_unitId) return;
+    const _unitSubset = wos.filter(w => String(w.floc || '').toUpperCase().includes(_unitId));
+    if (_unitSubset.length === 0) return;
+    _eagerProjectsTouched++;
+    const _changed = _recordKnownWOs(pid, _unitSubset, _iw39AsOf);
+    if (_changed) _eagerProjectsRecorded++;
+    deploy.projects[pid].knownWOsLastFleetAsOf = _iw39AsOf;
+  });
   // v8.10 FIX-1 — count by the active per-fleet order-type allow-list,
   // not the hardcoded YBA2 (every client site differs).
   const _ot = String((deploy && deploy.config && deploy.config.iw39OrderTypes) || '')
@@ -3995,7 +4017,12 @@ function confirmIW39FleetImport() {
   closeModal('modalIW39FleetMap');
   _updateIW39StatusPill(matchingCount);
   const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
-  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl} (session memory)`, 'success');
+  // v8.15 FIX-1 — toast now includes the per-project eager-record summary +
+  // the SAVE FILE reminder for the Lens Risk Report freshness gate.
+  const _saveReminder = (_eagerProjectsTouched > 0)
+    ? ` · recorded across ${_eagerProjectsTouched} project${_eagerProjectsTouched === 1 ? '' : 's'} (⚠ SAVE FILE to persist for Lens Risk Report)`
+    : '';
+  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl} (session memory)${_saveReminder}`, 'success');
   // v8.14 — Closed-transitions one-shot toast. Aggregates across every Deploy
   // project (unit-filtered per-project) and surfaces a single deferred toast
   // if any previously-open WO has transitioned to CLSD/TECO/CNCL on this load.
