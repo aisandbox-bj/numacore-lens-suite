@@ -6489,15 +6489,20 @@ function _readDeployForProject(projId) {
   const _OPEN = new Set(['REL', 'CRTD']);     // currently in the system
   const _PMOK = new Set(['TECO', 'CLSD']);    // PM-completed flavours
   const _CNCL = new Set(['CNCL']);            // cancelled
-  // 4-month cutoff for "PMs completed in last 4 months" — uses last_seen_iso
-  // (knownWOs doesn't carry basic_start; v8.15 schema extension will add it).
+  // v4.4 FIX-4 (2026-05-17, operator clarification): use basic_start as the
+  // canonical date field, NOT last_seen_iso. TECO/CLSD status means complete;
+  // REL/CRTD means in planning. last_seen_iso is just "when did we observe
+  // this WO in IW39" — meaningless as a completion-time anchor.
   const FOUR_MO_MS = 4 * 30 * 86400000;
   const cutoff4mo = Date.now() - FOUR_MO_MS;
   const allWOs = Object.keys(woMap).map(wo => Object.assign({ wo_number: wo }, woMap[wo]));
   const openWORows = allWOs.filter(w => _OPEN.has(tok(w.last_status)));
   const pmsCompletedRows = allWOs.filter(w => {
     if (!_PMOK.has(tok(w.last_status))) return false;
-    const t = w.last_seen_iso ? Date.parse(w.last_seen_iso) : NaN;
+    // Date filter: basic_start within last 4 months. WOs without basic_start
+    // mapped are out of bucket — better than misclassifying via last_seen.
+    if (!w.basic_start) return false;
+    const t = Date.parse(w.basic_start);
     return !isNaN(t) && t >= cutoff4mo;
   });
   const cancelledRows = allWOs.filter(w => _CNCL.has(tok(w.last_status)));
@@ -6669,23 +6674,21 @@ function _renderRiskPrompt(brief, freshness) {
     if (isNaN(n) || !isFinite(n)) return '—';
     return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
   };
-  md += '\n### PMs completed (last 4 months)\n\n';
+  md += '\n### WOs completed — TECO/CLSD, basic_start in last 4 months\n\n';
+  md += '*Status semantics: TECO = complete · REL/CRTD = in planning · CNCL = cancelled. Date field is Basic Start (basic_start) — represents scheduled/actual start in IW39.*\n\n';
   if (allPMs.length === 0) {
-    md += '*(no closed/TECO WOs in the last 4 months for this unit)*\n';
+    md += '*(no TECO/CLSD WOs with basic_start in the last 4 months for this unit)*\n';
   } else {
-    md += '| WO # | Description | Component | Type | Completed | Planned $ | Actual $ | Project |\n';
-    md += '|---|---|---|---|---|---:|---:|---|\n';
+    md += '| WO # | Description | Component | Type | Status | Basic Start | Planned $ | Actual $ | Project |\n';
+    md += '|---|---|---|---|---|---|---:|---:|---|\n';
     allPMs.slice(0, 30).forEach(w => {
-      // v4.4 fix 2026-05-17 (Rex feedback): do NOT fall back to last_seen_iso
-      // for "Completed" — last_seen_iso is the IW39 UPLOAD timestamp, which
-      // made every WO appear completed on the extract date and broke any
-      // temporal-trend analysis. Rex protocol: blank/UNVERIFIED beats a guess.
-      const completed = w.completion_date ? String(w.completion_date).substring(0, 10) : 'UNVERIFIED';
+      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
          + ' | ' + (w.component || '—')
-         + ' | ' + (w.order_type || w.last_status || '—')
-         + ' | ' + completed
+         + ' | ' + (w.order_type || '—')
+         + ' | ' + (w.last_status || '—')
+         + ' | ' + startStr
          + ' | ' + fmtCost(w.planned_cost)
          + ' | ' + fmtCost(w.actual_cost)
          + ' | ' + w._proj
@@ -6693,21 +6696,21 @@ function _renderRiskPrompt(brief, freshness) {
     });
     if (allPMs.length > 30) md += '\n*(+' + (allPMs.length - 30) + ' more — truncated for prompt length)*\n';
   }
-  md += '\n### Currently open WOs (REL / CRTD on the most recent IW39)\n\n';
-  md += '*Where `basic_start` is available (Deploy v8.15+), use it to assess scheduled-start vs the next 3-month window. Where missing, fall back to `last_seen` as a proxy for "currently in the system".*\n\n';
+  md += '\n### WOs in planning — REL / CRTD\n\n';
+  md += '*REL = released, ready to start · CRTD = created, still in planning. Basic Start is the scheduled start date from IW39.*\n\n';
   if (allOpen.length === 0) {
-    md += '*(no open WOs in the system for this unit)*\n';
+    md += '*(no REL/CRTD WOs in the system for this unit)*\n';
   } else {
-    md += '| WO # | Description | Component | Type | Basic start | Status | Planned $ | Actual $ | Project |\n';
+    md += '| WO # | Description | Component | Type | Status | Basic Start | Planned $ | Actual $ | Project |\n';
     md += '|---|---|---|---|---|---|---:|---:|---|\n';
     allOpen.slice(0, 30).forEach(w => {
-      const start = w.basic_start || (w.last_seen_iso ? '(last seen ' + String(w.last_seen_iso).substring(0, 10) + ')' : '—');
+      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
          + ' | ' + (w.component || '—')
          + ' | ' + (w.order_type || '—')
-         + ' | ' + start
          + ' | ' + (w.last_status || '—')
+         + ' | ' + startStr
          + ' | ' + fmtCost(w.planned_cost)
          + ' | ' + fmtCost(w.actual_cost)
          + ' | ' + w._proj
@@ -6889,20 +6892,19 @@ function _renderRiskReportPDF(brief, parsed) {
     if (isNaN(n) || !isFinite(n)) return '—';
     return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
   };
-  h += '<h2>PMs completed (last 4 months) — ' + allPMs.length + '</h2>';
+  h += '<h2>WOs completed (TECO/CLSD, basic_start in last 4 months) — ' + allPMs.length + '</h2>';
   if (allPMs.length === 0) {
-    h += '<p><em>No closed/TECO WOs in the last 4 months for this unit.</em></p>';
+    h += '<p><em>No TECO/CLSD WOs with basic_start in the last 4 months for this unit.</em></p>';
   } else {
-    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Completed</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Status</th><th>Basic Start</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
     allPMs.forEach(w => {
-      // v4.4 fix 2026-05-17 — drop last_seen_iso fallback (was IW39 extract
-      // date, not actual completion). UNVERIFIED if completion_date missing.
-      const completed = w.completion_date ? String(w.completion_date).substring(0, 10) : 'UNVERIFIED';
+      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
         + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
         + '</td><td>' + _pdfEsc(w.component || '—')
-        + '</td><td>' + _pdfEsc(w.order_type || w.last_status || '—')
-        + '</td><td>' + _pdfEsc(completed)
+        + '</td><td>' + _pdfEsc(w.order_type || '—')
+        + '</td><td>' + _pdfEsc(w.last_status || '—')
+        + '</td><td>' + _pdfEsc(startStr)
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
         + '</td><td>' + _pdfEsc(w._proj)
@@ -6910,20 +6912,20 @@ function _renderRiskReportPDF(brief, parsed) {
     });
     h += '</table>';
   }
-  h += '<h2>Currently open work orders — ' + allOpen.length + '</h2>';
-  h += '<p style="font-size:9pt;color:#6b8c80"><em>Where <code>basic_start</code> is populated (Deploy v8.15+), uses it for scheduled-start. Falls back to "last seen" for legacy entries (pre-v8.15).</em></p>';
+  h += '<h2>WOs in planning (REL / CRTD) — ' + allOpen.length + '</h2>';
+  h += '<p style="font-size:9pt;color:#6b8c80"><em>REL = released, ready to start · CRTD = created, in planning. Basic Start is the scheduled start from IW39; UNVERIFIED when not in the export.</em></p>';
   if (allOpen.length === 0) {
-    h += '<p><em>No open WOs in the system for this unit.</em></p>';
+    h += '<p><em>No REL/CRTD WOs in the system for this unit.</em></p>';
   } else {
-    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Basic start</th><th>Status</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Status</th><th>Basic Start</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
     allOpen.forEach(w => {
-      const start = w.basic_start || (w.last_seen_iso ? '(last seen ' + String(w.last_seen_iso).substring(0, 10) + ')' : '—');
+      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
         + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
         + '</td><td>' + _pdfEsc(w.component || '—')
         + '</td><td>' + _pdfEsc(w.order_type || '—')
-        + '</td><td>' + _pdfEsc(start)
         + '</td><td>' + _pdfEsc(w.last_status || '—')
+        + '</td><td>' + _pdfEsc(startStr)
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
         + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
         + '</td><td>' + _pdfEsc(w._proj)
