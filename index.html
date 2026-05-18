@@ -1782,24 +1782,130 @@ body { background: #030f0c; }
 .rrep-sig-stat .lbl { font-size:0.55rem; letter-spacing:1.5px; color:#5dcaa5; text-transform:uppercase; }
 .rrep-sig-stat .val { font-size:1.1rem; color:#e8f4ee; margin-top:2px; font-weight:600; }
 
-/* PDF view is hidden on screen — only renders during print */
+/* ── v4.5 — Risk Report PDF print styles ─────────────────────────────
+   Cover page mirrors the Vitals unit-detail visual identity (dark teal).
+   Body + supporting docs pages are light with teal accents for readable
+   tables and prose. Cite-flag highlighting on the sample appendix shows
+   which rows Rex explicitly referenced. */
 #rrep-pdf-view { display:none; }
 
 @media print {
   body * { visibility:hidden; }
-  #rrep-pdf-view { display:block !important; position:absolute; top:0; left:0; width:100%; background:white; color:#1a1a1a; padding:0; font-family:'Calibri','Segoe UI','Arial',sans-serif; }
   #rrep-pdf-view, #rrep-pdf-view * { visibility:visible; }
+  #rrep-pdf-view {
+    display:block !important;
+    position:absolute; top:0; left:0; width:100%;
+    background:#fff; color:#1a1a1a;
+    padding:0; margin:0;
+    font-family:'Calibri','Segoe UI','Arial',sans-serif;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  @page { size: letter; margin: 0; }
+  .rrep-pdf-pagebreak { page-break-after:always; break-after:always; height:0; margin:0; }
+
+  /* ───── COVER PAGE (mirrors Vitals unit-detail identity) ───── */
+  .rrep-cover {
+    background:#050a12; color:#b8ede0;
+    padding:0.5in 0.6in 0.4in 0.6in;
+    min-height:10.5in; box-sizing:border-box;
+    position:relative;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .rrep-cover-header { border-bottom:2px solid #0f6e56; padding-bottom:18px; margin-bottom:22px; }
+  .rrep-cover-brand { font-size:9pt; letter-spacing:3px; font-weight:700; color:#3dc9a0; text-transform:uppercase; }
+  .rrep-cover-title { font-size:34pt; font-weight:700; color:#3dc9a0; letter-spacing:3px; margin:6px 0 2px 0; line-height:1; }
+  .rrep-cover-subtitle { font-size:11pt; letter-spacing:2.5px; color:#5dcaa5; text-transform:uppercase; margin-top:6px; }
+  .rrep-cover-meta { font-size:10pt; color:#7dd7b1; opacity:0.9; margin-top:6px; letter-spacing:0.5px; }
+  .rrep-cover-section-label { font-size:8pt; letter-spacing:2.5px; color:#3dc9a0; text-transform:uppercase; margin:20px 0 8px 0; font-weight:700; }
+  .rrep-cover-identity { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; margin-bottom:4px; }
+  .rrep-id-cell {
+    background:rgba(15,110,86,0.22);
+    border:1px solid #0f6e56;
+    border-radius:6px;
+    padding:11px 14px;
+  }
+  .rrep-id-label { font-size:8pt; color:#5dcaa5; letter-spacing:1.5px; text-transform:uppercase; opacity:0.85; }
+  .rrep-id-value { font-size:14pt; color:#b8ede0; font-weight:600; margin-top:3px; line-height:1.1; }
+  .rrep-kpi-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
+  .rrep-kpi-tile {
+    background:rgba(4,14,11,0.55);
+    border:1px solid #0f6e56;
+    border-radius:8px;
+    padding:14px 16px;
+  }
+  .rrep-kpi-label { font-size:8pt; color:#5dcaa5; letter-spacing:1.5px; text-transform:uppercase; font-weight:700; }
+  .rrep-kpi-value { font-size:22pt; color:#3dc9a0; font-weight:700; margin-top:4px; line-height:1; }
+  .rrep-kpi-sub { font-size:8pt; color:#7dd7b1; opacity:0.85; margin-top:5px; }
+  .rrep-mix-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:4px 0; }
+  .rrep-mix-pill {
+    display:inline-flex; align-items:center;
+    padding:6px 14px; border-radius:14px;
+    font-size:10pt; font-weight:700;
+    background:rgba(4,14,11,0.55);
+    border:1.5px solid;
+  }
+  .rrep-mix-pill .mix-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:currentColor; }
+  .rrep-mix-normal   { color:#4caf50; border-color:#4caf50; }
+  .rrep-mix-caution  { color:#ffc107; border-color:#ffc107; }
+  .rrep-mix-elevated { color:#ff9800; border-color:#ff9800; }
+  .rrep-mix-critical { color:#e24b4a; border-color:#e24b4a; }
+  .rrep-mix-nb       { color:#8a9b9c; border-color:#8a9b9c; }
+  .rrep-overall-risk {
+    background:rgba(4,14,11,0.65);
+    border:1.5px solid #3dc9a0;
+    border-radius:10px;
+    padding:18px 20px;
+    margin-top:20px;
+  }
+  .rrep-overall-risk-label { font-size:8pt; letter-spacing:2.5px; color:#5dcaa5; text-transform:uppercase; margin-bottom:6px; }
+  .rrep-overall-risk-tier { font-size:24pt; font-weight:700; color:#3dc9a0; letter-spacing:3px; line-height:1; }
+  .rrep-overall-risk-tier.tier-critical { color:#e24b4a; }
+  .rrep-overall-risk-tier.tier-high     { color:#ff9800; }
+  .rrep-overall-risk-tier.tier-medium   { color:#ffc107; }
+  .rrep-overall-risk-tier.tier-low      { color:#4caf50; }
+  .rrep-cover-footer {
+    position:absolute; bottom:0.35in; left:0.6in; right:0.6in;
+    border-top:1px solid #0f6e56;
+    padding-top:10px;
+    font-size:8pt; letter-spacing:1.5px; color:#5dcaa5; opacity:0.75;
+    display:flex; justify-content:space-between;
+    text-transform:uppercase;
+  }
+
+  /* ───── BODY PAGES (Rex's assessment + supporting docs) ───── */
+  .rrep-body {
+    padding:0.5in 0.55in;
+    background:#fff; color:#1a1a1a;
+    box-sizing:border-box;
+  }
+  .rrep-body-header { border-bottom:2px solid #0a4d3a; padding-bottom:8px; margin-bottom:14px; }
+  .rrep-body-title { font-size:18pt; color:#0a4d3a; font-weight:700; letter-spacing:1px; }
+  .rrep-body-subtitle { font-size:9pt; color:#6b8c80; letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
+  .rrep-body h2 { color:#0a4d3a; font-size:13pt; font-weight:700; margin:18px 0 6px 0; border-bottom:1px solid #6b8c80; padding-bottom:3px; letter-spacing:0.5px; }
+  .rrep-body h3 { color:#0a4d3a; font-size:11pt; font-weight:700; margin:12px 0 4px 0; letter-spacing:0.3px; }
+  .rrep-body p { font-size:10pt; line-height:1.5; margin:4px 0; }
+  .rrep-body table { width:100%; border-collapse:collapse; margin:6px 0 14px; }
+  .rrep-body table th, .rrep-body table td { border:1px solid #6b8c80; padding:4px 6px; text-align:left; font-size:9pt; vertical-align:top; }
+  .rrep-body table th { background:#cce4d6; color:#0a4d3a; font-weight:700; }
+  .rrep-prose { font-size:10pt; line-height:1.5; }
+  .rrep-meta-footer { font-size:8pt; color:#6b8c80; margin-top:20px; border-top:1px solid #6b8c80; padding-top:6px; letter-spacing:0.5px; }
+  .rrep-empty-note { font-size:9pt; color:#6b8c80; font-style:italic; margin:6px 0; }
+
+  /* Cite-flag treatment for the sample appendix */
+  .rrep-row-cited { background:#fff4d6 !important; }
+  .rrep-row-cited td { background:#fff4d6 !important; }
+  .rrep-cited-marker {
+    display:inline-block; padding:1px 7px;
+    background:#0a4d3a; color:#fff; font-size:7pt;
+    border-radius:8px; letter-spacing:0.8px;
+    font-weight:700; margin-left:7px;
+    vertical-align:middle;
+  }
+
+  /* Legacy classes kept for back-compat with any external references */
   #rrep-pdf-view h1 { color:#0a4d3a; font-size:18pt; margin:0 0 8px 0; }
-  #rrep-pdf-view h2 { color:#0a4d3a; font-size:13pt; margin:14px 0 6px 0; border-bottom:1px solid #6b8c80; padding-bottom:3px; }
-  #rrep-pdf-view h3 { color:#0a4d3a; font-size:11pt; margin:10px 0 4px 0; }
-  #rrep-pdf-view p { font-size:10pt; line-height:1.45; margin:4px 0; }
-  #rrep-pdf-view table { width:100%; border-collapse:collapse; margin:6px 0 14px; }
-  #rrep-pdf-view table th, #rrep-pdf-view table td { border:1px solid #6b8c80; padding:4px 6px; text-align:left; font-size:9pt; vertical-align:top; }
-  #rrep-pdf-view table th { background:#cce4d6; font-weight:700; }
-  #rrep-pdf-view .rrep-pdf-pagebreak { page-break-after:always; break-after:always; height:0; margin:0; }
   #rrep-pdf-view .rrep-pdf-prose { font-size:10pt; line-height:1.45; }
   #rrep-pdf-view .rrep-pdf-meta { font-size:9pt; color:#6b8c80; margin-top:18px; border-top:1px solid #6b8c80; padding-top:6px; }
-  @page { size: letter; margin: 0.5in 0.6in; }
 }
 
 </style>
@@ -2144,7 +2250,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.4';
+const VERSION = '4.5';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -6489,21 +6595,57 @@ function _readDeployForProject(projId) {
   const _OPEN = new Set(['REL', 'CRTD']);     // currently in the system
   const _PMOK = new Set(['TECO', 'CLSD']);    // PM-completed flavours
   const _CNCL = new Set(['CNCL']);            // cancelled
-  // v4.4 FIX-4 (2026-05-17, operator clarification): use basic_start as the
-  // canonical date field, NOT last_seen_iso. TECO/CLSD status means complete;
-  // REL/CRTD means in planning. last_seen_iso is just "when did we observe
-  // this WO in IW39" — meaningless as a completion-time anchor.
-  const FOUR_MO_MS = 4 * 30 * 86400000;
-  const cutoff4mo = Date.now() - FOUR_MO_MS;
+  // v4.4 FIX-9 (2026-05-17, operator-flagged via Rex feedback): the prior
+  // FIX-4 filter gated TECO/CLSD inclusion on basic_start alone, which is the
+  // SAP scheduled-start date — not the completion date. A WO scheduled in
+  // Feb 2025 and completed last week has basic_start = Feb 2025 and was
+  // wrongly excluded by the strict filter, cutting off genuinely recent
+  // completion activity. Rex caught this in his first FIX-6+7 run.
+  //
+  // New inclusion gate: pass if the MOST RECENT of completion_date /
+  // basic_start / last_seen_iso is within the lookback window. Each signal
+  // contributes independently; we OR them rather than picking one. Order of
+  // preference for the displayed date column is unchanged (still basic_start
+  // for sort/display) — only the inclusion test changes.
+  //
+  // v4.4 FIX-10 (2026-05-17, operator pushback): widened the lookback window
+  // from 4 months to 18 months. Operator stated Rex needs 12-18 months of
+  // WO data for trend analysis (YoY view, seasonal cluster detection, full
+  // PCR cycle context). 4 months was too short — cut off the year-over-year
+  // comparison that pattern analysis needs. 18 months tunable via the
+  // LOOKBACK_MONTHS constant.
+  //
+  // Why an OR-of-dates is safe here:
+  //   completion_date  — preferred when present (SAP "Actual Finish").
+  //                      Operator confirmed it's not reliably exported, so
+  //                      we cannot rely on it alone, but use it if present.
+  //   basic_start      — recently-scheduled-and-completed work is captured.
+  //   last_seen_iso    — the WO is still in the active IW39 dataset (it has
+  //                      not been archived out of SAP's recent-WO reports).
+  //                      For TECO WOs this is a reasonable "completed not
+  //                      too long ago" signal even when the SAP date columns
+  //                      are sparse or stuck on the original schedule date.
+  // The risk is mild noise (slightly more WOs included than a strict
+  // completion-date filter would give), but the operator's stated concern
+  // is the opposite failure mode — recent WOs being CUT OFF — so erring
+  // toward inclusion is the right tradeoff.
+  const LOOKBACK_MONTHS = 18;
+  const LOOKBACK_MS = LOOKBACK_MONTHS * 30 * 86400000;
+  const cutoffLookback = Date.now() - LOOKBACK_MS;
+  const _anyDateRecent = w => {
+    const candidates = [w.completion_date, w.basic_start, w.last_seen_iso];
+    for (let i = 0; i < candidates.length; i++) {
+      if (!candidates[i]) continue;
+      const t = Date.parse(candidates[i]);
+      if (!isNaN(t) && t >= cutoffLookback) return true;
+    }
+    return false;
+  };
   const allWOs = Object.keys(woMap).map(wo => Object.assign({ wo_number: wo }, woMap[wo]));
   const openWORows = allWOs.filter(w => _OPEN.has(tok(w.last_status)));
   const pmsCompletedRows = allWOs.filter(w => {
     if (!_PMOK.has(tok(w.last_status))) return false;
-    // Date filter: basic_start within last 4 months. WOs without basic_start
-    // mapped are out of bucket — better than misclassifying via last_seen.
-    if (!w.basic_start) return false;
-    const t = Date.parse(w.basic_start);
-    return !isNaN(t) && t >= cutoff4mo;
+    return _anyDateRecent(w);
   });
   const cancelledRows = allWOs.filter(w => _CNCL.has(tok(w.last_status)));
   let plannedTotal = 0, actualTotal = 0;
@@ -6584,7 +6726,11 @@ function _renderRiskPrompt(brief, freshness) {
   md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
   md += '- **Make:** UNVERIFIED — derive from model + class via your KB lookup (CAT Application Profile if applicable)\n';
   md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)') + '\n';
-  md += '- **Site:** ' + (sc.clientName || 'UNVERIFIED') + (sc.site ? ' — ' + sc.site : '') + '\n';
+  // v4.4 FIX-8 — Site line removed from prompt per operator: "I will add if I
+  // think it would be relevant." Site context still flows to the PDF header
+  // (operator-facing report); only the AI-input prompt is cleaned. The `sc`
+  // variable above is now unused inside this function — kept in place for
+  // possible future operator-added prompt fields without re-plumbing.
   md += '\n## OPERATING PROFILE\n\n';
   // v4.4 fix — dropped "Util %" line. The util_rate field is FORECAST input
   // for Cadence (hrs/day used in multi-cycle changeout math), NOT historical
@@ -6610,7 +6756,8 @@ function _renderRiskPrompt(brief, freshness) {
   md += '| Component | Position | Est. hours | Benchmark | Life used | Predicted changeout | Strategy |\n';
   md += '|---|---|---:|---:|---:|---|---|\n';
   const compsSorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0));
-  compsSorted.slice(0, 30).forEach(c => {
+  // v4.4 FIX-10: row cap removed. Full component population shown.
+  compsSorted.forEach(c => {
     // v4.4 fix 2026-05-17 (Rex feedback): c.pct is stored as a RATIO (0.0-1.0)
     // not a percentage. Every Lens render site multiplies by 100. Without this,
     // Rex saw "1.386611%" instead of "138.7%" and had to back-derive the real
@@ -6626,10 +6773,11 @@ function _renderRiskPrompt(brief, freshness) {
        + ' |\n';
   });
   if (brief.oilSamples.length > 0) {
-    md += '\n### Oil sample history (latest first, up to 12)\n\n';
+    md += '\n### Oil sample history (latest first)\n\n';
     md += '| Target / location | Sample date | Band / rank | Coolant? |\n';
     md += '|---|---|---|---|\n';
-    brief.oilSamples.slice(0, 12).forEach(s => {
+    // v4.4 FIX-10: row cap removed. Full sample history shown for trend analysis.
+    brief.oilSamples.forEach(s => {
       md += '| ' + (s.target || s.location || '—')
          + ' | ' + (s.sample_date || '—')
          + ' | ' + (s.band || s.sample_rank || '—')
@@ -6660,7 +6808,7 @@ function _renderRiskPrompt(brief, freshness) {
   } else {
     md += '\n### Upcoming PCRs / shutdowns\n\n*(no scheduled projects for this unit)*\n';
   }
-  // v4.4 refinement — Work Order activity (last 4 months history + currently open + cancelled)
+  // v4.4 refinement — Work Order activity (last 18 months history per FIX-10 + currently open + cancelled)
   // Aggregates p.knownWOs across the unit's projects. Note: knownWOs schema today
   // doesn't carry basic_start_date — so "next 3 months" filter on open WOs is
   // approximated as "currently in the system (last seen as REL/CRTD)". Precise
@@ -6696,14 +6844,15 @@ function _renderRiskPrompt(brief, freshness) {
   md += '- **CRTD** — Created; awaiting approval, still in planning.\n';
   md += '- **CNCL** — Cancelled.\n\n';
   md += '**Cost columns:** Planned $ vs Actual $ is the indicator of whether work is completing to expectation — covers labour and parts together. Apply your cost-data-quality gate first: if planned costs look templated (round numbers, identical across WOs) or are missing, suppress variance claims and flag the data quality.\n\n';
-  md += '\n### WOs completed — TECO/CLSD, basic_start in last 4 months\n\n';
-  md += '*Date field is Basic Start (basic_start) — represents scheduled/actual start in IW39.*\n\n';
+  md += '\n### WOs completed — TECO/CLSD with recent activity (last 18 months)\n\n';
+  md += '*Inclusion gate: most-recent of completion_date / basic_start / last_seen_iso within 18 months. The displayed date column is Basic Start (basic_start) — scheduled-start in IW39. A WO scheduled long ago but completed recently is intentionally included here; sort/group by basic_start at your discretion. Full population shown (no row cap) — pattern analysis benefits from the full WO history.*\n\n';
   if (allPMs.length === 0) {
-    md += '*(no TECO/CLSD WOs with basic_start in the last 4 months for this unit)*\n';
+    md += '*(no TECO/CLSD WOs with recent activity in the last 18 months for this unit)*\n';
   } else {
     md += '| WO # | Description | Component | Type | Status | Basic Start | Planned $ | Actual $ | Project |\n';
     md += '|---|---|---|---|---|---|---:|---:|---|\n';
-    allPMs.slice(0, 30).forEach(w => {
+    // v4.4 FIX-10: row cap removed. Full WO population shown over the 18-month window.
+    allPMs.forEach(w => {
       const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
@@ -6716,7 +6865,6 @@ function _renderRiskPrompt(brief, freshness) {
          + ' | ' + w._proj
          + ' |\n';
     });
-    if (allPMs.length > 30) md += '\n*(+' + (allPMs.length - 30) + ' more — truncated for prompt length)*\n';
   }
   md += '\n### WOs in planning — REL / CRTD\n\n';
   md += '*Basic Start is the scheduled start date from IW39; UNVERIFIED when not in the export.*\n\n';
@@ -6725,7 +6873,8 @@ function _renderRiskPrompt(brief, freshness) {
   } else {
     md += '| WO # | Description | Component | Type | Status | Basic Start | Planned $ | Actual $ | Project |\n';
     md += '|---|---|---|---|---|---|---:|---:|---|\n';
-    allOpen.slice(0, 30).forEach(w => {
+    // v4.4 FIX-10: row cap removed. All currently-open WOs shown.
+    allOpen.forEach(w => {
       const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
@@ -6738,13 +6887,13 @@ function _renderRiskPrompt(brief, freshness) {
          + ' | ' + w._proj
          + ' |\n';
     });
-    if (allOpen.length > 30) md += '\n*(+' + (allOpen.length - 30) + ' more — truncated for prompt length)*\n';
   }
   if (allCnl.length > 0) {
     md += '\n### Cancelled WOs (issues for review)\n\n';
     md += '| WO # | Description | Component | Last seen | Project |\n';
     md += '|---|---|---|---|---|\n';
-    allCnl.slice(0, 15).forEach(w => {
+    // v4.4 FIX-10: row cap removed. All cancelled WOs shown.
+    allCnl.forEach(w => {
       md += '| ' + (w.wo_number || '—')
          + ' | ' + ((w.description || '').replace(/\|/g, '/').substring(0, 60) || '—')
          + ' | ' + (w.component || '—')
@@ -6806,6 +6955,10 @@ function generateRiskReport() {
 function _parseRiskResponse(text) {
   // Extracts markdown tables under `### Table: <name>` headers, and narrative
   // under `### Narrative`. Free-text outside those sections falls through.
+  // v4.5 — Also extracts WO-number citations + sample-location citations +
+  // OVERALL RISK tier from the raw text, so the PDF can render a curated
+  // supporting-docs appendix (only WOs Rex cited; latest-per-location samples
+  // with cite-flag highlighting on referenced locations).
   const lines = String(text || '').split(/\r?\n/);
   const tables = [];
   let curTable = null;
@@ -6837,163 +6990,183 @@ function _parseRiskResponse(text) {
     }
   }
   if (curTable) tables.push(curTable);
-  return { tables: tables, narrative: narrativeBuf.join('\n').trim(), raw: text };
+
+  // v4.5 — Citation extraction. Walk the raw response for WO numbers and
+  // oil-sample location keywords. The PDF's supporting-docs section filters
+  // to only the WOs Rex cited (not the full data dump) and visually flags
+  // any oil-sample location rows that Rex referenced in his analysis.
+  const raw = String(text || '');
+  const citedWOs = new Set();
+  const woRegex = /\bWO\s*#?\s*(\d{3,7})\b/gi;
+  let m;
+  while ((m = woRegex.exec(raw)) !== null) {
+    citedWOs.add(m[1]);
+  }
+  // Loose sample-location keyword extraction. Rex references samples by
+  // behaviour patterns more than by ID, so we extract location terms and
+  // use them as cite-flags on the default-include sample appendix.
+  const citedSampleLocs = new Set();
+  const locRegex = /\b(engine|hydraulic|swing\s+drive(?:\s+[fr])?|final\s+drive(?:\s+[lr])?|travel\s+motor|transmission|coolant|differential|turbo)\b/gi;
+  while ((m = locRegex.exec(raw)) !== null) {
+    citedSampleLocs.add(m[1].toLowerCase().replace(/\s+/g, ' '));
+  }
+  // Overall risk tier extraction for the cover banner. Tolerates several
+  // forms — "OVERALL RISK: HIGH", "Overall risk: [High]", etc.
+  let overallTier = null;
+  const tierMatch = raw.match(/overall\s+risk\s*:?\s*\[?\s*(critical|high|elevated|moderate|medium|low)\b/i);
+  if (tierMatch) overallTier = tierMatch[1].toLowerCase();
+
+  return {
+    tables: tables,
+    narrative: narrativeBuf.join('\n').trim(),
+    raw: text,
+    citedWOs: citedWOs,
+    citedSampleLocs: citedSampleLocs,
+    overallTier: overallTier
+  };
 }
 
 function _renderRiskReportPDF(brief, parsed) {
+  // v4.5 — Three-zone PDF: cover (Vitals-style identity) → Rex's assessment
+  // (4-col tables retained from FIX-6/7 + narrative) → supporting docs (only
+  // Rex-cited WOs + latest-per-location oil samples with cite-flag highlight).
+  // No raw data dumps; the report is curated by Rex's response.
   const view = document.getElementById('rrep-pdf-view');
   const dateStr = new Date().toISOString().split('T')[0];
-  const totalOpenWOs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.openWOs : 0), 0);
   const um = brief.unitMeta || {};
-  const sc = brief.siteContext || {};
-  const fmtSmu  = (um.smu  != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : 'UNVERIFIED';
-  const fmtDate = um.smuDate ? String(um.smuDate).substring(0, 10) : 'UNVERIFIED';
-  const fmtIdleL = (um.idleLife != null) ? um.idleLife.toFixed(0) + '%' : 'UNVERIFIED';
-  const fmtIdle3 = (um.idle3Mo  != null) ? um.idle3Mo.toFixed(0)  + '%' : 'UNVERIFIED';
-  let h = '';
-  // Page 1 — equipment + operating profile + source data
-  // v4.4 fix — dropped Util % column. util_rate is FORECAST (Cadence input),
-  // not actual operating %. No actual operating % field in schema today.
-  h += '<h1>Unit Risk Report — ' + _pdfEsc(brief.unit) + '</h1>';
-  h += '<p><strong>' + _pdfEsc(brief.fleet) + ' · ' + _pdfEsc(brief.model) + '</strong>' + (sc.clientName ? ' · ' + _pdfEsc(sc.clientName) : '') + (sc.site ? ' / ' + _pdfEsc(sc.site) : '') + ' · Generated ' + dateStr + '</p>';
-  h += '<h2>Equipment &amp; operating profile</h2>';
-  h += '<table>';
-  h += '<tr><th>SMU</th><th>SMU as-of</th><th>Idle % (life)</th><th>Idle % (3mo)</th></tr>';
-  h += '<tr><td>' + fmtSmu + '</td><td>' + fmtDate + '</td><td>' + fmtIdleL + '</td><td>' + fmtIdle3 + '</td></tr>';
-  h += '</table>';
-  h += '<h2>Source data summary</h2>';
-  h += '<table><tr><th>Components</th><th>Oil samples</th><th>Active projects</th><th>Open WOs (sum)</th></tr>';
-  h += '<tr><td>' + brief.components.length + '</td><td>' + brief.oilSamples.length + '</td><td>' + brief.projects.length + '</td><td>' + totalOpenWOs + '</td></tr></table>';
-  if (brief.components.length > 0) {
-    h += '<h2>Component life vs benchmark (top 12 by life used)</h2>';
-    const sorted = brief.components.slice().sort((a,b) => (b.pct || 0) - (a.pct || 0)).slice(0, 12);
-    h += '<table><tr><th>Component</th><th>Position</th><th>Est. hours</th><th>Benchmark</th><th>Life used</th><th>Predicted changeout</th></tr>';
-    sorted.forEach(c => {
-      // v4.4 fix 2026-05-17 — c.pct is a ratio (0.0-1.0); multiply by 100 to
-      // get the percentage Rex / operator expect to see.
-      const lifeUsedStr = (typeof c.pct === 'number' && isFinite(c.pct)) ? (c.pct * 100).toFixed(1) + '%' : '—';
-      h += '<tr><td>' + _pdfEsc(c.component || '—')
-        + '</td><td>' + _pdfEsc(c.position || '—')
-        + '</td><td>' + (c.est_hours != null ? c.est_hours : '—')
-        + '</td><td>' + (c.benchmark != null ? c.benchmark : '—')
-        + '</td><td>' + lifeUsedStr
-        + '</td><td>' + _pdfEsc(c.pred_changeout || '—')
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
-  if (brief.oilSamples.length > 0) {
-    h += '<h2>Latest oil samples</h2>';
-    h += '<table><tr><th>Target / location</th><th>Sample date</th><th>Band / rank</th><th>Coolant?</th></tr>';
-    brief.oilSamples.slice(0, 8).forEach(s => {
-      h += '<tr><td>' + _pdfEsc(s.target || s.location || '—')
-        + '</td><td>' + _pdfEsc(s.sample_date || '—')
-        + '</td><td>' + _pdfEsc(s.band || s.sample_rank || '—')
-        + '</td><td>' + (s.is_coolant ? 'Y' : 'N')
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
-  if (brief.projects.length > 0) {
-    h += '<h2>Upcoming PCRs / shutdowns</h2>';
-    h += '<table><tr><th>Project</th><th>Start</th><th>End</th><th>Status</th><th>Gates done</th><th>Open WOs</th></tr>';
-    brief.projects.forEach(p => {
-      const d = p.deploy || {};
-      const gatesStr = (d.gatesTotal != null) ? (d.gatesComplete + '/' + d.gatesTotal) : '—';
-      h += '<tr><td>' + _pdfEsc(p.name)
-        + '</td><td>' + _pdfEsc(p.start || '—')
-        + '</td><td>' + _pdfEsc(p.end || '—')
-        + '</td><td>' + _pdfEsc(p.status || '—')
-        + '</td><td>' + gatesStr
-        + '</td><td>' + (d.openWOs != null ? d.openWOs : 0)
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
-  h += '<div class="rrep-pdf-pagebreak"></div>';
-  // v4.4 refinement — Page 2: Work Order activity (PMs completed last 4mo,
-  // currently open, cancelled). Aggregated across the unit's projects.
+
+  // KPI formatters — em-dash for missing, no UNVERIFIED noise on the cover.
+  const fmtSmu   = (um.smu  != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : '—';
+  const fmtDate  = um.smuDate ? String(um.smuDate).substring(0, 10) : '—';
+  const fmtIdleL = (um.idleLife != null) ? um.idleLife.toFixed(0) + '%' : '—';
+  const fmtIdle3 = (um.idle3Mo  != null) ? um.idle3Mo.toFixed(0)  + '%' : '—';
+
+  // Active projects + next PCR (soonest start date)
+  const activeProjects = brief.projects.length;
+  let nextPcr = null;
+  brief.projects.forEach(p => {
+    if (!p.start) return;
+    const t = Date.parse(p.start);
+    if (isNaN(t)) return;
+    if (!nextPcr || t < nextPcr.t) nextPcr = { name: p.name, t: t };
+  });
+  const nextPcrStr = nextPcr
+    ? new Date(nextPcr.t).toLocaleDateString('en-CA', { year:'numeric', month:'short', day:'numeric' })
+    : '—';
+  const nextPcrSub = nextPcr ? nextPcr.name : 'none scheduled';
+
+  // Component health mix — same band cuts as renderCanvasHero (pct is a ratio)
+  const mix = { normal:0, caution:0, elevated:0, critical:0, nb:0 };
+  brief.components.forEach(c => {
+    if (c.pct == null || !isFinite(c.pct)) { mix.nb++; return; }
+    if (c.pct < 0.7)       mix.normal++;
+    else if (c.pct < 0.85) mix.caution++;
+    else if (c.pct < 1.0)  mix.elevated++;
+    else                   mix.critical++;
+  });
+  const totalComps = brief.components.length;
+
+  // Overall risk tier (extracted by parser from Rex's raw text)
+  const overallTier = parsed.overallTier || null;
+  const tierClassMap = { critical:'tier-critical', high:'tier-high', elevated:'tier-high',
+                         moderate:'tier-medium',  medium:'tier-medium', low:'tier-low' };
+  const tierClass = overallTier && tierClassMap[overallTier] ? tierClassMap[overallTier] : '';
+  const tierLabel = overallTier ? overallTier.toUpperCase() : 'NOT STATED';
+
+  // Aggregate ALL WOs across projects for the citation filter
   const allPMs = [], allOpen = [], allCnl = [];
   brief.projects.forEach(p => {
     if (!p.deploy) return;
-    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name }, w)));
-    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
-    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
+    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name, _bucket: 'completed' }, w)));
+    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name, _bucket: 'planning' }, w)));
+    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name, _bucket: 'cancelled' }, w)));
   });
-  h += '<h1>Work Order Activity — ' + _pdfEsc(brief.unit) + '</h1>';
-  h += '<p style="font-size:9pt;color:#6b8c80">Source: <code>p.knownWOs</code> across this unit\'s projects · IW39 last loaded ' + (allOpen.length || allPMs.length || allCnl.length ? '(see Source data summary on page 1)' : 'N/A') + '</p>';
-  // v4.4 + Deploy v8.15 enrichment — uses basic_start / completion_date / costs
-  // / order_type when knownWOs carries them. Sticky fallback to '—' for older
-  // JSONs (pre-v8.15) so the PDF still renders sensibly on legacy data.
+  const allWOs = allPMs.concat(allOpen).concat(allCnl);
+  const citedSet = (parsed.citedWOs instanceof Set) ? parsed.citedWOs : new Set();
+  const citedWOsRows = allWOs.filter(w => citedSet.has(String(w.wo_number || '').trim()));
+  // Sort cited WOs newest-first by basic_start, nulls last
+  citedWOsRows.sort((a, b) => {
+    const ta = a.basic_start ? Date.parse(a.basic_start) : 0;
+    const tb = b.basic_start ? Date.parse(b.basic_start) : 0;
+    return (tb || 0) - (ta || 0);
+  });
+
+  // Cost formatter (CAD, no cents)
   const _fmtCostPdf = v => {
     const n = parseFloat(v);
     if (isNaN(n) || !isFinite(n)) return '—';
     return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
   };
-  h += '<h2>WOs completed (TECO/CLSD, basic_start in last 4 months) — ' + allPMs.length + '</h2>';
-  if (allPMs.length === 0) {
-    h += '<p><em>No TECO/CLSD WOs with basic_start in the last 4 months for this unit.</em></p>';
-  } else {
-    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Status</th><th>Basic Start</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
-    allPMs.forEach(w => {
-      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
-      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
-        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
-        + '</td><td>' + _pdfEsc(w.component || '—')
-        + '</td><td>' + _pdfEsc(w.order_type || '—')
-        + '</td><td>' + _pdfEsc(w.last_status || '—')
-        + '</td><td>' + _pdfEsc(startStr)
-        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
-        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
-        + '</td><td>' + _pdfEsc(w._proj)
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
-  h += '<h2>WOs in planning (REL / CRTD) — ' + allOpen.length + '</h2>';
-  h += '<p style="font-size:9pt;color:#6b8c80"><em>REL = released, ready to start · CRTD = created, in planning. Basic Start is the scheduled start from IW39; UNVERIFIED when not in the export.</em></p>';
-  if (allOpen.length === 0) {
-    h += '<p><em>No REL/CRTD WOs in the system for this unit.</em></p>';
-  } else {
-    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Status</th><th>Basic Start</th><th>Planned $</th><th>Actual $</th><th>Project</th></tr>';
-    allOpen.forEach(w => {
-      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : 'UNVERIFIED';
-      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
-        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
-        + '</td><td>' + _pdfEsc(w.component || '—')
-        + '</td><td>' + _pdfEsc(w.order_type || '—')
-        + '</td><td>' + _pdfEsc(w.last_status || '—')
-        + '</td><td>' + _pdfEsc(startStr)
-        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
-        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
-        + '</td><td>' + _pdfEsc(w._proj)
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
-  if (allCnl.length > 0) {
-    h += '<h2>Cancelled WOs (issues for review) — ' + allCnl.length + '</h2>';
-    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Last seen</th><th>Project</th></tr>';
-    allCnl.forEach(w => {
-      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
-        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 70))
-        + '</td><td>' + _pdfEsc(w.component || '—')
-        + '</td><td>' + _pdfEsc(w.last_seen_iso ? String(w.last_seen_iso).substring(0, 10) : '—')
-        + '</td><td>' + _pdfEsc(w._proj)
-        + '</td></tr>';
-    });
-    h += '</table>';
-  }
+
+  let h = '';
+
+  // ════════ PAGE 1 — Cover (mirrors Vitals unit-detail identity) ════════
+  h += '<div class="rrep-cover">';
+  h += '<div class="rrep-cover-header">';
+  h += '<div class="rrep-cover-brand">NumaCore Lens &middot; Risk Assessment</div>';
+  h += '<div class="rrep-cover-title">' + _pdfEsc(brief.unit) + '</div>';
+  h += '<div class="rrep-cover-subtitle">Component Health &amp; Reliability Outlook</div>';
+  h += '<div class="rrep-cover-meta">Assessed ' + dateStr + ' &middot; Generated by Lens v' + VERSION + '</div>';
+  h += '</div>';
+
+  // Identity row
+  h += '<div class="rrep-cover-section-label">Equipment</div>';
+  h += '<div class="rrep-cover-identity">';
+  h += '<div class="rrep-id-cell"><div class="rrep-id-label">Class</div><div class="rrep-id-value">' + _pdfEsc(brief.fleet || '—') + '</div></div>';
+  h += '<div class="rrep-id-cell"><div class="rrep-id-label">Model</div><div class="rrep-id-value">' + _pdfEsc(brief.model || '—') + '</div></div>';
+  h += '<div class="rrep-id-cell"><div class="rrep-id-label">Unit</div><div class="rrep-id-value">' + _pdfEsc(brief.unit || '—') + '</div></div>';
+  h += '</div>';
+
+  // KPI tile grid (6 tiles, 3×2)
+  h += '<div class="rrep-cover-section-label">Operating Profile</div>';
+  h += '<div class="rrep-kpi-grid">';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">SMU</div><div class="rrep-kpi-value">' + fmtSmu + '</div><div class="rrep-kpi-sub">as of ' + fmtDate + '</div></div>';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">Idle % (life)</div><div class="rrep-kpi-value">' + fmtIdleL + '</div><div class="rrep-kpi-sub">unit lifetime</div></div>';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">Idle % (3-month)</div><div class="rrep-kpi-value">' + fmtIdle3 + '</div><div class="rrep-kpi-sub">recent window</div></div>';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">Components</div><div class="rrep-kpi-value">' + totalComps + '</div><div class="rrep-kpi-sub">in benchmark set</div></div>';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">Active PCRs</div><div class="rrep-kpi-value">' + activeProjects + '</div><div class="rrep-kpi-sub">' + (activeProjects === 1 ? '1 scope' : activeProjects + ' scopes') + '</div></div>';
+  h += '<div class="rrep-kpi-tile"><div class="rrep-kpi-label">Next PCR</div><div class="rrep-kpi-value" style="font-size:14pt;line-height:1.15">' + _pdfEsc(nextPcrStr) + '</div><div class="rrep-kpi-sub">' + _pdfEsc(nextPcrSub) + '</div></div>';
+  h += '</div>';
+
+  // Component health mix
+  h += '<div class="rrep-cover-section-label">Component Health Mix</div>';
+  h += '<div class="rrep-mix-row">';
+  h += '<div class="rrep-mix-pill rrep-mix-normal"><span class="mix-dot"></span>Normal &middot; ' + mix.normal + '</div>';
+  h += '<div class="rrep-mix-pill rrep-mix-caution"><span class="mix-dot"></span>Caution &middot; ' + mix.caution + '</div>';
+  h += '<div class="rrep-mix-pill rrep-mix-elevated"><span class="mix-dot"></span>Elevated &middot; ' + mix.elevated + '</div>';
+  h += '<div class="rrep-mix-pill rrep-mix-critical"><span class="mix-dot"></span>Critical &middot; ' + mix.critical + '</div>';
+  h += '<div class="rrep-mix-pill rrep-mix-nb"><span class="mix-dot"></span>No benchmark &middot; ' + mix.nb + '</div>';
+  h += '</div>';
+
+  // Overall risk callout
+  h += '<div class="rrep-overall-risk">';
+  h += '<div class="rrep-overall-risk-label">Overall Risk (per specialist agent Rex)</div>';
+  h += '<div class="rrep-overall-risk-tier ' + tierClass + '">' + _pdfEsc(tierLabel) + '</div>';
+  h += '</div>';
+
+  // Cover footer
+  h += '<div class="rrep-cover-footer">';
+  h += '<span>NumaCore Lens &middot; v' + VERSION + '</span>';
+  h += '<span>' + dateStr + '</span>';
+  h += '</div>';
+  h += '</div>';
+
   h += '<div class="rrep-pdf-pagebreak"></div>';
-  // Page 3 — Rex's verdict
-  h += '<h1>Specialist assessment (Rex) — ' + _pdfEsc(brief.unit) + '</h1>';
+
+  // ════════ PAGE 2+ — Rex's Specialist Assessment ════════
+  h += '<div class="rrep-body">';
+  h += '<div class="rrep-body-header">';
+  h += '<div class="rrep-body-title">Specialist Assessment &mdash; ' + _pdfEsc(brief.unit) + '</div>';
+  h += '<div class="rrep-body-subtitle">Rex &middot; NumaCore reliability specialist agent &middot; ' + dateStr + '</div>';
+  h += '</div>';
+
   if (parsed.tables.length === 0 && !parsed.narrative) {
-    h += '<p><em>Response did not contain recognised "### Table:" or "### Narrative" headers. Raw response below:</em></p>';
-    h += '<p class="rrep-pdf-prose">' + _pdfEsc(parsed.raw).replace(/\n/g, '<br>') + '</p>';
+    h += '<p class="rrep-empty-note">Response did not contain recognised "### Table:" or "### Narrative" headers. Raw response below:</p>';
+    h += '<p class="rrep-prose">' + _pdfEsc(parsed.raw).replace(/\n/g, '<br>') + '</p>';
   } else {
     parsed.tables.forEach(t => {
-      h += '<h3>' + _pdfEsc(t.name) + '</h3>';
-      if (t.rows.length === 0) { h += '<p><em>(no rows returned)</em></p>'; return; }
+      h += '<h2>' + _pdfEsc(t.name) + '</h2>';
+      if (t.rows.length === 0) { h += '<p class="rrep-empty-note">(no rows returned)</p>'; return; }
       const headerRow = t.rows[0] || [];
       const dataRows = t.rows.slice(1);
       h += '<table><tr>' + headerRow.map(c => '<th>' + _pdfEsc(c) + '</th>').join('') + '</tr>';
@@ -7003,12 +7176,88 @@ function _renderRiskReportPDF(brief, parsed) {
       h += '</table>';
     });
     if (parsed.narrative) {
-      h += '<h3>Narrative</h3>';
+      h += '<h2>Narrative</h2>';
       const paras = parsed.narrative.split(/\n\n+/);
-      paras.forEach(pg => { h += '<p class="rrep-pdf-prose">' + _pdfEsc(pg).replace(/\n/g, '<br>') + '</p>'; });
+      paras.forEach(pg => { h += '<p class="rrep-prose">' + _pdfEsc(pg).replace(/\n/g, '<br>') + '</p>'; });
     }
   }
-  h += '<p class="rrep-pdf-meta">Source: NumaCore Lens v' + VERSION + ' · Fleet JSON · Specialist agent (Rex) · ' + dateStr + '</p>';
+  h += '</div>';
+
+  h += '<div class="rrep-pdf-pagebreak"></div>';
+
+  // ════════ PAGE 3+ — Supporting Docs (Rex-cited only) ════════
+  h += '<div class="rrep-body">';
+  h += '<div class="rrep-body-header">';
+  h += '<div class="rrep-body-title">Supporting Documents</div>';
+  h += '<div class="rrep-body-subtitle">Source data referenced in Rex&rsquo;s assessment</div>';
+  h += '</div>';
+
+  // Cited WOs section
+  h += '<h2>Work Orders Cited (' + citedWOsRows.length + ')</h2>';
+  if (citedWOsRows.length === 0) {
+    h += '<p class="rrep-empty-note">Rex did not cite specific WO numbers in his response. Full WO history is available in Lens (Vitals &rarr; unit detail &rarr; Deploy tab).</p>';
+  } else {
+    h += '<table><tr><th>WO #</th><th>Description</th><th>Component</th><th>Type</th><th>Status</th><th>Basic Start</th><th>Planned $</th><th>Actual $</th><th>Bucket</th></tr>';
+    citedWOsRows.forEach(w => {
+      const startStr = w.basic_start ? String(w.basic_start).substring(0, 10) : '—';
+      h += '<tr><td>' + _pdfEsc(w.wo_number || '—')
+        + '</td><td>' + _pdfEsc((w.description || '').substring(0, 80))
+        + '</td><td>' + _pdfEsc(w.component || '—')
+        + '</td><td>' + _pdfEsc(w.order_type || '—')
+        + '</td><td>' + _pdfEsc(w.last_status || '—')
+        + '</td><td>' + _pdfEsc(startStr)
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.planned_cost))
+        + '</td><td>' + _pdfEsc(_fmtCostPdf(w.actual_cost))
+        + '</td><td>' + _pdfEsc(w._bucket)
+        + '</td></tr>';
+    });
+    h += '</table>';
+  }
+
+  // Oil samples appendix — default-include latest per location, cite-flag highlight
+  h += '<h2>Recent Oil Samples</h2>';
+  if (brief.oilSamples.length === 0) {
+    h += '<p class="rrep-empty-note">No oil sample data for this unit in the current fleet JSON.</p>';
+  } else {
+    // Group by target/location, keep latest per group
+    const latestByLoc = {};
+    brief.oilSamples.forEach(s => {
+      const loc = (s.target || s.location || 'unknown').toString();
+      const t = s.sample_date ? Date.parse(s.sample_date) : 0;
+      if (!latestByLoc[loc] || (isFinite(t) && t > latestByLoc[loc]._t)) {
+        latestByLoc[loc] = Object.assign({ _t: isFinite(t) ? t : 0 }, s);
+      }
+    });
+    const latestRows = Object.values(latestByLoc).sort((a, b) => (b._t || 0) - (a._t || 0));
+
+    // Match against Rex's citation set (loose: location string contains a cited keyword)
+    const citedLocs = (parsed.citedSampleLocs instanceof Set) ? parsed.citedSampleLocs : new Set();
+    const isLocCited = locStr => {
+      const lower = String(locStr || '').toLowerCase();
+      let cited = false;
+      citedLocs.forEach(k => { if (lower.indexOf(k) !== -1) cited = true; });
+      return cited;
+    };
+
+    h += '<table><tr><th>Target / Location</th><th>Latest sample date</th><th>Band / rank</th><th>Coolant?</th></tr>';
+    latestRows.forEach(s => {
+      const loc = s.target || s.location || '—';
+      const cited = isLocCited(loc);
+      const rowCls = cited ? ' class="rrep-row-cited"' : '';
+      const marker = cited ? '<span class="rrep-cited-marker">REX-CITED</span>' : '';
+      h += '<tr' + rowCls + '><td>' + _pdfEsc(loc) + marker
+        + '</td><td>' + _pdfEsc(s.sample_date || '—')
+        + '</td><td>' + _pdfEsc(s.band || s.sample_rank || '—')
+        + '</td><td>' + (s.is_coolant ? 'Y' : 'N')
+        + '</td></tr>';
+    });
+    h += '</table>';
+    h += '<p class="rrep-empty-note">Yellow-highlighted rows are oil-sample locations Rex referenced in his assessment. Full sample history with trends is available in Lens (Vitals &rarr; unit detail &rarr; ConMon tile).</p>';
+  }
+
+  h += '<p class="rrep-meta-footer">Source: NumaCore Lens v' + VERSION + ' &middot; Fleet JSON &middot; Specialist agent (Rex) &middot; Generated ' + dateStr + '</p>';
+  h += '</div>';
+
   view.innerHTML = h;
 }
 
