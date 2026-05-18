@@ -6571,6 +6571,14 @@ function _renderRiskPrompt(brief, freshness) {
   const fmtPct = v => (v == null) ? 'UNVERIFIED' : (v.toFixed(0) + '%');
   let md = '# Risk Assessment Request — Unit ' + u + '\n\n';
   md += 'Hi Rex — please assess the exposure on this unit. Use your KB context for oil sample trends, model-specific failure modes, component life benchmarks, and recent WO patterns. Apply your standing protocol: confidence levels on every claim, blank/UNVERIFIED beats a guess.\n\n';
+  // v4.4 FIX-7 — How to engage. Operator-stated tone + analyst-mode framing.
+  // Front-loaded so Rex reads the rules of engagement before processing data.
+  md += '## How to engage\n\n';
+  md += '**Use your tools.** Spin up your code interpreter / Python and actually compute the trends — do not eyeball. Counts, ratios, distributions, time-series — calculate them from the WO + sample data below, then state what they tell you.\n\n';
+  md += '**Sober judgement, not jumping to conclusions.** Confidence levels on every claim per your v0.2 protocol. UNVERIFIED beats a guess. If the data is ambiguous, say so plainly — do not paper over uncertainty.\n\n';
+  md += '**Do not state the obvious.** I can see in the dashboard which components are overdue, which oil samples are stale, and which projects have open WOs. Do not write an essay on every overdue component or tell me to chase people for parts and approvals — I run that side. Mention overdue items only when they connect to a broader pattern you have identified; otherwise skip.\n\n';
+  md += '**Reliability engineer, not slave driver.** Be firm in recommendations and critique when warranted. Do not be overbearing. State the diagnosis, the inferred cause, and the one or two highest-leverage actions. Leave routine execution out.\n\n';
+  md += '**Deep insight is the deliverable.** Join the dots across components, samples, WO history, costs, and time. Tell me things I cannot see from the dashboard alone — patterns, second-order effects, plausible upstream causes, where the reliability story is heading. That is the value.\n\n';
   md += '## EQUIPMENT\n\n';
   md += '- **Unit ID:** ' + u + '\n';
   md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
@@ -6674,8 +6682,22 @@ function _renderRiskPrompt(brief, freshness) {
     if (isNaN(n) || !isFinite(n)) return '—';
     return n.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
   };
+  // v4.4 FIX-7 — SAP order-type & status code reference. Operator-defined.
+  // Placed immediately before the WO tables so it primes Rex's reading.
+  md += '\n## SAP order-type & status code reference\n\n';
+  md += 'Use these codes to classify the WO data in the tables that follow. The `order_type` column is the authoritative classifier — use it over inferring from the description when both are present.\n\n';
+  md += '**Order types:**\n';
+  md += '- **YBA2** — Scheduled work: PMs (preventive maintenance) and PCRs (planned component replacements).\n';
+  md += '- **YBA1** — Corrective planned (non-breakdown). Issue discovered, repair scheduled. Not preventive, not emergency.\n';
+  md += '- **YBA3** — Breakdowns / unplanned corrective.\n\n';
+  md += '**Status codes:**\n';
+  md += '- **TECO** — Work technically complete (closed).\n';
+  md += '- **REL** — Released; parts being procured, work in motion.\n';
+  md += '- **CRTD** — Created; awaiting approval, still in planning.\n';
+  md += '- **CNCL** — Cancelled.\n\n';
+  md += '**Cost columns:** Planned $ vs Actual $ is the indicator of whether work is completing to expectation — covers labour and parts together. Apply your cost-data-quality gate first: if planned costs look templated (round numbers, identical across WOs) or are missing, suppress variance claims and flag the data quality.\n\n';
   md += '\n### WOs completed — TECO/CLSD, basic_start in last 4 months\n\n';
-  md += '*Status semantics: TECO = complete · REL/CRTD = in planning · CNCL = cancelled. Date field is Basic Start (basic_start) — represents scheduled/actual start in IW39.*\n\n';
+  md += '*Date field is Basic Start (basic_start) — represents scheduled/actual start in IW39.*\n\n';
   if (allPMs.length === 0) {
     md += '*(no TECO/CLSD WOs with basic_start in the last 4 months for this unit)*\n';
   } else {
@@ -6697,7 +6719,7 @@ function _renderRiskPrompt(brief, freshness) {
     if (allPMs.length > 30) md += '\n*(+' + (allPMs.length - 30) + ' more — truncated for prompt length)*\n';
   }
   md += '\n### WOs in planning — REL / CRTD\n\n';
-  md += '*REL = released, ready to start · CRTD = created, still in planning. Basic Start is the scheduled start date from IW39.*\n\n';
+  md += '*Basic Start is the scheduled start date from IW39; UNVERIFIED when not in the export.*\n\n';
   if (allOpen.length === 0) {
     md += '*(no REL/CRTD WOs in the system for this unit)*\n';
   } else {
@@ -6731,9 +6753,25 @@ function _renderRiskPrompt(brief, freshness) {
          + ' |\n';
     });
   }
+  // v4.4 FIX-6 — Pattern-analysis request. Rex's v0.2 protocol section 3
+  // ("Work Order & Cost Logic") already specifies the analytical lens; this
+  // section explicitly asks for the join-the-dots output as a structured
+  // table that the existing parser + PDF renderer pick up automatically.
+  md += '\n## Pattern Analysis Request\n\n';
+  md += 'Beyond the per-component risk assessment, walk the Work Order data above as a population. **Play analyst — compute the metrics below using your tools, do not estimate them.** Apply your v0.2 protocol section 3 (Work Order & Cost Logic). Look at:\n\n';
+  md += '- **PM completion picture (YBA2)** — count YBA2 WOs in TECO vs YBA2 in REL+CRTD over the WO window. Is the planned preventive work actually getting completed, or piling up in planning? A backlog of planned work matters more than any single overdue component.\n';
+  md += '- **Breakdown profile (YBA3)** — frequency, recency, which components, which systems. Are breakdowns clustering by component, by system, or by time? A cluster signals something beyond random failure. Per your protocol: weight YBA3 heavily.\n';
+  md += '- **Corrective-planned profile (YBA1)** — frequency and what components it concentrates on. A high YBA1 rate on a specific component family says reliability is degrading and the team is catching it before failure — that is useful signal in itself.\n';
+  md += '- **Recurring failure modes** — same symptom appearing on the same component across multiple WOs (e.g., repeated overheating on engine, repeat hydraulic leak on the same circuit, recurring travel-motor seal failure). Cite the WO numbers.\n';
+  md += '- **Repeat corrective work within 90 days** — same component touched by two or more YBA1/YBA3 WOs in a 90-day window. Per your protocol: raise risk one tier on a systemic-issue signal.\n';
+  md += '- **Cost variance signal** — Planned $ vs Actual $ variance > 25% on the same component (scope discovered = leading indicator), repeat-work cost concentration on a single component, anomalous Actual $ values relative to peer WOs. Apply the cost-data-quality gate from the SAP reference above first.\n';
+  md += '- **Scope gaps** — high life-used components (>90%) with no visible PM, corrective, or shutdown scope in either the completed or planning WO lists. Where is the team not looking?\n';
+  md += '- **WO activity vs actual risk** — cross-reference the WO patterns above against the component-life status + oil sample trends from the source data. Does the WO activity match where the data says the risk sits, or is the team working a different set of components than the data points to? This is the cross-cut where the most useful insight typically sits.\n\n';
+  md += 'Return findings in the structured table below. Be concise — one pattern per row. Evidence column should cite the specific WO numbers, not paraphrase. When a pattern is a computed count or ratio (e.g., "YBA2 TECO/REL+CRTD = 3/14 over 4 months"), include the metric in the Evidence column so I can verify it against the source data.\n';
   md += '\n## Asked of you\n\n';
   md += 'Return your assessment in this exact structure (the report parser expects these headers):\n\n';
   md += '### Table: Component-level risk\n\nMarkdown table with columns: Component | Risk level (Low/Medium/High/Critical) | Reason | Suggested action.\n\n';
+  md += '### Table: WO Pattern Highlights\n\nMarkdown table with columns: Component | Pattern observed | Risk implication | Evidence (WO #s).\n\nOne row per distinct pattern. If no patterns surface from the WO data, return the table with a single row stating "No recurring patterns identified in this WO window." in the Pattern column and "—" in the other columns. Do not omit the table.\n\n';
   md += '### Table: Shutdown readiness\n\nMarkdown table with columns: Project | Readiness (Ready/At risk/Blocked) | Top risk | Mitigation.\n\n';
   md += '### Narrative\n\n2-3 paragraphs describing the overall risk posture on this unit + your top recommended action.\n\n';
   md += 'Be specific (component names, project IDs) rather than generic. Skip dimensions where you have nothing meaningful to say. Reference the data above + your KB.\n';
