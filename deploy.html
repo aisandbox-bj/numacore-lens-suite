@@ -3693,6 +3693,7 @@ function renderWorkOrders(id) {
       <td class="mono" style="font-weight:600">${_woNumEsc}${_carryMark}</td>
       <td style="min-width:160px">${esc(wo.description||'')}</td>
       <td>${sapBadge(wo.status)}</td>
+      <td style="font-size:10px;color:var(--muted);white-space:nowrap">${wo.basic_start ? esc(String(wo.basic_start).substring(0, 10)) : '—'}</td>
       <td style="text-align:center">${planned ? fmtCost(planned) : '—'}</td>
       <td style="text-align:center">${actual ? fmtCost(actual) : '—'}</td>
       <td style="text-align:center;color:${varAmt>0?'var(--red)':varAmt<0?'var(--green)':'var(--faint)'}">
@@ -3707,6 +3708,7 @@ function renderWorkOrders(id) {
   el.innerHTML += `<div class="dtw"><table class="dt">
     <thead><tr>
       <th>WO Number</th><th>Description</th><th>Status</th>
+      <th>Basic Start</th>
       <th style="text-align:center">Planned</th><th style="text-align:center">Actual</th><th style="text-align:center">Variance</th>
       <th>FLOC</th><th style="min-width:120px">Notes</th>
       <th title="Hide this WO from this project">Hide</th>
@@ -4796,8 +4798,32 @@ function renderGantt(projId) {
   const zoomFrac     = Math.max(0, Math.min(1, (ganttZoomLevel - 1) / 4));   // 0 at z=1, 1 at z=5
   const lead         = MAX_LEAD_MS  - (MAX_LEAD_MS  - MIN_LEAD_MS)  * zoomFrac;
   const trail        = MAX_TRAIL_MS - (MAX_TRAIL_MS - MIN_TRAIL_MS) * zoomFrac;
-  const tStart       = new Date(projStart.getTime() - lead);
-  const tEnd         = new Date(projEnd.getTime()   + trail);
+  let tStart         = new Date(projStart.getTime() - lead);
+  let tEnd           = new Date(projEnd.getTime()   + trail);
+  // v8.15 FIX-5 (2026-05-25, operator-flagged via "Deploy Glitches" PPTX) —
+  // Expand the timeline window to encompass every gate's planStart/planEnd
+  // AND today, so nothing gets clipped at the left/right edge.
+  //
+  // Failure mode without this:
+  //   EX303 shutdown Sept 2026; today May 25; auto-populate spreads gates 1-12
+  //   across May→Sept; projStart - lead = Aug 5; gates 1-9 (May→early-Aug)
+  //   fall before tStart → pct() clamps them to 0% → they render as 1.5%-wide
+  //   stubs at the row's left edge ("hidden behind the column" per operator).
+  //   Drag is unreachable because the resize handle is also at 0%.
+  //
+  // Fix: walk gates first, push tStart/tEnd out to include the extremes, with
+  // a 5-day pad so bars at the edge don't sit flush against the axis. Also
+  // include today() in the window so the TODAY indicator never shows up
+  // mis-anchored at the left edge for projects months ahead.
+  const PAD_MS = 5 * MS_PER_DAY;
+  p.gates.forEach(g => {
+    const s = g.planStart ? Date.parse(g.planStart) : NaN;
+    const e = g.planEnd   ? Date.parse(g.planEnd)   : NaN;
+    if (!isNaN(s) && s < tStart.getTime()) tStart = new Date(s - PAD_MS);
+    if (!isNaN(e) && e > tEnd.getTime())   tEnd   = new Date(e + PAD_MS);
+  });
+  if (today.getTime() < tStart.getTime()) tStart = new Date(today.getTime() - PAD_MS);
+  if (today.getTime() > tEnd.getTime())   tEnd   = new Date(today.getTime() + PAD_MS);
   // Floor span at 14 days so degenerate projects (projEnd ≤ projStart) still
   // render a sensible axis.
   const tSpan        = Math.max(tEnd - tStart, 14 * MS_PER_DAY);
