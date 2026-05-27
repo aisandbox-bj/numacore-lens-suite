@@ -6580,7 +6580,14 @@ function _buildUnitRiskBrief(fleet, model, unit) {
     linkedComponents: Array.isArray(p.linkedIds) ? p.linkedIds.length : 0,
     deploy: _readDeployForProject(p.id)
   }));
-  return { unit, fleet, model, components, oilSamples, projects, unitMeta, siteContext };
+  // v4.5 FIX-1 (2026-05-25, paired with Deploy v8.16 fleet-wide WO persistence) —
+  // When this unit has NO Cadence projects, fall back to reading the fleet-wide
+  // WO pool (deploy.knownFleetWOs) and filter by unit FLOC. Unblocks Risk Report
+  // for recovery-repair scoping, pre-PCR planning, and health-check / sales-demo
+  // use cases where there's no scheduled PCR. brief.unitLevelWOs is consumed by
+  // _renderRiskPrompt and _renderRiskReportPDF when present.
+  const unitLevelWOs = (projects.length === 0) ? _readFleetWideWOsForUnit(unit) : null;
+  return { unit, fleet, model, components, oilSamples, projects, unitMeta, siteContext, unitLevelWOs };
 }
 
 function _readDeployForProject(projId) {
@@ -6664,6 +6671,71 @@ function _readDeployForProject(projId) {
     openWORows: openWORows,
     pmsCompletedRows: pmsCompletedRows,
     cancelledRows: cancelledRows
+  };
+}
+
+// v4.5 FIX-1 (2026-05-25, paired with Deploy v8.16) — Read the fleet-wide
+// WO pool (deploy.knownFleetWOs, persisted by Deploy v8.16 on every IW39
+// load) and filter by unit FLOC. Used by _buildUnitRiskBrief as a fallback
+// when a unit has no Cadence projects — unblocks Risk Report for the three
+// project-less use cases: recovery-repair scoping, pre-PCR planning, and
+// health-check / sales-demo. Returns null when knownFleetWOs is empty
+// (pre-v8.16 JSON or no IW39 ever loaded).
+//
+// Filter parity with _readDeployForProject:
+//   - same _OPEN / _PMOK / _CNCL status sets
+//   - same 18-month _anyDateRecent gate (FIX-9 + FIX-10 logic)
+//   - same uppercase-substring unit-FLOC match (consistent with Deploy's
+//     own filter at confirmIW39FleetImport L4014-4016)
+function _readFleetWideWOsForUnit(unit) {
+  const dd = (typeof lensRawData !== 'undefined' && lensRawData
+              && lensRawData.workingData && lensRawData.workingData.deployData) || null;
+  if (!dd) return null;
+  const fleetMap = (dd.knownFleetWOs && typeof dd.knownFleetWOs === 'object') ? dd.knownFleetWOs : null;
+  if (!fleetMap) return null;
+  const allWOs = Object.keys(fleetMap).map(num => Object.assign({ wo_number: num }, fleetMap[num]));
+  if (allWOs.length === 0) return null;
+
+  // Unit-FLOC filter — same uppercase-substring strategy Deploy uses to
+  // attribute fleet-wide WOs to per-project knownWOs.
+  const unitId = String(unit || '').trim().toUpperCase();
+  if (!unitId) return null;
+  const unitWOs = allWOs.filter(w => String(w.floc || '').toUpperCase().includes(unitId));
+  if (unitWOs.length === 0) return null;
+
+  // Status filter — first-word uppercased
+  const tok = s => String(s || '').toUpperCase().split(/[\s,;|/]+/)[0];
+  const _OPEN = new Set(['REL', 'CRTD']);
+  const _PMOK = new Set(['TECO', 'CLSD']);
+  const _CNCL = new Set(['CNCL']);
+
+  // Date filter — same 18-month OR-of-3-dates window as the per-project path
+  const LOOKBACK_MS = 18 * 30 * 86400000;
+  const cutoffLookback = Date.now() - LOOKBACK_MS;
+  const _anyDateRecent = w => {
+    const candidates = [w.completion_date, w.basic_start, w.last_seen_iso];
+    for (let i = 0; i < candidates.length; i++) {
+      if (!candidates[i]) continue;
+      const t = Date.parse(candidates[i]);
+      if (!isNaN(t) && t >= cutoffLookback) return true;
+    }
+    return false;
+  };
+
+  const openWORows = unitWOs.filter(w => _OPEN.has(tok(w.last_status)));
+  const pmsCompletedRows = unitWOs.filter(w => {
+    if (!_PMOK.has(tok(w.last_status))) return false;
+    return _anyDateRecent(w);
+  });
+  const cancelledRows = unitWOs.filter(w => _CNCL.has(tok(w.last_status)));
+
+  return {
+    source: 'fleet-wide',  // marker so prompt/PDF can label these correctly
+    totalUnitWOs: unitWOs.length,
+    openWORows: openWORows,
+    pmsCompletedRows: pmsCompletedRows,
+    cancelledRows: cancelledRows,
+    knownFleetWOsLastLoadIso: dd.knownFleetWOsLastLoadIso || null
   };
 }
 
@@ -6805,6 +6877,12 @@ function _renderRiskPrompt(brief, freshness) {
          + ' | ' + costStr
          + ' |\n';
     });
+  } else if (brief.unitLevelWOs) {
+    // v4.5 FIX-1 — unit has no scheduled PCR, but the fleet-wide WO pool has
+    // entries matching this unit's FLOC. Flag the scope explicitly so Rex
+    // frames his response as a unit-level health-check rather than a
+    // PCR-scoped assessment.
+    md += '\n### Upcoming PCRs / shutdowns\n\n*(no scheduled PCR for this unit — assessment is operating on the **fleet-wide IW39 pool** filtered by unit FLOC. Treat as a unit-level health-check / recovery-scoping context, not PCR-scoped planning.)*\n';
   } else {
     md += '\n### Upcoming PCRs / shutdowns\n\n*(no scheduled projects for this unit)*\n';
   }
@@ -6813,6 +6891,9 @@ function _renderRiskPrompt(brief, freshness) {
   // doesn't carry basic_start_date — so "next 3 months" filter on open WOs is
   // approximated as "currently in the system (last seen as REL/CRTD)". Precise
   // scheduled-start filter requires a Deploy v8.15 schema extension.
+  // v4.5 FIX-1 (2026-05-25) — also aggregate brief.unitLevelWOs (fleet-wide
+  // pool fallback) when this unit has no projects. Same row shape, labelled
+  // with "(unit-level)" so Rex can see the source.
   const allPMs = [];
   const allOpen = [];
   const allCnl = [];
@@ -6822,6 +6903,12 @@ function _renderRiskPrompt(brief, freshness) {
     (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
     (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
   });
+  if (brief.unitLevelWOs) {
+    const ulLabel = '(unit-level, no PCR)';
+    (brief.unitLevelWOs.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: ulLabel }, w)));
+    (brief.unitLevelWOs.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: ulLabel }, w)));
+    (brief.unitLevelWOs.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: ulLabel }, w)));
+  }
   // v4.4 + Deploy v8.15 enrichment — show basic_start / completion_date / cost
   // / order_type when the underlying knownWOs entries carry them. Missing values
   // render as '—' so the table still works on older Deploy JSONs (pre-v8.15).
@@ -7074,6 +7161,9 @@ function _renderRiskReportPDF(brief, parsed) {
   const tierLabel = overallTier ? overallTier.toUpperCase() : 'NOT STATED';
 
   // Aggregate ALL WOs across projects for the citation filter
+  // v4.5 FIX-1 (2026-05-25) — also include brief.unitLevelWOs (fleet-wide
+  // pool fallback) when this unit has no projects, so citation-driven
+  // supporting-docs still works for project-less RA flows.
   const allPMs = [], allOpen = [], allCnl = [];
   brief.projects.forEach(p => {
     if (!p.deploy) return;
@@ -7081,6 +7171,12 @@ function _renderRiskReportPDF(brief, parsed) {
     (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name, _bucket: 'planning' }, w)));
     (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name, _bucket: 'cancelled' }, w)));
   });
+  if (brief.unitLevelWOs) {
+    const ulLabel = '(unit-level, no PCR)';
+    (brief.unitLevelWOs.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: ulLabel, _bucket: 'completed' }, w)));
+    (brief.unitLevelWOs.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: ulLabel, _bucket: 'planning' }, w)));
+    (brief.unitLevelWOs.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: ulLabel, _bucket: 'cancelled' }, w)));
+  }
   const allWOs = allPMs.concat(allOpen).concat(allCnl);
   const citedSet = (parsed.citedWOs instanceof Set) ? parsed.citedWOs : new Set();
   const citedWOsRows = allWOs.filter(w => citedSet.has(String(w.wo_number || '').trim()));

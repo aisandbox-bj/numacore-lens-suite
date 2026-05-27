@@ -1122,7 +1122,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.15';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
+const VERSION = '8.16';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -3211,6 +3211,87 @@ function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
   return changed;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// v8.16 — Fleet-wide WO persistence (RA scope-extension)
+// ─────────────────────────────────────────────────────────────────────────
+// Operator-flagged 2026-05-25: Risk Report only worked when a unit had a
+// Deploy project AND IW39 was loaded. WO data only persisted through the
+// per-project envelope (deploy.projects[pid].knownWOs). Units without a
+// scheduled PCR — recovery-repair scoping, pre-PCR planning, health-check
+// or sales-demo use cases — saw zero WOs even though _fleetWideIW39 held
+// the full pool.
+//
+// Fix: persist the full fleet-wide pool to deploy.knownFleetWOs{}, keyed by
+// WO number, with the floc field carried so Lens can unit-filter at read
+// time. Per-project knownWOs unchanged (sticky additive write — both stores
+// updated on every IW39 load). Lens v4.5 FIX-1 reads from this slice when
+// a unit has no projects.
+//
+// Schema:
+//   deploy.knownFleetWOs = {
+//     "<wo_number>": {
+//       wo_number, description, last_status, component,
+//       floc, order_type, basic_start, completion_date,
+//       planned_cost, actual_cost,
+//       first_seen_iso, last_seen_iso
+//     }
+//   }
+//   deploy.knownFleetWOsLastLoadIso = <ISO timestamp of last fleet-wide write>
+//
+// Schema-additive: older Deploy / Lens harmlessly ignore. JSON files saved
+// with v8.15 stay compatible (knownFleetWOs builds fresh on next IW39 load).
+function _recordFleetWideWOs(sourceWOs, sourceAsOfIso) {
+  if (!deploy) return false;
+  if (!deploy.knownFleetWOs) deploy.knownFleetWOs = {};
+  if (!Array.isArray(sourceWOs)) return false;
+  const nowIso = sourceAsOfIso || new Date().toISOString();
+  // Sticky semantics: only overwrite when source has a non-empty value.
+  const _setIf = (obj, key, val) => {
+    const s = (val == null ? '' : String(val)).trim();
+    if (s) obj[key] = s;
+  };
+  let added = 0, updated = 0;
+  sourceWOs.forEach(wo => {
+    const num = String(wo.wo_number || '').trim();
+    if (!num) return;
+    const existing = deploy.knownFleetWOs[num];
+    if (!existing) {
+      added++;
+      const entry = {
+        wo_number:      num,
+        first_seen_iso: nowIso,
+        last_seen_iso:  nowIso,
+        last_status:    String(wo.status || wo.last_status || '').trim(),
+        description:    String(wo.description || '').trim(),
+        component:      String(wo.component || '').trim()
+      };
+      _setIf(entry, 'floc',            wo.floc);
+      _setIf(entry, 'order_type',      wo.order_type);
+      _setIf(entry, 'basic_start',     wo.basic_start);
+      _setIf(entry, 'completion_date', wo.completion_date);
+      _setIf(entry, 'planned_cost',    wo.planned_cost);
+      _setIf(entry, 'actual_cost',     wo.actual_cost);
+      deploy.knownFleetWOs[num] = entry;
+    } else {
+      updated++;
+      existing.last_seen_iso = nowIso;
+      const newStatus = String(wo.status || wo.last_status || '').trim();
+      if (newStatus) existing.last_status = newStatus;
+      if (wo.description) existing.description = String(wo.description).trim();
+      if (wo.component)   existing.component   = String(wo.component).trim();
+      _setIf(existing, 'floc',            wo.floc);
+      _setIf(existing, 'order_type',      wo.order_type);
+      _setIf(existing, 'basic_start',     wo.basic_start);
+      _setIf(existing, 'completion_date', wo.completion_date);
+      _setIf(existing, 'planned_cost',    wo.planned_cost);
+      _setIf(existing, 'actual_cost',     wo.actual_cost);
+    }
+  });
+  deploy.knownFleetWOsLastLoadIso = nowIso;
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  return { added, updated, total: Object.keys(deploy.knownFleetWOs).length };
+}
+
 // v8.13 Item 4 — surface previously-tracked WOs that have closed since the
 // last load. "Previously open" = last_status was REL or CRTD. "Now closed"
 // = currently present in the source pool with status not in REL/CRTD
@@ -3998,6 +4079,12 @@ function confirmIW39FleetImport() {
     deploy.fleetWideIW39AsOf = _iw39AsOf;
     if (typeof _markUnsaved === 'function') _markUnsaved();
   }
+  // v8.16 (2026-05-25, operator-flagged RA scope-extension) — Persist the
+  // full fleet-wide WO pool to deploy.knownFleetWOs{}, keyed by WO number.
+  // Unblocks Lens Risk Report on units WITHOUT a Deploy project (recovery
+  // scoping / pre-PCR planning / health-check use cases). Writes alongside
+  // the per-project knownWOs (additive — both stores live in parallel).
+  const _fleetRecord = _recordFleetWideWOs(wos, _iw39AsOf);
   // v8.15 FIX-1 (2026-05-17 evening) — Eager per-project knownWOs population
   // on fleet-wide IW39 load. Previously, knownWOs + knownWOsLastLoadIso only
   // advanced when the operator OPENED each project's WO tab (lazy via
@@ -4030,12 +4117,21 @@ function confirmIW39FleetImport() {
   closeModal('modalIW39FleetMap');
   _updateIW39StatusPill(matchingCount);
   const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
-  // v8.15 FIX-1 — toast now includes the per-project eager-record summary +
-  // the SAVE FILE reminder for the Lens Risk Report freshness gate.
-  const _saveReminder = (_eagerProjectsTouched > 0)
-    ? ` · recorded across ${_eagerProjectsTouched} project${_eagerProjectsTouched === 1 ? '' : 's'} (⚠ SAVE FILE to persist for Lens Risk Report)`
+  // v8.15 FIX-1 — toast includes per-project eager-record summary.
+  // v8.16 — toast now also reports fleet-wide WO persistence; SAVE FILE
+  // reminder fires whenever ANY WO data was recorded (fleet-wide or per-
+  // project), since both stores need to be saved for Lens Risk Report to
+  // see them on next reload.
+  const _projSummary = (_eagerProjectsTouched > 0)
+    ? ` · ${_eagerProjectsTouched} project${_eagerProjectsTouched === 1 ? '' : 's'}`
     : '';
-  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl} (session memory)${_saveReminder}`, 'success');
+  const _fleetSummary = (_fleetRecord && (_fleetRecord.added > 0 || _fleetRecord.updated > 0))
+    ? ` · fleet-wide pool: ${_fleetRecord.total} WO${_fleetRecord.total === 1 ? '' : 's'} (+${_fleetRecord.added} new)`
+    : '';
+  const _saveReminder = (_eagerProjectsTouched > 0 || (_fleetRecord && (_fleetRecord.added > 0 || _fleetRecord.updated > 0)))
+    ? ' (⚠ SAVE FILE to persist for Lens Risk Report)'
+    : '';
+  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl}${_projSummary}${_fleetSummary}${_saveReminder}`, 'success');
   // v8.14 — Closed-transitions one-shot toast. Aggregates across every Deploy
   // project (unit-filtered per-project) and surfaces a single deferred toast
   // if any previously-open WO has transitioned to CLSD/TECO/CNCL on this load.
