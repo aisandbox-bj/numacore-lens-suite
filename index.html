@@ -2250,7 +2250,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.5';
+const VERSION = '4.6';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -6801,6 +6801,30 @@ function _renderRiskPrompt(brief, freshness) {
   md += '**Do not state the obvious.** I can see in the dashboard which components are overdue, which oil samples are stale, and which projects have open WOs. Do not write an essay on every overdue component or tell me to chase people for parts and approvals — I run that side. Mention overdue items only when they connect to a broader pattern you have identified; otherwise skip.\n\n';
   md += '**Reliability engineer, not slave driver.** Be firm in recommendations and critique when warranted. Do not be overbearing. State the diagnosis, the inferred cause, and the one or two highest-leverage actions. Leave routine execution out.\n\n';
   md += '**Deep insight is the deliverable.** Join the dots across components, samples, WO history, costs, and time. Tell me things I cannot see from the dashboard alone — patterns, second-order effects, plausible upstream causes, where the reliability story is heading. That is the value.\n\n';
+  // v4.6 — Risk Modulation Guidance. Operator-stated framework, not hard rules.
+  // Component classes have different default acute-failure shapes when life-used
+  // exceeds benchmark; idle ratio modulates each class differently. Rex applies
+  // judgement. Single signal (life-used over benchmark) is NEVER sufficient for
+  // Critical on its own.
+  md += '## Risk Modulation Guidance — apply judgement, not hard rules\n\n';
+  md += 'Component classes have different default acute-failure shapes when life-used exceeds benchmark. Use these as starting points, NOT as automatic Critical/High classifications. The operating profile — especially idle ratio — modulates each class.\n\n';
+  md += '**Cylinders (boom / stick / hoist / steering / ripper)**\n';
+  md += '- Lower acute-failure risk than rotating components — cylinders tolerate life well beyond nameplate.\n';
+  md += '- Accessory cylinders (steering, ripper, truck hoist) are accessible + cheap to change → run-to-failure is a defensible operator preference.\n';
+  md += '- DO NOT assign Critical/High on life-used alone. Require corroborating signal: hydraulic oil sample band Caution+, OR hydraulic overheating WO in the last 90 days. Clean samples + clean WOs → "over benchmark" but classify as Low or Medium.\n\n';
+  md += '**Engines (core + aftertreatment)**\n';
+  md += '- Higher acute-failure risk. Operating profile heavily modulates.\n';
+  md += '- High idle (>40% lifetime) RAISES engine risk — DPF passive regen unreachable, soot loading, injector stress, aftertreatment cluster.\n';
+  md += '- Corroborating signals: engine sample band, DEF/DPF/SCR WOs, repeat injector / oil-pressure / misfire events.\n';
+  md += '- High idle + life-used > 80% + sample issues = Critical defensible.\n\n';
+  md += '**Hydraulic pumps / valves / swing motors / swing drives**\n';
+  md += '- Medium-high default. High idle LOWERS risk (less loaded duty = slower wear).\n';
+  md += '- Corroborating signals: hydraulic oil sample band, repeat filter restrictions, loss-of-function WOs.\n';
+  md += '- Clean samples + clean WOs + high idle → downgrade.\n\n';
+  md += '**Final drives / travel motors / transmissions / undercarriage**\n';
+  md += '- Usage-driven; idle is protective.\n';
+  md += '- Clean samples + high idle → "over benchmark, watch" not Critical.\n\n';
+  md += '**Single-signal rule:** Life-used over benchmark is NEVER sufficient for Critical / High on its own. State the corroborating signal explicitly in the Reason column. If you cannot find one, downgrade the tier and say so.\n\n';
   md += '## EQUIPMENT\n\n';
   md += '- **Unit ID:** ' + u + '\n';
   md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
@@ -6864,6 +6888,33 @@ function _renderRiskPrompt(brief, freshness) {
          + ' | ' + (s.is_coolant ? 'Y' : 'N')
          + ' |\n';
     });
+    // v4.6 — Oil sample parameter enrichment. For samples with rank > 8,
+    // surface the top 5 flagged trend parameters (Fe, viscosity, water, etc.)
+    // so Rex can apply his v0.2 protocol section 2(f) contaminant-signature
+    // logic instead of just seeing the band/rank summary.
+    const _highRankSamples = brief.oilSamples.filter(s => {
+      const r = parseFloat(s.sample_rank);
+      return !isNaN(r) && r > 8;
+    });
+    if (_highRankSamples.length > 0) {
+      md += '\n**Flagged parameters on rank > 8 samples** (top 5 contributors per sample, sorted by contribution):\n\n';
+      _highRankSamples.forEach(s => {
+        const trends = Array.isArray(s.trends) ? s.trends : [];
+        const loc = s.target || s.location || '—';
+        const dt  = s.sample_date || '—';
+        const rk  = (s.sample_rank != null) ? s.sample_rank : '—';
+        if (trends.length === 0) {
+          md += '- **' + loc + ' ' + dt + '** (rank ' + rk + '): *(no parameter trend data on this sample — only band/rank summary available)*\n';
+          return;
+        }
+        const topTrends = trends.slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, 5);
+        const trendStrs = topTrends.map(t =>
+          (t.label || '?') + ' (rank ' + (typeof t.rank === 'number' ? t.rank.toFixed(1) : '?') + ')'
+        );
+        md += '- **' + loc + ' ' + dt + '** (rank ' + rk + '): ' + trendStrs.join(', ') + '\n';
+      });
+      md += '\n*Use the contaminant signatures per your v0.2 protocol section 2(f): water + viscosity drop → ingress / cooler leak. Soot + fuel dilution → injectors / over-fueling / idle. High Cu → bronze / bushing / cooler tube. High Si → dirt ingress / air filter / seal breach. High Fe → ferrous wear (gears / bearings / liner). State the failure mode the signatures point to, not just the parameter values.*\n';
+    }
   } else {
     md += '\n### Oil sample history\n\n*(no oil sample data for this unit in the current fleet JSON)*\n';
   }
@@ -7023,6 +7074,13 @@ function _renderRiskPrompt(brief, freshness) {
   md += '### Table: Component-level risk\n\nMarkdown table with columns: Component | Risk level (Low/Medium/High/Critical) | Reason | Suggested action.\n\n';
   md += '### Table: WO Pattern Highlights\n\nMarkdown table with columns: Component | Pattern observed | Risk implication | Evidence (WO #s).\n\nOne row per distinct pattern. If no patterns surface from the WO data, return the table with a single row stating "No recurring patterns identified in this WO window." in the Pattern column and "—" in the other columns. Do not omit the table.\n\n';
   md += '### Table: Shutdown readiness\n\nMarkdown table with columns: Project | Readiness (Ready/At risk/Blocked) | Top risk | Mitigation.\n\n';
+  // v4.6 — Investigation Requests output section. Operator-stated: he wants
+  // Rex to surface assumptions / open questions BEFORE the final report so the
+  // operator can dig into SAP for them. Example: "TECO Engine replacement WO
+  // with a $0 actual cost — was the work actually done, or is this a paper
+  // close? Check the work-history detail." Becomes a section in the Round 1
+  // Word draft so the operator can chase them down before Round 2.
+  md += '### Investigation Requests\n\nA bullet list of assumptions / open questions you want verified before the final assessment. For each: brief description + why it matters + what would resolve it (specific SAP field, technician note, OEM file, etc.). Things you cannot conclude from the WO metadata alone but a quick SAP look-up could clarify. Example: *"WO 24835 (Engine Failed - Replace Engine) closed at $0 actual cost — was the engine actually replaced or is this a paper close? Check whether parts were issued / labour was booked."* This list drives the operator\'s Round 1 → Round 2 work; keep it short and high-leverage (5-10 items max).\n\n';
   md += '### Narrative\n\n2-3 paragraphs describing the overall risk posture on this unit + your top recommended action.\n\n';
   md += 'Be specific (component names, project IDs) rather than generic. Skip dimensions where you have nothing meaningful to say. Reference the data above + your KB.\n';
   return md;
@@ -7044,14 +7102,386 @@ function copyRiskPrompt() {
   window.getSelection().removeAllRanges();
 }
 
-function generateRiskReport() {
+// v4.6 — Round 1 → Round 2 formalised. Round 1 takes Rex's first-pass response
+// and produces an HTML-as-.doc Word draft for the operator to enrich with SAP
+// data (WO header details + Notification free-text). Round 2 takes the enriched
+// content + Rex's Round 2 response and produces the final v4.5-style PDF.
+// Operator workflow (CoWork chat):
+//   1. Copy prompt (section 2) → paste to Rex in CoWork
+//   2. Paste Rex's Round 1 response into section 3
+//   3. Click "Generate Round 1 Word draft" → download .doc
+//   4. Open .doc in Word, paste in SAP details for each WO → save
+//   5. Paste enriched Word content into section 4 textarea, enter SMU
+//   6. Click "Generate Round 2 prompt" → copy → paste to Rex
+//   7. Paste Rex's Round 2 response into section 4 paste-back
+//   8. Click "Done → Generate Final PDF" → standard print flow
+
+function generateRound1WordDraft() {
   const txt = document.getElementById('rrep-paste-box');
   const text = txt ? txt.value : '';
+  if (!text || text.trim().length < 50 || !_rrepCurrentBrief) return;
+  const parsed = _parseRiskResponse(text);
+  // Stash for downstream Round 2 prompt builder
+  _rrepRound1Parsed = parsed;
+  _rrepRound1Raw    = text;
+  const html = _renderRound1WordHtml(_rrepCurrentBrief, parsed);
+  const filename = (_rrepCurrentBrief.unit || 'Unit') + '_RiskAssessment_Round1_' +
+                   new Date().toISOString().split('T')[0] + '.doc';
+  const blob = new Blob([html], { type: 'application/msword' });
+  const url  = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  // Visual confirmation + nudge operator to section 4
+  const btn = document.getElementById('rrep-done-btn');
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ Word draft downloaded';
+    setTimeout(function() { btn.innerHTML = orig; }, 2500);
+  }
+}
+
+// State for the multi-step flow
+let _rrepRound1Parsed = null;
+let _rrepRound1Raw    = '';
+
+function _updateRrepRound2State() {
+  const enriched = document.getElementById('rrep-enriched-box');
+  const btn = document.getElementById('rrep-round2-prompt-btn');
+  if (!btn || !enriched) return;
+  // Enable when there's enriched content AND we have a Round 1 parsed
+  btn.disabled = (enriched.value.trim().length < 30) || !_rrepRound1Parsed;
+}
+
+function _updateRrepFinalBtn() {
+  const r2 = document.getElementById('rrep-round2-resp-box');
+  const btn = document.getElementById('rrep-final-btn');
+  if (!btn || !r2) return;
+  btn.disabled = (r2.value.trim().length < 50);
+}
+
+function generateRound2Prompt() {
+  if (!_rrepCurrentBrief || !_rrepRound1Parsed) return;
+  const enriched = document.getElementById('rrep-enriched-box');
+  const smuInput = document.getElementById('rrep-smu-input');
+  const round2Box = document.getElementById('rrep-round2-prompt-box');
+  if (!enriched || !round2Box) return;
+  const enrichedContent = enriched.value.trim();
+  const smu = smuInput ? smuInput.value.trim() : '';
+  const round2Prompt = _renderRound2Prompt(_rrepCurrentBrief, _rrepRound1Parsed, _rrepRound1Raw, enrichedContent, smu);
+  round2Box.value = round2Prompt;
+  // Auto-select for easy copying
+  round2Box.select();
+  try {
+    document.execCommand('copy');
+    const btn = document.getElementById('rrep-round2-prompt-btn');
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Copied! Paste to Rex.';
+      setTimeout(function() { btn.innerHTML = orig; }, 1800);
+    }
+  } catch (e) { console.warn('Copy failed:', e); }
+  window.getSelection().removeAllRanges();
+}
+
+function generateFinalPDF() {
+  const r2 = document.getElementById('rrep-round2-resp-box');
+  const text = r2 ? r2.value : '';
   if (!text || text.trim().length < 50 || !_rrepCurrentBrief) return;
   const parsed = _parseRiskResponse(text);
   _renderRiskReportPDF(_rrepCurrentBrief, parsed);
   setTimeout(function() { window.print(); }, 250);
 }
+
+// v4.6 — Backward-compat alias for any external callers that referenced the
+// pre-v4.6 single-step generator. Routes through Round 1 Word draft.
+function generateRiskReport() { return generateRound1WordDraft(); }
+
+// ─────────────────────────────────────────────────────────────────────────
+// v4.6 — Round 1 Word doc generation (HTML-as-.doc Blob download)
+// ─────────────────────────────────────────────────────────────────────────
+// Operator-approved section order:
+//   1. Top 3-4 risk items (auto-pick from Critical/High rows)
+//   2. Component-level risk table (Rex's parsed table)
+//   3. WO Pattern Highlights table (Rex's parsed table)
+//   4. Investigation requests (Rex's new section)
+//   5. Single-column WO list (deduped, for SAP paste)
+//   6. Operator notes (empty block for operator to fill)
+//   7. One page per cited WO (WO# + header + 2-cell table for SAP enrichment)
+
+function _renderRound1WordHtml(brief, parsed) {
+  const dateStr = new Date().toISOString().split('T')[0];
+  const unit = brief.unit || '—';
+  const _esc = s => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  // ── Build a unified WO lookup map across project + unit-level sources ──
+  const woLookup = {};   // wo_number → { description, component, last_status, order_type, basic_start, ... }
+  const _ingestRow = w => {
+    const num = String(w.wo_number || '').trim();
+    if (!num) return;
+    if (!woLookup[num]) {
+      woLookup[num] = {
+        wo_number: num,
+        description: w.description || '',
+        component:   w.component   || '',
+        last_status: w.last_status || '',
+        order_type:  w.order_type  || '',
+        basic_start: w.basic_start || ''
+      };
+    }
+  };
+  (brief.projects || []).forEach(p => {
+    if (!p.deploy) return;
+    (p.deploy.pmsCompletedRows || []).forEach(_ingestRow);
+    (p.deploy.openWORows      || []).forEach(_ingestRow);
+    (p.deploy.cancelledRows   || []).forEach(_ingestRow);
+  });
+  if (brief.unitLevelWOs) {
+    (brief.unitLevelWOs.pmsCompletedRows || []).forEach(_ingestRow);
+    (brief.unitLevelWOs.openWORows      || []).forEach(_ingestRow);
+    (brief.unitLevelWOs.cancelledRows   || []).forEach(_ingestRow);
+  }
+
+  // ── Extract Rex's tables ──
+  const findTable = name => (parsed.tables || []).find(t =>
+    new RegExp('^' + name + '$', 'i').test((t.name || '').trim()));
+  const compRiskTable = findTable('Component-level risk');
+  const woPatternTable = findTable('WO Pattern Highlights');
+
+  // ── Top 3-4 issues: auto-pick Critical/High rows from Component-level risk ──
+  let topIssues = [];
+  if (compRiskTable && compRiskTable.rows.length > 1) {
+    const headerRow = compRiskTable.rows[0];
+    const dataRows  = compRiskTable.rows.slice(1);
+    // Find Risk column index (typically index 1)
+    let riskCol = 1;
+    headerRow.forEach((h, i) => {
+      if (/risk/i.test(h)) riskCol = i;
+    });
+    topIssues = dataRows.filter(r => {
+      const tier = String(r[riskCol] || '').toLowerCase();
+      return /critical|high/.test(tier);
+    }).slice(0, 4);   // top 4 max
+  }
+
+  // ── Cited WO numbers (sorted, deduped) — for the single-column SAP list ──
+  const citedSet = (parsed.citedWOs instanceof Set) ? parsed.citedWOs : new Set();
+  // Also pull any WO# in the lookup that's in Rex's evidence/text
+  const citedSorted = Array.from(citedSet)
+    .filter(num => num && /^\d{3,8}$/.test(num))
+    .sort();
+
+  // ── Word/HTML body ──
+  let h = '';
+  h += '<html xmlns:o="urn:schemas-microsoft-com:office:office" ';
+  h += 'xmlns:w="urn:schemas-microsoft-com:office:word" ';
+  h += 'xmlns="http://www.w3.org/TR/REC-html40">';
+  h += '<head><meta charset="utf-8"><title>Risk Assessment Round 1 — ' + _esc(unit) + '</title>';
+  h += '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View>';
+  h += '<w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->';
+  h += '<style>';
+  h += '  @page { size: letter; margin: 0.7in 0.6in; }';
+  h += '  body { font-family: Calibri, "Segoe UI", Arial, sans-serif; font-size: 11pt; line-height: 1.35; color: #1a1a1a; }';
+  h += '  h1 { font-size: 22pt; color: #0a4d3a; margin: 0 0 4pt; }';
+  h += '  h2 { font-size: 14pt; color: #0a4d3a; border-bottom: 1.5pt solid #0a4d3a; padding-bottom: 3pt; margin: 18pt 0 8pt; }';
+  h += '  h3 { font-size: 12pt; color: #0a4d3a; margin: 14pt 0 6pt; }';
+  h += '  .meta { font-size: 10pt; color: #6b8c80; margin-bottom: 6pt; }';
+  h += '  .lead { font-size: 11pt; line-height: 1.4; margin: 6pt 0 14pt; padding: 8pt 12pt; background: #f3f7f4; border-left: 3pt solid #0a4d3a; }';
+  h += '  table { width: 100%; border-collapse: collapse; margin: 6pt 0 12pt; }';
+  h += '  th, td { border: 1pt solid #6b8c80; padding: 4pt 6pt; font-size: 10pt; vertical-align: top; }';
+  h += '  th { background: #cce4d6; font-weight: 700; color: #0a4d3a; text-align: left; }';
+  h += '  .top-issue { padding: 8pt 12pt; margin: 6pt 0; background: #fff5e0; border-left: 3pt solid #d4a528; }';
+  h += '  .top-issue-num { font-weight: 700; color: #d4a528; margin-right: 8pt; }';
+  h += '  .investigation { padding: 8pt 12pt; margin: 6pt 0; background: #fff9e6; border-left: 3pt solid #d4a528; font-size: 10.5pt; white-space: pre-wrap; }';
+  h += '  .wo-list { font-family: "Consolas", "Courier New", monospace; font-size: 11pt; line-height: 1.8; padding: 8pt 12pt; background: #f3f7f4; border: 1pt solid #6b8c80; }';
+  h += '  .wo-list-hint { font-size: 9pt; color: #6b8c80; font-style: italic; margin-bottom: 4pt; }';
+  h += '  .operator-notes { padding: 12pt; background: #fafafa; border: 1pt dashed #999; min-height: 100pt; }';
+  h += '  .operator-notes-hint { font-size: 9pt; color: #6b8c80; font-style: italic; margin-bottom: 4pt; }';
+  h += '  .page-break { page-break-before: always; }';
+  h += '  .wo-page-header { font-size: 13pt; color: #0a4d3a; font-weight: 700; padding: 6pt 0; border-bottom: 1.5pt solid #0a4d3a; margin-bottom: 10pt; }';
+  h += '  .wo-meta { font-size: 10pt; color: #6b8c80; margin-bottom: 8pt; }';
+  h += '  .sap-empty { color: #999; font-style: italic; font-size: 10pt; }';
+  h += '</style></head><body>';
+
+  // ── Title / meta ──
+  h += '<h1>Risk Assessment — Round 1 (Triage)</h1>';
+  h += '<div class="meta"><strong>Unit:</strong> ' + _esc(unit) +
+       ' &middot; <strong>Class:</strong> ' + _esc(brief.fleet || '—') +
+       ' &middot; <strong>Model:</strong> ' + _esc(brief.model || '—') +
+       ' &middot; <strong>Assessed:</strong> ' + dateStr +
+       ' &middot; <strong>Generated by:</strong> NumaCore Lens v' + VERSION + '</div>';
+  h += '<div class="lead">This is the Round 1 triage document — not the final report. Use it to identify the WOs Rex wants unpacked, dig into SAP for the WO Header + Notification details on each, add any operator notes, then come back to Lens to paste the enriched content and generate the final assessment.</div>';
+
+  // ── 1. Top 3-4 issues ──
+  h += '<h2>1. Top issues identified in Round 1</h2>';
+  if (topIssues.length === 0) {
+    h += '<p style="font-style:italic;color:#6b8c80">Rex did not flag any Critical or High tier items in the Component-level risk table. Review the full table below for Medium/Low items worth carrying forward.</p>';
+  } else {
+    topIssues.forEach((row, idx) => {
+      const comp = _esc(row[0] || '—');
+      const tier = _esc(row[1] || '—');
+      const reason = _esc(row[2] || '—');
+      h += '<div class="top-issue">';
+      h += '<span class="top-issue-num">' + (idx + 1) + '.</span>';
+      h += '<strong>' + comp + '</strong> &mdash; ' + tier;
+      h += '<br><span style="font-size:10pt;color:#444">' + reason + '</span>';
+      h += '</div>';
+    });
+  }
+
+  // ── 2. Component-level risk table ──
+  h += '<h2>2. Component-level risk (full table from Rex)</h2>';
+  h += _woRenderRexTable(compRiskTable, _esc);
+
+  // ── 3. WO Pattern Highlights table ──
+  h += '<h2>3. WO Pattern Highlights (full table from Rex)</h2>';
+  h += _woRenderRexTable(woPatternTable, _esc);
+
+  // ── 4. Investigation requests ──
+  h += '<h2>4. Investigation Requests (Rex&rsquo;s open questions to verify in SAP)</h2>';
+  if (parsed.investigationRequests) {
+    h += '<div class="investigation">' + _esc(parsed.investigationRequests) + '</div>';
+  } else {
+    h += '<p style="font-style:italic;color:#6b8c80">Rex did not return an "Investigation Requests" section. Either re-run with the v4.6 prompt that asks for it, or proceed with the Component-level risk table for SAP context.</p>';
+  }
+
+  // ── 5. Single-column WO list (for SAP paste) ──
+  h += '<h2>5. WO list (single column &mdash; copy &amp; paste into SAP filter)</h2>';
+  h += '<div class="wo-list-hint">' + citedSorted.length + ' unique WO number' + (citedSorted.length === 1 ? '' : 's') + ' cited by Rex. Select the block below, copy, and paste into SAP IW39 / IW68 filter.</div>';
+  h += '<div class="wo-list">';
+  if (citedSorted.length === 0) {
+    h += '<span class="sap-empty">(no WO references extracted from Rex&rsquo;s response — add manually below)</span><br>&nbsp;<br>&nbsp;<br>&nbsp;<br>&nbsp;';
+  } else {
+    h += citedSorted.join('<br>');
+  }
+  h += '</div>';
+
+  // ── 6. Operator notes ──
+  h += '<h2>6. Operator notes &amp; special instructions</h2>';
+  h += '<div class="operator-notes-hint">Add anything Rex needs to know for Round 2: site-specific context, watch-items, recent operational events, suspicions, second-opinion notes, etc. This block flows directly into the Round 2 prompt.</div>';
+  h += '<div class="operator-notes">&nbsp;</div>';
+
+  // ── 7. Per-WO pages ──
+  if (citedSorted.length > 0) {
+    citedSorted.forEach(num => {
+      const wo = woLookup[num] || {};
+      h += '<div class="page-break"></div>';
+      h += '<div class="wo-page-header">WO ' + _esc(num) + ' &mdash; ' + _esc(wo.description || '(no description in Lens; paste from SAP below)') + '</div>';
+      const metaParts = [];
+      if (wo.component)   metaParts.push('Component: <strong>' + _esc(wo.component) + '</strong>');
+      if (wo.order_type)  metaParts.push('Type: <strong>' + _esc(wo.order_type) + '</strong>');
+      if (wo.last_status) metaParts.push('Status: <strong>' + _esc(wo.last_status) + '</strong>');
+      if (wo.basic_start) metaParts.push('Basic Start: <strong>' + _esc(String(wo.basic_start).substring(0, 10)) + '</strong>');
+      h += '<div class="wo-meta">' + (metaParts.length ? metaParts.join(' &middot; ') : '(no Lens metadata on this WO — paste from SAP below)') + '</div>';
+      h += '<table><tr><th style="width:25%">Item</th><th>Item details (paste from SAP)</th></tr>';
+      h += '<tr><td><strong>1. WO Header details</strong><br><span style="font-size:9pt;color:#6b8c80">Long text / description / scope</span></td><td><span class="sap-empty">(paste WO header / long text from SAP here)</span></td></tr>';
+      h += '<tr><td><strong>2. Notification details</strong><br><span style="font-size:9pt;color:#6b8c80">Free-text work records / technician notes</span></td><td><span class="sap-empty">(paste Notification long text / technician comments here)</span></td></tr>';
+      h += '</table>';
+    });
+  }
+
+  // ── Footer ──
+  h += '<div class="page-break"></div>';
+  h += '<h2>Round 2 instructions</h2>';
+  h += '<p>Once you have filled in the WO Header + Notification details for each WO page above and added any operator notes:</p>';
+  h += '<ol>';
+  h += '<li>Save this document (any name)</li>';
+  h += '<li>Open this document in Word, select all content, copy</li>';
+  h += '<li>In NumaCore Lens, paste into the section 4 textarea ("Enriched Word content from SAP dig")</li>';
+  h += '<li>Enter the current machine SMU (hour meter reading) in section 4</li>';
+  h += '<li>Click "Generate Round 2 prompt" &mdash; this becomes Rex&rsquo;s Round 2 input</li>';
+  h += '<li>Paste Round 2 prompt to Rex; paste his Round 2 response back into Lens; generate the final PDF</li>';
+  h += '</ol>';
+  h += '<p style="font-size:9pt;color:#6b8c80;border-top:1pt solid #6b8c80;padding-top:6pt;margin-top:12pt;">';
+  h += 'Source: NumaCore Lens v' + VERSION + ' &middot; Risk Assessment Round 1 triage doc &middot; ' + _esc(unit) + ' &middot; ' + dateStr;
+  h += '</p>';
+
+  h += '</body></html>';
+  return h;
+}
+
+// Helper to render a parsed Rex table as Word HTML
+function _woRenderRexTable(t, _esc) {
+  if (!t || !t.rows || t.rows.length === 0) {
+    return '<p style="font-style:italic;color:#6b8c80">(table not returned by Rex)</p>';
+  }
+  let html = '<table>';
+  const headerRow = t.rows[0] || [];
+  html += '<tr>' + headerRow.map(c => '<th>' + _esc(c) + '</th>').join('') + '</tr>';
+  t.rows.slice(1).forEach(r => {
+    html += '<tr>' + r.map(c => '<td>' + _esc(c) + '</td>').join('') + '</tr>';
+  });
+  html += '</table>';
+  return html;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v4.6 — Round 2 prompt builder
+// ─────────────────────────────────────────────────────────────────────────
+// Combines:
+//   - Original Round 1 prompt (regenerated for freshness)
+//   - Rex's Round 1 response (so he has his own context back)
+//   - Operator-enriched Word content (WO header + notification details + notes)
+//   - Current SMU reading (if provided)
+// → outputs a long prompt string for the operator to paste into Rex.
+
+function _renderRound2Prompt(brief, round1Parsed, round1Raw, enrichedContent, smu) {
+  let md = '# Risk Assessment — ROUND 2 (Refined with SAP enrichment)\n\n';
+  md += 'Hi Rex. This is the second pass on the Risk Assessment for **Unit ' + (brief.unit || '—') + '**. ';
+  md += 'You produced a Round 1 triage in our previous turn. I have since pulled the WO Header + Notification details from SAP for the cited WOs and added operator notes. Your job now: produce the FINAL Risk Assessment with this richer context. ';
+  md += 'Maintain the same output structure as Round 1 (Component-level risk table, WO Pattern Highlights, Shutdown readiness, Investigation Requests, Narrative). Update tiers based on what the WO free-text reveals — many of your Round 1 assumptions will be confirmed or overturned by the operator&rsquo;s SAP detail.\n\n';
+
+  if (smu) {
+    md += '**Current SMU reading:** ' + smu + ' hrs (since Round 1). Use this if life accumulated meaningfully shifts your component-life assessment.\n\n';
+  }
+
+  // ── Original Round 1 prompt content (regenerated from current brief) ──
+  // This carries forward the source data, Risk Modulation Guidance, oil sample
+  // enrichment, SAP code reference, etc. Rex sees the full context again.
+  md += '═══════════════════════════════════════════════════════════════\n';
+  md += '## SOURCE DATA & GUIDANCE (carried over from Round 1)\n';
+  md += '═══════════════════════════════════════════════════════════════\n\n';
+  // Strip the original "Hi Rex" greeting from the Round 1 prompt since we have
+  // our own Round 2 greeting above.
+  const _rrepFreshness = (typeof _checkIW39Freshness === 'function') ? _checkIW39Freshness(brief) : { asOf: null, daysSince: null };
+  const round1Prompt = _renderRiskPrompt(brief, _rrepFreshness);
+  // Drop the first paragraph (greeting); keep everything from "## How to engage" onwards
+  const round1Trimmed = round1Prompt.replace(/^[\s\S]*?(##\s+How to engage)/, '$1');
+  md += round1Trimmed + '\n\n';
+
+  // ── Rex's Round 1 response ──
+  md += '═══════════════════════════════════════════════════════════════\n';
+  md += '## YOUR ROUND 1 RESPONSE (for context — do not repeat verbatim)\n';
+  md += '═══════════════════════════════════════════════════════════════\n\n';
+  md += round1Raw + '\n\n';
+
+  // ── Operator-enriched content ──
+  md += '═══════════════════════════════════════════════════════════════\n';
+  md += '## OPERATOR-ENRICHED CONTENT (SAP WO Header + Notification details + notes)\n';
+  md += '═══════════════════════════════════════════════════════════════\n\n';
+  md += 'The content below is the operator&rsquo;s Round 1 triage Word doc with WO Header + Notification details filled in from SAP. Use this to refine your component risk classifications, validate the Investigation Requests you raised in Round 1, and surface anything the operator notes prompt you to reconsider. **Treat operator notes as authoritative context.**\n\n';
+  md += enrichedContent + '\n\n';
+
+  // ── Asks for Round 2 ──
+  md += '═══════════════════════════════════════════════════════════════\n';
+  md += '## ROUND 2 OUTPUT (final report)\n';
+  md += '═══════════════════════════════════════════════════════════════\n\n';
+  md += 'Return your final assessment in the same structure as Round 1 — the report parser expects these exact headers:\n\n';
+  md += '### Table: Component-level risk\n\nSame 4 columns as Round 1. Update tiers based on the SAP-enriched context. State the corroborating signal explicitly (per Risk Modulation Guidance).\n\n';
+  md += '### Table: WO Pattern Highlights\n\nSame 4 columns. Add / update patterns the SAP notification text reveals. Reference operator notes where they confirm or overturn a Round 1 pattern.\n\n';
+  md += '### Table: Shutdown readiness\n\nSame 4 columns.\n\n';
+  md += '### Investigation Requests\n\nKeep only items the SAP detail did NOT resolve. Add any new questions raised by the enriched content. If everything is now resolved, return a single line stating so.\n\n';
+  md += '### Narrative\n\n2-3 paragraphs on the refined risk posture. **Lead with what changed from Round 1** — confirmed assumptions, overturned patterns, new findings from the SAP free-text. End with the highest-leverage recommended action.\n\n';
+  md += 'Apply the **Risk Modulation Guidance** from the source-data section above. Sober judgement. Single-signal rule still applies. Do not state the obvious.\n';
+
+  return md;
+}
+
 
 function _parseRiskResponse(text) {
   // Extracts markdown tables under `### Table: <name>` headers, and narrative
@@ -7064,7 +7494,9 @@ function _parseRiskResponse(text) {
   const tables = [];
   let curTable = null;
   let collectingNarrative = false;
+  let collectingInvestigation = false;
   const narrativeBuf = [];
+  const investigationBuf = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const tableHeader = line.match(/^#{1,4}\s+Table:\s*(.+)$/i);
@@ -7072,12 +7504,22 @@ function _parseRiskResponse(text) {
       if (curTable) tables.push(curTable);
       curTable = { name: tableHeader[1].trim(), rows: [] };
       collectingNarrative = false;
+      collectingInvestigation = false;
       continue;
     }
     const narrHeader = line.match(/^#{1,4}\s+Narrative\s*$/i);
     if (narrHeader) {
       if (curTable) { tables.push(curTable); curTable = null; }
       collectingNarrative = true;
+      collectingInvestigation = false;
+      continue;
+    }
+    // v4.6 — Investigation Requests section parser. Same shape as Narrative.
+    const invHeader = line.match(/^#{1,4}\s+Investigation\s+Requests?\s*$/i);
+    if (invHeader) {
+      if (curTable) { tables.push(curTable); curTable = null; }
+      collectingNarrative = false;
+      collectingInvestigation = true;
       continue;
     }
     if (curTable && /^\s*\|.*\|\s*$/.test(line)) {
@@ -7088,6 +7530,8 @@ function _parseRiskResponse(text) {
     }
     if (collectingNarrative) {
       narrativeBuf.push(line);
+    } else if (collectingInvestigation) {
+      investigationBuf.push(line);
     }
   }
   if (curTable) tables.push(curTable);
@@ -7120,6 +7564,7 @@ function _parseRiskResponse(text) {
   return {
     tables: tables,
     narrative: narrativeBuf.join('\n').trim(),
+    investigationRequests: investigationBuf.join('\n').trim(),
     raw: text,
     citedWOs: citedWOs,
     citedSampleLocs: citedSampleLocs,
@@ -7597,12 +8042,42 @@ function _pdfEsc(s) {
       <div class="rrep-section">
         <div class="rrep-section-head">
           <span class="rrep-section-num">3</span>
-          <span>Paste Rex's response here</span>
-          <span class="rrep-section-hint">markdown tables + narrative</span>
+          <span>Round 1 &mdash; paste Rex's first-pass response</span>
+          <span class="rrep-section-hint">used to build the Word triage doc</span>
         </div>
-        <textarea id="rrep-paste-box" placeholder="Paste Rex's full response here (must include ### Table: ... headers + ### Narrative section)..." oninput="_updateRrepDoneBtn()"></textarea>
+        <textarea id="rrep-paste-box" placeholder="Paste Rex's Round 1 response here (markdown tables + narrative — the standard ### Table: ... + ### Narrative format)..." oninput="_updateRrepDoneBtn()"></textarea>
         <div class="rrep-btn-row">
-          <button class="rrep-btn rrep-btn-primary" id="rrep-done-btn" onclick="generateRiskReport()" disabled>&#x2705; Done &rarr; Generate PDF</button>
+          <button class="rrep-btn rrep-btn-primary" id="rrep-done-btn" onclick="generateRound1WordDraft()" disabled>&#x1F4DD; Generate Round 1 Word draft</button>
+          <span style="font-size:0.65rem;color:#5dcaa5;opacity:0.75;margin-left:10px">Operator workflow: paste Round 1 &rarr; download .doc &rarr; fill in SAP details &rarr; come back for Round 2</span>
+        </div>
+      </div>
+
+      <div class="rrep-section" style="border-color:#0a4d3a; background:rgba(15,110,86,0.08);">
+        <div class="rrep-section-head">
+          <span class="rrep-section-num">4</span>
+          <span>Round 2 &mdash; richer context, final PDF</span>
+          <span class="rrep-section-hint">paste enriched Word content + Rex's Round 2 response</span>
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:0.7rem;color:#5dcaa5;letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:4px">Current SMU reading (hour meter, optional)</label>
+          <input type="text" id="rrep-smu-input" placeholder="e.g. 18923" style="width:200px;padding:8px 10px;background:#050a12;border:1px solid #0f6e56;border-radius:6px;color:#cce8d8;font-family:'Consolas',monospace;font-size:0.78rem;box-sizing:border-box" />
+          <span style="font-size:0.62rem;color:#5dcaa5;opacity:0.65;margin-left:10px">Current SMU since Round 1 (informs Rex if life accumulated meaningfully)</span>
+        </div>
+        <div style="margin-bottom:10px">
+          <label style="font-size:0.7rem;color:#5dcaa5;letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:4px">Enriched Word content from SAP dig</label>
+          <textarea id="rrep-enriched-box" placeholder="Paste the operator-enriched content from the Round 1 Word doc (WO Header details + Notification details + operator notes)..." style="width:100%; min-height:120px; max-height:300px; resize:vertical; padding:12px; font-family:'Consolas','Courier New',monospace; font-size:0.7rem; line-height:1.5; color:#cce8d8; background:#050a12; border:1px solid #0f6e56; border-radius:6px; box-sizing:border-box" oninput="_updateRrepRound2State()"></textarea>
+        </div>
+        <div style="margin-bottom:10px">
+          <button class="rrep-btn" id="rrep-round2-prompt-btn" onclick="generateRound2Prompt()" disabled>&#x1F4CB; Generate Round 2 prompt (copy &rarr; Rex)</button>
+          <span style="font-size:0.62rem;color:#5dcaa5;opacity:0.65;margin-left:10px">Combines original prompt + Round 1 + enriched context + SMU</span>
+        </div>
+        <textarea id="rrep-round2-prompt-box" readonly placeholder="Generated Round 2 prompt will appear here..." style="width:100%; min-height:120px; max-height:250px; resize:vertical; padding:12px; font-family:'Consolas','Courier New',monospace; font-size:0.7rem; line-height:1.5; color:#cce8d8; background:#050a12; border:1px solid #0f6e56; border-radius:6px; box-sizing:border-box; margin-bottom:10px"></textarea>
+        <div style="margin-bottom:10px">
+          <label style="font-size:0.7rem;color:#5dcaa5;letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:4px">Paste Rex's Round 2 response</label>
+          <textarea id="rrep-round2-resp-box" placeholder="Paste Rex's Round 2 response here — this becomes the final PDF content..." style="width:100%; min-height:120px; max-height:300px; resize:vertical; padding:12px; font-family:'Consolas','Courier New',monospace; font-size:0.7rem; line-height:1.5; color:#cce8d8; background:#050a12; border:1px solid #0f6e56; border-radius:6px; box-sizing:border-box" oninput="_updateRrepFinalBtn()"></textarea>
+        </div>
+        <div class="rrep-btn-row">
+          <button class="rrep-btn rrep-btn-primary" id="rrep-final-btn" onclick="generateFinalPDF()" disabled>&#x2705; Done &rarr; Generate Final PDF</button>
         </div>
       </div>
     </div>
