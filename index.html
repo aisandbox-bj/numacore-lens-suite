@@ -6580,13 +6580,21 @@ function _buildUnitRiskBrief(fleet, model, unit) {
     linkedComponents: Array.isArray(p.linkedIds) ? p.linkedIds.length : 0,
     deploy: _readDeployForProject(p.id)
   }));
-  // v4.5 FIX-1 (2026-05-25, paired with Deploy v8.16 fleet-wide WO persistence) —
-  // When this unit has NO Cadence projects, fall back to reading the fleet-wide
-  // WO pool (deploy.knownFleetWOs) and filter by unit FLOC. Unblocks Risk Report
-  // for recovery-repair scoping, pre-PCR planning, and health-check / sales-demo
-  // use cases where there's no scheduled PCR. brief.unitLevelWOs is consumed by
-  // _renderRiskPrompt and _renderRiskReportPDF when present.
-  const unitLevelWOs = (projects.length === 0) ? _readFleetWideWOsForUnit(unit) : null;
+  // v4.5 FIX-1 (2026-05-25, paired with Deploy v8.16 fleet-wide WO persistence)
+  // + FIX-2 (2026-05-25 second-look): the FIX-1 gate "projects.length === 0"
+  // was too narrow. Operator feedback: <em>"these would all have projects that I
+  // cancelled. We have to somehow enable a project to be cancelled and CLEAR
+  // MEMORY (reset to zero) or set to retain memory... neither should influence
+  // the visibility of WO."</em> Cancelled projects (parked or cleared) shouldn't
+  // gate WO visibility. The fleet-wide pool has the same WOs regardless.
+  //
+  // FIX-2: make knownFleetWOs the CANONICAL WO source whenever it has data for
+  // the unit. Per-project knownWOs becomes the fallback only for older JSONs
+  // pre-v8.16. Per-project knownWOs is functionally a derived FLOC-filtered
+  // view of the same IW39 source, so this isn't a data-loss change — only a
+  // routing change. brief.projects is still populated for the PCR table and
+  // gates/cost-gap render paths.
+  const unitLevelWOs = _readFleetWideWOsForUnit(unit);
   return { unit, fleet, model, components, oilSamples, projects, unitMeta, siteContext, unitLevelWOs };
 }
 
@@ -6887,27 +6895,33 @@ function _renderRiskPrompt(brief, freshness) {
     md += '\n### Upcoming PCRs / shutdowns\n\n*(no scheduled projects for this unit)*\n';
   }
   // v4.4 refinement — Work Order activity (last 18 months history per FIX-10 + currently open + cancelled)
-  // Aggregates p.knownWOs across the unit's projects. Note: knownWOs schema today
-  // doesn't carry basic_start_date — so "next 3 months" filter on open WOs is
-  // approximated as "currently in the system (last seen as REL/CRTD)". Precise
-  // scheduled-start filter requires a Deploy v8.15 schema extension.
-  // v4.5 FIX-1 (2026-05-25) — also aggregate brief.unitLevelWOs (fleet-wide
-  // pool fallback) when this unit has no projects. Same row shape, labelled
-  // with "(unit-level)" so Rex can see the source.
+  // v4.5 FIX-1 (2026-05-25) — also aggregate brief.unitLevelWOs (fleet-wide pool)
+  // v4.5 FIX-2 (2026-05-25 second-look) — fleet-wide pool is now the CANONICAL
+  // WO source when available. Per-project knownWOs is the same data filtered by
+  // FLOC, so including both would double-count. Project state (active / cancelled
+  // / parked / cleared) no longer gates WO visibility — operator-driven design
+  // ("neither should influence the visibility of WO"). Per-project path remains
+  // the fallback for older JSONs (pre-v8.16) that don't have knownFleetWOs.
   const allPMs = [];
   const allOpen = [];
   const allCnl = [];
-  brief.projects.forEach(p => {
-    if (!p.deploy) return;
-    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name }, w)));
-    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
-    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
-  });
   if (brief.unitLevelWOs) {
-    const ulLabel = '(unit-level, no PCR)';
+    // Fleet-wide canonical source. Single label for all rows since the source
+    // is unit-level (not project-scoped) — projects table above still shows
+    // per-project context separately.
+    const ulLabel = '(fleet-wide IW39)';
     (brief.unitLevelWOs.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: ulLabel }, w)));
     (brief.unitLevelWOs.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: ulLabel }, w)));
     (brief.unitLevelWOs.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: ulLabel }, w)));
+  } else {
+    // Fallback: per-project knownWOs (older JSONs pre-v8.16, or no fleet-wide
+    // pool exists yet for this unit-FLOC match)
+    brief.projects.forEach(p => {
+      if (!p.deploy) return;
+      (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name }, w)));
+      (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name }, w)));
+      (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name }, w)));
+    });
   }
   // v4.4 + Deploy v8.15 enrichment — show basic_start / completion_date / cost
   // / order_type when the underlying knownWOs entries carry them. Missing values
@@ -7161,21 +7175,24 @@ function _renderRiskReportPDF(brief, parsed) {
   const tierLabel = overallTier ? overallTier.toUpperCase() : 'NOT STATED';
 
   // Aggregate ALL WOs across projects for the citation filter
-  // v4.5 FIX-1 (2026-05-25) — also include brief.unitLevelWOs (fleet-wide
-  // pool fallback) when this unit has no projects, so citation-driven
-  // supporting-docs still works for project-less RA flows.
+  // v4.5 FIX-2 (2026-05-25 second-look) — fleet-wide knownFleetWOs is the
+  // CANONICAL WO source whenever it has data. Per-project knownWOs is the
+  // same data filtered by FLOC — including both would double-count. Project
+  // state no longer gates WO visibility (operator-driven design). Per-project
+  // path remains the fallback for older JSONs pre-v8.16.
   const allPMs = [], allOpen = [], allCnl = [];
-  brief.projects.forEach(p => {
-    if (!p.deploy) return;
-    (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name, _bucket: 'completed' }, w)));
-    (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name, _bucket: 'planning' }, w)));
-    (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name, _bucket: 'cancelled' }, w)));
-  });
   if (brief.unitLevelWOs) {
-    const ulLabel = '(unit-level, no PCR)';
+    const ulLabel = '(fleet-wide IW39)';
     (brief.unitLevelWOs.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: ulLabel, _bucket: 'completed' }, w)));
     (brief.unitLevelWOs.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: ulLabel, _bucket: 'planning' }, w)));
     (brief.unitLevelWOs.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: ulLabel, _bucket: 'cancelled' }, w)));
+  } else {
+    brief.projects.forEach(p => {
+      if (!p.deploy) return;
+      (p.deploy.pmsCompletedRows || []).forEach(w => allPMs.push(Object.assign({ _proj: p.name, _bucket: 'completed' }, w)));
+      (p.deploy.openWORows      || []).forEach(w => allOpen.push(Object.assign({ _proj: p.name, _bucket: 'planning' }, w)));
+      (p.deploy.cancelledRows   || []).forEach(w => allCnl.push(Object.assign({ _proj: p.name, _bucket: 'cancelled' }, w)));
+    });
   }
   const allWOs = allPMs.concat(allOpen).concat(allCnl);
   const citedSet = (parsed.citedWOs instanceof Set) ? parsed.citedWOs : new Set();
