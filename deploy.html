@@ -1256,11 +1256,18 @@ const ALIASES = {
   mfg_part_no:     ['manufacturer part no','mfg part','vpn','vendor part','manufacturer part'],
   open_po:         ['open_po','open po','open po qty','po qty'],
   po_flag:         ['po_flag','po flag'],
-  tot_qty_oh:      ['tot_qty_oh','tot qty oh','total qty oh','total on hand','on hand qty','quantity on hand'],
-  mov_ave_price:   ['movaveprice','mov ave price','moving average price','mov avg price','moving avg'],
-  onhand_loc:      ['onhand_loc','on hand location','storage location','sloc','bin'],
+  // v8.16 FIX-1 (2026-05-25) — operator-stated Inventory Master column defaults
+  // from his standard SAP export. Added: 'unrestricted' (tot_qty_oh),
+  // 'moving price' (mov_ave_price — distinct from the existing 'moving avg' /
+  // 'moving average price'), 'plant' (onhand_loc — SAP plant code is the
+  // operator's location identifier), 'maximum stock level' (mrp_max — neither
+  // 'max stock' nor 'mrp_max' substring-match the operator's literal header).
+  // Auto-match now picks these defaults at upload without operator re-mapping.
+  tot_qty_oh:      ['tot_qty_oh','tot qty oh','total qty oh','total on hand','on hand qty','quantity on hand','unrestricted'],
+  mov_ave_price:   ['movaveprice','mov ave price','moving average price','mov avg price','moving avg','moving price'],
+  onhand_loc:      ['onhand_loc','on hand location','storage location','sloc','bin','plant'],
   mrp_min:         ['mrp_min','mrp min','min stock','reorder point','safety stock min'],
-  mrp_max:         ['mrp_max','mrp max','max stock','reorder ceiling'],
+  mrp_max:         ['mrp_max','mrp max','max stock','reorder ceiling','maximum stock level','maximum stock'],
   mat_grp_descr:   ['mat_grp_descr','material group','mat group','material group descr','class'],
 };
 
