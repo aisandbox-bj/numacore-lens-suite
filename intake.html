@@ -5,14 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NumaCore Intake v8</title>
 <script src="numacore_lib.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- v8.8 FIX-1 (2026-06-10, review P5 Chunk A) — vendored libraries, local-first
+     with CDN fallback. SheetJS upgraded 0.18.5 → 0.20.2: cdnjs froze at 0.18.5;
+     0.19.3+ fixes CVE-2023-30533 (prototype pollution) + CVE-2024-22363 (ReDoS),
+     both triggered by crafted spreadsheets — exactly this tool's input. pdf.js
+     stays at the deliberately-pinned 3.11.174 (v4 = ES modules, no global);
+     only its source moved local. A stray single-file copy of this HTML without
+     the vendor/ folder still works when online via the fallback tags. -->
+<script src="vendor/xlsx.full.min.js"></script>
+<script>if (!window.XLSX) document.write('<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>');</script>
+<script src="vendor/pdf.min.js"></script>
+<script>
+  window.__pdfjsLocal = !!window.pdfjsLib;   // which source won — drives workerSrc below
+  if (!window.pdfjsLib) document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>');
+</script>
 <script>
   // pdf.js worker — v3.11.174 UMD build; exposes window.pdfjsLib as a global.
   // v4+ switched to ES modules and no longer sets the global — stay on v3 until
   // the ingestion code is refactored to use import().
+  // v8.8 FIX-1 — worker source matches wherever the main library loaded from.
   if (window.pdfjsLib) {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = window.__pdfjsLocal
+      ? 'vendor/pdf.worker.min.js'
+      : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 </script>
 <style>
@@ -1237,7 +1252,7 @@ function updateClientScopeLabels() {
   const code = (state.clientCode || '').trim() || '(default)';
   const labels = document.querySelectorAll('[data-client-scope-label]');
   labels.forEach(el => {
-    el.innerHTML = `for client: <code>${code}</code>`;
+    el.innerHTML = `for client: <code>${esc(code)}</code>`;   // v8.8 FIX-2
   });
 }
 
@@ -1383,7 +1398,7 @@ function loadSourceFile(file) {
       state.workbook = XLSX.read(data, { type: 'array', cellDates: true });
       const dz = document.getElementById('dropZone');
       dz.classList.add('loaded');
-      dz.innerHTML = `<div class="drop-icon">✅</div><p><strong>${file.name}</strong> — ${state.workbook.SheetNames.length} sheets loaded</p>`;
+      dz.innerHTML = `<div class="drop-icon">✅</div><p><strong>${esc(file.name)}</strong> — ${state.workbook.SheetNames.length} sheets loaded</p>`;  // v8.8 FIX-2 — esc file name
       state.buildStep = 2;
       showBuildStep(2);
       renderStepFlow();
@@ -1404,12 +1419,15 @@ function renderSheetList() {
   const wb = state.workbook;
   if (!wb) return;
   const container = document.getElementById('sheetList');
-  container.innerHTML = wb.SheetNames.map(name => {
+  container.innerHTML = wb.SheetNames.map((name, _si) => {
     const ws = wb.Sheets[name];
     const range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
     const rows = range ? range.e.r - range.s.r : 0;
     const isPreferred = /prediction|component|pcr/i.test(name);
-    return `<div class="sheet-pill${isPreferred ? ' selected' : ''}" onclick="selectSheet('${name.replace(/'/g,"\\'")}',this)">
+    // v8.8 FIX-2 — pass the sheet INDEX, not the name, into the handler. The old
+    // quote-splice only escaped single quotes inside a double-quoted attribute —
+    // a sheet named  x" onmouseover="…  injected an attribute (review P5).
+    return `<div class="sheet-pill${isPreferred ? ' selected' : ''}" onclick="selectSheetByIdx(${_si},this)">
       ${esc(name)}<span class="sheet-rows">${rows} rows</span>
     </div>`;
   }).join('');
@@ -1417,6 +1435,13 @@ function renderSheetList() {
   // Auto-select preferred
   const preferred = wb.SheetNames.find(n => /prediction|component|pcr/i.test(n)) || wb.SheetNames[0];
   selectSheet(preferred, null);
+}
+
+// v8.8 FIX-2 — index-based wrapper for the sheet pills (names never enter JS-string context)
+function selectSheetByIdx(i, el) {
+  const wb = state.workbook;
+  if (!wb || !wb.SheetNames[i]) return;
+  selectSheet(wb.SheetNames[i], el);
 }
 
 function selectSheet(name, el) {
@@ -1624,7 +1649,7 @@ function populateProfileDropdown() {
     if (!sel) return;
     const names = Object.keys(state.profiles);
     sel.innerHTML = '<option value="">— No profile (manual mapping) —</option>' +
-      names.map(n => `<option value="${n}">${n}</option>`).join('');
+      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');  // v8.8 FIX-2 — esc profile names
   });
 }
 
@@ -1947,10 +1972,10 @@ function renderUnitsTable() {
       <th>Unit ID</th><th>FLOC (ERP Key)</th><th>Fleet</th><th>Model</th><th>Status</th><th>Exp. Life Hrs</th>
     </tr></thead>
     <tbody>${state.units.map(u => `<tr>
-      <td style="font-weight:600;color:#fff">${u.id}</td>
-      <td><input type="text" value="${(state.unitEdits[u.id]?.floc) || u.floc}" onchange="editUnit('${u.id}','floc',this.value)" style="width:110px"></td>
-      <td><span class="badge badge-blue">${u.fleet_id}</span></td>
-      <td>${u.model}</td>
+      <td style="font-weight:600;color:#fff">${esc(u.id)}</td>
+      <td><input type="text" value="${esc((state.unitEdits[u.id]?.floc) || u.floc)}" onchange="editUnit('${esc(u.id)}','floc',this.value)" style="width:110px"></td>
+      <td><span class="badge badge-blue">${esc(u.fleet_id)}</span></td>
+      <td>${esc(u.model)}</td>
       <td><select onchange="editUnit('${u.id}','status',this.value)">
         <option value="active"${(state.unitEdits[u.id]?.status||u.status)==='active'?' selected':''}>Active</option>
         <option value="standby"${(state.unitEdits[u.id]?.status||u.status)==='standby'?' selected':''}>Standby</option>
@@ -1973,15 +1998,15 @@ function renderComponentsTable() {
       const benchOk = c.benchmark > 0;
       const installOk = !!c.install_date;
       return `<tr>
-        <td style="font-weight:600">${c.unit_id}</td>
-        <td style="color:#fff">${c.name}</td>
-        <td><span class="badge badge-grey">${c.category}</span></td>
+        <td style="font-weight:600">${esc(c.unit_id)}</td>
+        <td style="color:#fff">${esc(c.name)}</td>
+        <td><span class="badge badge-grey">${esc(c.category)}</span></td>
         <td><select onchange="editComp('${c.id}','replacement_strategy',this.value)" style="width:140px">
           <option value="usage_based"${strat==='usage_based'?' selected':''}>Usage-based</option>
           <option value="condition_based"${strat==='condition_based'?' selected':''}>Condition-based</option>
         </select></td>
         <td><span class="${benchOk?'badge badge-green':'badge badge-red'}">${c.benchmark||'—'}</span></td>
-        <td>${c.install_date||'<span style="color:var(--red)">—</span>'}</td>
+        <td>${c.install_date ? esc(c.install_date) : '<span style="color:var(--red)">—</span>'}</td>
         <td>${c.install_hours||0}</td>
         <td>${c.last_smu||0}</td>
         <td>${c.cost ? '$'+c.cost.toLocaleString() : '<span style="color:var(--text3)">—</span>'}</td>
@@ -2000,8 +2025,8 @@ function renderFleetsTable() {
     <tbody>${state.fleets.map(f => {
       const unitCount = state.units.filter(u => u.fleet_id === f.id).length;
       return `<tr>
-        <td style="font-weight:600;color:var(--gold)">${f.id}</td>
-        <td><input type="text" value="${state.fleetEdits[f.id]?.name||f.name}" onchange="editFleet('${f.id}','name',this.value)" style="width:180px"></td>
+        <td style="font-weight:600;color:var(--gold)">${esc(f.id)}</td>
+        <td><input type="text" value="${esc(state.fleetEdits[f.id]?.name||f.name)}" onchange="editFleet('${esc(f.id)}','name',this.value)" style="width:180px"></td>
         <td><select onchange="editFleet('${f.id}','type',this.value)">
           ${FLEET_TYPES.map(t => `<option value="${t}"${(state.fleetEdits[f.id]?.type||f.type)===t?' selected':''}>${t}</option>`).join('')}
         </select></td>
@@ -2419,7 +2444,7 @@ function loadUpdateFile(file) {
       state.updateWorkbook = XLSX.read(data, { type: 'array', cellDates: true });
       const dz = document.getElementById('dropZoneUpdate');
       dz.classList.add('loaded');
-      dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${file.name}</strong></p>`;
+      dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${esc(file.name)}</strong></p>`;  // v8.8 FIX-2 — esc file name
       populateUpdateSheets();
       checkUpdateReady();
     } catch(err) { alert('Error reading file: ' + err.message); }
@@ -3615,7 +3640,7 @@ function renderDiffReport(diff) {
         </div>`;
     }).join('');
 
-    return `<div class="diff-unit-block" data-unit="${unitId}"
+    return `<div class="diff-unit-block" data-unit="${esc(unitId)}"
         style="border-left:3px solid ${unitBorderColor};margin:6px 8px;border-radius:4px;overflow:hidden;border-top:1px solid var(--border);border-right:1px solid var(--border);border-bottom:1px solid var(--border)">
         <div style="padding:8px 14px;background:var(--bg4);display:flex;justify-content:space-between;align-items:center;cursor:pointer"
           onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">

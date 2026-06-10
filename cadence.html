@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cadence v18 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
+     Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
+     0.18.5). Cadence is the suite's only Excel WRITER — export regression verified. -->
+<script src="vendor/xlsx.full.min.js"></script>
+<script>if (!window.XLSX) document.write('<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>');</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:#e6edf3;height:100vh;overflow:hidden;display:flex;flex-direction:column}
@@ -1357,7 +1361,7 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.6';             // display/labels only — v18.6 ITEM-D: storage keys no longer embed VERSION
+const VERSION  = '18.7';             // display/labels only — v18.6 ITEM-D: storage keys no longer embed VERSION
 // SAVE_KEY is scoped to clientCode to prevent cross-client state bleed.
 // v18.6 ITEM-D — keys are now VERSION-FREE (matches the Deploy/Intake/Lens convention).
 // Pre-v18.6, every version bump silently orphaned all per-client autosaves and reset
@@ -1639,7 +1643,7 @@ function _updateAuditSummaryInConfig() {
 function _treeComponentCtxMenu(e, rec) {
   e.preventDefault();
   showPopup(
-    `Reset override for <strong>${rec.unit||''} / ${rec.component||''}</strong>?<br>
+    `Reset override for <strong>${esc(rec.unit||'')} / ${esc(rec.component||'')}</strong>?<br>
      <span style="color:#8b949e;font-size:11px">Solid will snap to the shadow date (${rec.original_date||'—'}). SAVE FILE to persist to the JSON.</span>`,
     [
       { label: 'Reset', cls: 'danger', action: () => {
@@ -1890,7 +1894,9 @@ function renderOverrideAudit() {
     visibleCount += fM;
   });
   countEl.textContent = `Showing ${visibleCount.toLocaleString()} of ${state.fileOverrideIds.size.toLocaleString()} entries · ${totalLinked.toLocaleString()} linked · ${totalOrphan.toLocaleString()} orphan`;
-  const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // v18.7 C3 — folded into the shared esc() (was a 4-char private twin; one escaping
+  // function per file). Alias kept so the audit panel's ~20 call sites stay untouched.
+  const _esc = esc;
   let html = '<table class="audit-tbl"><thead><tr>'
     + '<th class="checkbox-cell"></th>'
     + '<th>Hierarchy</th><th>Shadow</th><th>Solid</th><th>Status</th><th></th>'
@@ -2274,9 +2280,11 @@ function xToDateFree(x) {
   return d.toISOString().split('T')[0];
 }
 // v17.1: esc sourced from numacore_lib.js with inline fallback for resilience
+// v18.7 C3 — fallback now escapes single quotes too (5-char parity with the lib;
+// the 4-char divergent twin left single-quoted attr contexts open if the lib failed to load).
 const esc = (window.NumaCoreLib && NumaCoreLib.esc) || function(s) {
   return String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 };
 function fmtMonthYear(ds) {
   const d = new Date(ds + 'T00:00:00');
@@ -2411,9 +2419,9 @@ function renderTree() {
     const style = row.type==='component' ? `color:${row.color}` : '';
     const rec   = row.type==='component' ? state.data.find(d=>d.id===row.recordId) : null;
     const changed = rec && rec.changeout_date !== rec.original_date;
-    let labelInner = row.label;
+    let labelInner = esc(row.label);   // v18.7 C2 — every tree row renders a client-derived name
     if (row.type === 'component' && rec && rec.benchmark) {
-      labelInner = `<span class="bench-prefix">${rec.benchmark.toLocaleString()}hr - </span>${row.label}`;
+      labelInner = `<span class="bench-prefix">${rec.benchmark.toLocaleString()}hr - </span>${esc(row.label)}`;   // v18.7 C2
     }
     // A4 — last_smu warning badge: flag data anomaly where current SMU < install hours
     if (row.type === 'component' && rec && rec.last_smu != null && rec.install_hours != null && rec.last_smu < rec.install_hours) {
@@ -2446,7 +2454,7 @@ function renderTree() {
           const _d = new Date(maxRec.last_read);
           dateTag = ` | ${_mn[_d.getUTCMonth()]}-${String(_d.getUTCFullYear()).slice(2)}`;
         }
-        labelInner = `${row.label}<span class="unit-smu-tag">${maxRec.last_smu.toLocaleString()}${dateTag}</span>`;
+        labelInner = `${esc(row.label)}<span class="unit-smu-tag">${maxRec.last_smu.toLocaleString()}${dateTag}</span>`;   // v18.7 C2
       }
     }
     // v18.5 — P / Lock state icons for component rows. Mutually exclusive:
@@ -2456,8 +2464,8 @@ function renderTree() {
     if (row.type === 'component' && rec) {
       const _linkedProj = _linkedIdToProj.get(rec.id);
       if (_linkedProj) {
-        const _name = String(_linkedProj.name || _linkedProj.id || '').replace(/"/g, '&quot;');
-        const _id   = String(_linkedProj.id   || '').replace(/"/g, '&quot;');
+        const _name = esc(_linkedProj.name || _linkedProj.id || '');   // v18.7 C2 — was "-only replace
+        const _id   = esc(_linkedProj.id   || '');
         const _ttl  = (_name && _id && _name !== _id)
           ? `Linked to project: ${_name} (${_id}). Solid date is held by this project.`
           : `Linked to project: ${_name || _id || '(unnamed)'}. Solid date is held by this project.`;
@@ -2760,10 +2768,10 @@ function addTooltip(el, r) {
   el.addEventListener('mouseenter', e => {
     const changed = r.changeout_date !== r.original_date;
     tip.innerHTML = `
-      <div class="tooltip-title" style="color:${r.color}">${r.component}</div>
-      <div class="tooltip-row"><span class="tt-label">Unit</span><span class="tt-val">${r.unit} (${r.model})</span></div>
-      <div class="tooltip-row"><span class="tt-label">Fleet</span><span class="tt-val">${r.fleet}</span></div>
-      <div class="tooltip-row"><span class="tt-label">Cost</span><span class="tt-val">$${r.cost.toLocaleString()}</span></div>
+      <div class="tooltip-title" style="color:${r.color}">${esc(r.component)}</div>
+      <div class="tooltip-row"><span class="tt-label">Unit</span><span class="tt-val">${esc(r.unit)} (${esc(r.model)})</span></div>
+      <div class="tooltip-row"><span class="tt-label">Fleet</span><span class="tt-val">${esc(r.fleet)}</span></div>
+      <div class="tooltip-row"><span class="tt-label">Cost</span><span class="tt-val">$${(r.cost || 0).toLocaleString()}</span></div>
       <div class="tooltip-row"><span class="tt-label">Installed</span><span class="tt-val">${fmtDate(r.install_date)}</span></div>
       <div class="tooltip-row"><span class="tt-label">${changed?'Revised':'Predicted'}</span>
         <span class="tt-val" style="${changed?'color:#e3b341':''}">${fmtDate(r.changeout_date)}</span></div>
@@ -2913,7 +2921,7 @@ function addDrag(el, r, wrap, cy, uKey) {
       // Component is linked — check if dragged outside project window
       if (newDate < linkedProj.start_date || newDate > linkedProj.end_date) {
         showPopup(
-          `<strong>${rec.component}</strong> was moved outside its project window.<br>Break the link to this project?`,
+          `<strong>${esc(rec.component)}</strong> was moved outside its project window.<br>Break the link to this project?`,
           [
             { label: 'Break Link', cls: 'danger', action: () => {
                 breakLink(rec.id);
@@ -3124,7 +3132,7 @@ function attemptLink(rec, proj, wrap, cy) {
       render(); renderConnectors(); return;
     }
     showPopup(
-      `<strong>${rec.component}</strong> is already linked to project <strong>${existingProj.id}</strong>.<br>Break that link and attach to <strong>${proj.id}</strong>?`,
+      `<strong>${esc(rec.component)}</strong> is already linked to project <strong>${esc(existingProj.id)}</strong>.<br>Break that link and attach to <strong>${esc(proj.id)}</strong>?`,
       [
         { label: `Link to ${proj.id}`, cls:'primary', action:()=>{ breakLinkSilent(rec.id); doLink(rec, proj, wrap, cy); }},
         { label: 'Cancel', action:()=>{ rec.changeout_date = existingProj.start_date; render(); renderConnectors(); }}
@@ -3182,7 +3190,7 @@ function removeProject(projId) {
   const proj = state.projects.find(p => p.id === projId);
   if (!proj) return;
   showPopup(
-    `Remove ${termLower()} <strong>${proj.name||projId}</strong>?<br>All component links will be broken.`,
+    `Remove ${termLower()} <strong>${esc(proj.name||projId)}</strong>?<br>All component links will be broken.`,
     [
       { label: 'Remove', cls:'danger', action:()=>{
           logEvent('PROJECT_REMOVE', `${termLabel()} "${proj.name||projId}" removed`, projId, {name:proj.name,start:proj.start_date,end:proj.end_date,links:proj.linkedIds.length}, null);
@@ -3301,17 +3309,17 @@ function _buildProjTip(proj) {
   const compRows = comps.map(c =>
     `<div class="tip-comp-row">
        <span style="width:6px;height:6px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);background:${c.color||color};flex-shrink:0;display:inline-block"></span>
-       <span>${c.component}</span>
+       <span>${esc(c.component)}</span>
        <span class="tip-comp-row-date">${c.changeout_date ? fmtDate(c.changeout_date) : '—'}</span>
      </div>`
   ).join('');
   return `
     <div style="font-weight:700;color:${color};font-size:12px;border-bottom:1px solid #30363d;padding-bottom:5px;margin-bottom:5px;display:flex;align-items:center">
-      <span style="flex:1">${proj.name || proj.id}</span>
+      <span style="flex:1">${esc(proj.name || proj.id)}</span>
       <button class="tip-close" id="_tipCloseBtn">&#10005;</button>
     </div>
-    <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Unit</span><span style="font-size:11px;font-weight:600">${proj.unit || '—'}</span></div>
-    <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Fleet</span><span style="font-size:11px">${proj.fleet || '—'}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Unit</span><span style="font-size:11px;font-weight:600">${esc(proj.unit || '—')}</span></div>
+    <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Fleet</span><span style="font-size:11px">${esc(proj.fleet || '—')}</span></div>
     <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Duration</span><span style="font-size:11px">${Math.round((new Date(proj.end_date)-new Date(proj.start_date))/86400000)} days</span></div>
     <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">Start</span><span style="font-size:11px">${proj.start_date}</span></div>
     <div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0"><span style="color:#8b949e;font-size:10px">End</span><span style="font-size:11px">${proj.end_date}</span></div>
@@ -3627,10 +3635,10 @@ function renderProjectList() {
     tr.dataset.projId = proj.id;
     tr.innerHTML = `
       <td><span class="proj-expand-btn" style="transform:rotate(${isOpen?90:0}deg)">▶</span></td>
-      <td><span class="proj-fleet-dot" style="background:${proj.color}"></span>${proj.fleet}</td>
-      <td>${proj.model}</td>
-      <td>${proj.unit}</td>
-      <td class="proj-id-cell" title="${proj.name||proj.id}">${proj.flagged?'<span style="color:#fbbf24;filter:drop-shadow(0 0 3px rgba(251,191,36,.9));margin-right:4px">★</span>':''}${proj.name||proj.id}</td>
+      <td><span class="proj-fleet-dot" style="background:${proj.color}"></span>${esc(proj.fleet)}</td>
+      <td>${esc(proj.model)}</td>
+      <td>${esc(proj.unit)}</td>
+      <td class="proj-id-cell" title="${esc(proj.name||proj.id)}">${proj.flagged?'<span style="color:#fbbf24;filter:drop-shadow(0 0 3px rgba(251,191,36,.9));margin-right:4px">★</span>':''}${esc(proj.name||proj.id)}</td>
       <td>${fmtDate(proj.start_date)}</td>
       <td>${fmtDate(proj.end_date)}</td>
       <td>${days}d</td>
@@ -3676,7 +3684,7 @@ function renderProjectList() {
                            : fmtDate(rec.changeout_date);
         const catLabel = LABELS[rec.category] || rec.category;
         return `<tr>
-          <td><span style="color:${rec.color}">■</span> ${rec.component}</td>
+          <td><span style="color:${rec.color}">■</span> ${esc(rec.component)}</td>
           <td style="color:#8b949e">${catLabel}</td>
           <td>${rec.install_date ? fmtDate(rec.install_date) : '—'}</td>
           <td>${rec.install_hours != null ? rec.install_hours.toLocaleString() : '—'}</td>
@@ -4517,7 +4525,10 @@ function generateExports() {
   XLSX.utils.book_append_sheet(wb, wsPred,   'Predictions');
   XLSX.utils.book_append_sheet(wb, wsBudget, 'Budget Summary');
   XLSX.utils.book_append_sheet(wb, wsProj,   'Projects');
-  XLSX.utils.book_append_sheet(wb, wsHist,   'History');
+  // v18.7 C1 — sheet renamed: 'History' is RESERVED by Excel (track-changes sheet).
+  // SheetJS 0.18.5 tolerated it; 0.20.x enforces Excel's rule and throws. Caught by
+  // the write-side regression fixture during the vendoring upgrade.
+  XLSX.utils.book_append_sheet(wb, wsHist,   'Component History');
   XLSX.utils.book_append_sheet(wb, wsCR,     'Change Register');
 
   const clientCode = (_meta && _meta.clientCode) ? _meta.clientCode.replace(/[^A-Z0-9_]/gi,'_') : 'CLIENT';

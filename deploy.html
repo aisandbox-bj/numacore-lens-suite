@@ -1143,7 +1143,12 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 <!-- ══════════════════════════════════════════════════
      SCRIPTS
 ══════════════════════════════════════════════════ -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- v8.17 FIX-1 (2026-06-10, review P5 Chunk A) — vendored SheetJS, local-first with
+     CDN fallback. Upgraded 0.18.5 → 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed;
+     cdnjs froze at 0.18.5). Dealer/SAP workbooks are this tool's input — the parser
+     no longer depends on a third-party CDN at runtime. -->
+<script src="vendor/xlsx.full.min.js"></script>
+<script>if (!window.XLSX) document.write('<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>');</script>
 <script>
 'use strict';
 
@@ -6363,7 +6368,10 @@ function hexToRgb(hex) {
 }
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 // v8.1: esc sourced from numacore_lib.js with inline fallback for resilience
-const esc = (window.NumaCoreLib && NumaCoreLib.esc) || function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+// v8.17 FIX-2 (review P5) — fallback now escapes single quotes too, verbatim with the
+// lib's 5-char version. The 4-char divergent twin left single-quoted inline-handler
+// contexts open if numacore_lib.js ever failed to load (the case the fallback exists for).
+const esc = (window.NumaCoreLib && NumaCoreLib.esc) || function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); };
 function fmtDate(d) {
   if (!d) return '—';
   try { return new Date(d).toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'}); } catch(_) { return d; }

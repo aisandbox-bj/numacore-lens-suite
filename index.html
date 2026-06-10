@@ -2810,7 +2810,7 @@ function renderCanvasHero(fleet, model, unit) {
   heroEl.innerHTML =
     '<div id="ch-image-wrap">' +
       imgHtml +
-      '<div class="ch-unit-badge">' + unit + '</div>' +
+      '<div class="ch-unit-badge">' + esc(unit) + '</div>' +   /* v4.7 FIX-1 — esc */
     '</div>' +
     // v4.3.3 (Ship 4) \u2014 tile grid re-organised per operator's 2026-05-13 review.
     // 4 single-col rows + 1 spanning row. LEFT column (operator's spec): SMU,
@@ -2826,7 +2826,7 @@ function renderCanvasHero(fleet, model, unit) {
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Worst Health</div>' +
         '<div class="hmc-value hmc-' + worstColor + '">' + worstPct + '</div>' +
-        '<div class="hmc-sub">' + (worst ? worst.component : '\u2014') + '</div>' +
+        '<div class="hmc-sub">' + (worst ? esc(worst.component) : '\u2014') + '</div>' +   /* v4.7 FIX-1 \u2014 esc */
       '</div>' +
       // Row 2 \u2014 Idling % (life) | Active Projects (where SMU used to be)
       // v4.3.4 (Ship 5) — operator-spec colour bands on idle tiles.
@@ -2850,7 +2850,7 @@ function renderCanvasHero(fleet, model, unit) {
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Next PCR</div>' +
         '<div class="hmc-value">' + nextPCRDate + '</div>' +
-        (nextPCRSub ? '<div class="hmc-sub">' + nextPCRSub + '</div>' : '') +
+        (nextPCRSub ? '<div class="hmc-sub">' + esc(nextPCRSub) + '</div>' : '') +   /* v4.7 FIX-1 — esc */
       '</div>' +
       // Row 4 \u2014 Util % | Components
       // v4.3.6 (Ship 11) \u2014 operator-spec colour bands on Util % tile: <40 orange,
@@ -2952,8 +2952,8 @@ function renderConMonTile(unit_id) {
       '<div class="cm-sample-row" data-gk="' + encodeURIComponent(gk) + '">' +
         '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
         '<div class="cm-row-info">' +
-          '<span class="cm-row-target">' + target + loc + '</span>' +
-          '<span class="cm-row-meta">' + meta + '</span>' +
+          '<span class="cm-row-target">' + esc(target) + esc(loc) + '</span>' +   /* v4.7 FIX-1 — esc */
+          '<span class="cm-row-meta">' + esc(meta) + '</span>' +
         '</div>' +
         trendHtml +
         '<span class="cm-row-arrow">›</span>' +
@@ -3687,11 +3687,11 @@ function buildCrumbs(fleet,model,unit){
   function makeConn(){ const d=document.createElement('div');d.className='crumb-connector';return d; }
   container.appendChild(makeNode('crumb-site','MINE<br>SITE',()=>renderFleet()));
   container.appendChild(makeConn());
-  container.appendChild(makeNode('crumb-fleet',(FLEET_ICONS[fleet]||'🔧')+'<br>'+fleet,()=>selectFleet(fleet)));
+  container.appendChild(makeNode('crumb-fleet',(FLEET_ICONS[fleet]||'🔧')+'<br>'+esc(fleet),()=>selectFleet(fleet)));   // v4.7 FIX-1 — esc
   container.appendChild(makeConn());
-  container.appendChild(makeNode('crumb-model',model,()=>selectModel(fleet,model)));
+  container.appendChild(makeNode('crumb-model',esc(model),()=>selectModel(fleet,model)));
   container.appendChild(makeConn());
-  container.appendChild(makeNode('crumb-unit',unit,null));
+  container.appendChild(makeNode('crumb-unit',esc(unit),null));
 }
 
 // DR-002: Position machine image in anchor, centred in the left canvas area
@@ -3859,8 +3859,8 @@ function openCompDrill(fleet, model, unit, c) {
   document.getElementById('cd-body').innerHTML =
     '<div class="cd-row"><span class="cd-label">Life used</span><span class="cd-val">' + pct + '%</span></div>' +
     '<div class="cd-row"><span class="cd-label">Hours</span><span class="cd-val">' + eH + ' / ' + bn + '</span></div>' +
-    '<div class="cd-row"><span class="cd-label">Installed</span><span class="cd-val">' + (c.install_date || '—') + '</span></div>' +
-    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + (c.pred_changeout || '—') + '</span></div>';
+    '<div class="cd-row"><span class="cd-label">Installed</span><span class="cd-val">' + esc(c.install_date || '—') + '</span></div>' +   /* v4.7 FIX-1 — esc */
+    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + esc(c.pred_changeout || '—') + '</span></div>';
   document.getElementById('comp-drill-overlay').classList.add('open');
 }
 
@@ -4948,10 +4948,10 @@ function renderVtUnitList() {
         const active = (vtState.selectedUnit === unit && vtState.selectedFleet === fleet)
           ? ' vtu-active' : '';
         html += `<div class="vtu-card${active}"
-          data-fleet="${fleet}" data-model="${model}" data-unit="${unit}"
-          onclick="selectVtUnit('${fleet.replace(/'/g,"\\'")}','${model.replace(/'/g,"\\'")}','${unit.replace(/'/g,"\\'")}')">
-          <div class="vtu-unit">${unit}</div>
-          <div class="vtu-meta">${model}</div>
+          data-fleet="${esc(fleet)}" data-model="${esc(model)}" data-unit="${esc(unit)}"
+          onclick="selectVtUnit('${esc(fleet.replace(/'/g,"\\'"))}','${esc(model.replace(/'/g,"\\'"))}','${esc(unit.replace(/'/g,"\\'"))}')">
+          <div class="vtu-unit">${esc(unit)}</div>
+          <div class="vtu-meta">${esc(model)}</div>
           <span class="vtu-badge ${worst}">${worst.toUpperCase()}</span>
         </div>`;
       }
@@ -5084,18 +5084,18 @@ function openVtDetail(cat) {
     const estHrs = c.est_hours ? c.est_hours.toLocaleString() + ' hrs' : '—';
     const bench  = c.benchmark ? c.benchmark.toLocaleString() + ' hrs' : '—';
     html += `<div class="vtd-row vtd-${cl}">
-      <div class="vtd-comp">${c.component || '—'}</div>
+      <div class="vtd-comp">${esc(c.component || '—')}</div>
       <span class="vtd-pct ${cl}">${pctStr}</span>
       <div class="vtd-meta">
         <span>Life used: ${estHrs}</span>
         <span>Benchmark: ${bench}</span>
-        <span>Pred. changeout: ${c.pred_changeout || '—'}</span>
-        <span>Position: ${c.position || '—'}</span>
-        ${c.part_number ? `<span>Part #: ${c.part_number}</span>` : ''}
-        ${c.replacement_strategy ? `<span>Strategy: ${c.replacement_strategy}</span>` : ''}
-        ${c.notes ? `<span class="vtd-notes">${c.notes}</span>` : ''}
+        <span>Pred. changeout: ${esc(c.pred_changeout || '—')}</span>
+        <span>Position: ${esc(c.position || '—')}</span>
+        ${c.part_number ? `<span>Part #: ${esc(c.part_number)}</span>` : ''}
+        ${c.replacement_strategy ? `<span>Strategy: ${esc(c.replacement_strategy)}</span>` : ''}
+        ${c.notes ? `<span class="vtd-notes">${esc(c.notes)}</span>` : ''}
       </div>
-    </div>`;
+    </div>`;   /* v4.7 FIX-1 — esc (these legacy views render hidden but still EXECUTE on every renderVitals) */
   });
   bodyEl.innerHTML = html || '<div class="vt-empty">No components in this category</div>';
   panel.classList.add('open');
@@ -5433,11 +5433,13 @@ function renderFleetCol() {
         const icon  = FLEET_ICONS[f] || '\u{1F527}';
         const count = Object.values(FLEET_DATA[f] || {}).reduce((s,m)=>s+Object.keys(m).length,0);
         const fs = f.replace(/'/g,"\\'");
-        return `<div class="fc-item fc-fleet fc-${wc}" onclick="fcSelectFleet('${fs}')">
+        /* v4.7 FIX-1 — esc(): display names HTML-escaped; handler args get splice (JS
+           context) + esc (attribute context) so neither quote type can break out. */
+        return `<div class="fc-item fc-fleet fc-${wc}" onclick="fcSelectFleet('${esc(fs)}')">
           <span class="fc-status-dot" style="background:${getHex(wc)}"></span>
           <span class="fc-icon">${icon}</span>
           <div class="fc-item-body">
-            <div class="fc-item-name">${f}</div>
+            <div class="fc-item-name">${esc(f)}</div>
             <div class="fc-item-meta">${count} units</div>
           </div>
         </div>`;
@@ -5456,10 +5458,10 @@ function renderFleetCol() {
       const count = Object.keys(FLEET_DATA[f][m] || {}).length;
       const fs = f.replace(/'/g,"\\'");
       const ms = m.replace(/'/g,"\\'");
-      return `<div class="fc-item fc-model fc-${wc}" onclick="fcSelectModel('${fs}','${ms}')">
+      return `<div class="fc-item fc-model fc-${wc}" onclick="fcSelectModel('${esc(fs)}','${esc(ms)}')">
         <span class="fc-status-dot" style="background:${getHex(wc)}"></span>
         <div class="fc-item-body">
-          <div class="fc-item-name">${m}</div>
+          <div class="fc-item-name">${esc(m)}</div>
           <div class="fc-item-meta">${count} units</div>
         </div>
       </div>`;
@@ -5482,19 +5484,19 @@ function renderFleetCol() {
           ? ((typeof mmState!=='undefined' && mmState.unit===u && mmState.fleet===f && mmState.model===m) ? ' fc-vtu-active' : '')
           : ((typeof vtState!=='undefined' && vtState.selectedUnit===u && vtState.selectedFleet===f && vtState.selectedModel===m) ? ' fc-vtu-active' : '');
         const fs=f.replace(/'/g,"\\'"), ms=m.replace(/'/g,"\\'"), us=u.replace(/'/g,"\\'");
-        return `<div class="fc-vtu-card${isActive}" onclick="fcVitalsUnitClick('${fs}','${ms}','${us}')">
-          <div class="fc-vtu-unit">${u}</div>
-          <div class="fc-vtu-meta">${m} &middot; <span style="color:${getHex(wc)}">${wc}</span></div>
-        </div>`;
+        return `<div class="fc-vtu-card${isActive}" onclick="fcVitalsUnitClick('${esc(fs)}','${esc(ms)}','${esc(us)}')">
+          <div class="fc-vtu-unit">${esc(u)}</div>
+          <div class="fc-vtu-meta">${esc(m)} &middot; <span style="color:${getHex(wc)}">${wc}</span></div>
+        </div>`;   /* v4.7 FIX-1 — esc */
       }).join('');
     } else {
       itemsEl.innerHTML = filtered.map(u => {
         const wc = unitWorstColor(u, m, f);
         const fs=f.replace(/'/g,"\\'"), ms=m.replace(/'/g,"\\'"), us=u.replace(/'/g,"\\'");
-        return `<div class="fc-item fc-unit fc-${wc}" onclick="fcSelectUnit('${fs}','${ms}','${us}')">
+        return `<div class="fc-item fc-unit fc-${wc}" onclick="fcSelectUnit('${esc(fs)}','${esc(ms)}','${esc(us)}')">
           <span class="fc-status-dot" style="background:${getHex(wc)}"></span>
-          <div class="fc-item-body"><div class="fc-item-name">${u}</div></div>
-        </div>`;
+          <div class="fc-item-body"><div class="fc-item-name">${esc(u)}</div></div>
+        </div>`;   /* v4.7 FIX-1 — esc */
       }).join('');
     }
   }
@@ -5872,7 +5874,7 @@ function buildHmSelector() {
     fleetDiv.className = 'hm-fleet-item' + (isExpanded ? ' active expanded' : '');
     fleetDiv.dataset.fleet = f;
     fleetDiv.innerHTML = '<span class="hm-fleet-icon">' + (FLEET_ICONS[f] || '&#x1F527;') + '</span>' +
-      '<span class="hm-fleet-label">' + f + '</span>' +
+      '<span class="hm-fleet-label">' + esc(f) + '</span>' +   /* v4.7 FIX-1 — esc */
       '<span class="hm-expand-arrow">&#x25BA;</span>';
     const modelList = document.createElement('div');
     modelList.className = 'hm-model-list' + (isExpanded ? ' open' : '');
@@ -5881,7 +5883,7 @@ function buildHmSelector() {
       const isActiveModel = hmState.fleet === f && hmState.model === m;
       mDiv.className = 'hm-model-item' + (isActiveModel ? ' active' : '');
       const hex = getHex(modelWorstColor(m, f));
-      mDiv.innerHTML = '<span class="hm-model-dot" style="background:' + hex + '55;border:1px solid ' + hex + '"></span>' + m;
+      mDiv.innerHTML = '<span class="hm-model-dot" style="background:' + hex + '55;border:1px solid ' + hex + '"></span>' + esc(m);   /* v4.7 FIX-1 — esc */
       mDiv.onclick = function(e) { e.stopPropagation(); selectHmModel(f, m); };
       modelList.appendChild(mDiv);
     });
@@ -6609,7 +6611,7 @@ function _renderRiskSignals(brief, freshness) {
     { lbl: 'PMs done (4mo)',        val: totalPMs },
     { lbl: 'Cancelled',             val: totalCnl }
   ];
-  const html = stats.map(s => '<div class="rrep-sig-stat"><div class="lbl">' + s.lbl + '</div><div class="val">' + s.val + '</div></div>').join('');
+  const html = stats.map(s => '<div class="rrep-sig-stat"><div class="lbl">' + s.lbl + '</div><div class="val">' + esc(s.val) + '</div></div>').join('');   /* v4.7 FIX-1 — esc (values can carry component names) */
   document.getElementById('rrep-signals').innerHTML = html;
 }
 
