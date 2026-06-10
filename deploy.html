@@ -1526,7 +1526,20 @@ function startApp() {
   // Restore call horizon from saved deploy data (DOM is ready at this point)
   if (deploy.callHorizonMonths) setCallHorizon(deploy.callHorizonMonths);
   renderSidebar();
-  setLandingView('gantt');
+  // v8.16 FIX-3 (2026-06-10, operator-reported) — view preservation on re-ingest.
+  // Lens re-pushes the fleet on EVERY Deploy tab re-activation (Mission Control),
+  // which re-runs startApp. The unconditional setLandingView('gantt') here
+  // re-showed the fleet Gantt WITHOUT hiding an open project detail — both
+  // rendered stacked and the detail panel "slid down" below the full fleet
+  // schedule (operator screenshot, EX401 WO tab). Now: if a project was open
+  // and still exists after the re-parse, re-open it (same project, same tab —
+  // the operator returns to exactly where they were); otherwise show the
+  // landing cleanly (showLanding also hides any orphaned detail panel).
+  if (selProjId && fleetProjects.some(p => p.id === selProjId)) {
+    openProject(selProjId);
+  } else {
+    showLanding();
+  }
   // v8.8 — surface a clear empty-state info toast for the 0-projects case so
   // the operator sees an explanation instead of an empty UI. Defers ~600ms so
   // it appears after any auto-restore prompts have settled.
@@ -3781,7 +3794,7 @@ function renderWorkOrders(id) {
       <td class="mono" style="font-weight:600">${_woNumEsc}${_carryMark}</td>
       <td style="min-width:160px">${esc(wo.description||'')}</td>
       <td>${sapBadge(wo.status)}</td>
-      <td style="font-size:10px;color:var(--muted);white-space:nowrap">${wo.basic_start ? esc(String(wo.basic_start).substring(0, 10)) : '—'}</td>
+      <td style="font-size:10px;color:var(--muted);white-space:nowrap">${wo.basic_start ? esc(_xlDateStr(wo.basic_start).substring(0, 10)) : '—'}</td><!-- v8.16 FIX-2: serial-aware (covers serials already saved in knownWOs) -->
       <td style="text-align:center">${planned ? fmtCost(planned) : '—'}</td>
       <td style="text-align:center">${actual ? fmtCost(actual) : '—'}</td>
       <td style="text-align:center;color:${varAmt>0?'var(--red)':varAmt<0?'var(--green)':'var(--faint)'}">
@@ -4060,6 +4073,32 @@ function handleIW39FleetFile(e) {
   e.target.value = '';
 }
 
+// v8.16 FIX-2 (2026-06-10, operator-reported) — Excel-serial-aware date normaliser.
+// IW39 date columns arrive as raw serials (e.g. 46188 = days since 1899-12-30)
+// when the export has them date-formatted; sheet_to_json hands over the number
+// and we stored/rendered it verbatim — the Early Start column showed "46188"
+// instead of a date. Delegates to NumaCoreLib.parseDate (already serial-aware;
+// Intake uses it everywhere, which is why Intake never showed this); inline
+// fallback mirrors the lib's serial math. Plausibility window 20000–80000
+// (years ~1954–2118) so WO numbers / costs / free text are never mangled —
+// non-date-like input returns the original trimmed string unchanged.
+function _xlDateStr(val) {
+  const s = String(val ?? '').trim();
+  if (s === '') return '';
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (isFinite(n) && n >= 20000 && n <= 80000) {
+      if (window.NumaCoreLib && typeof NumaCoreLib.parseDate === 'function') {
+        return NumaCoreLib.parseDate(n) || s;
+      }
+      const d = new Date(Math.round((n - 25569) * 86400 * 1000));
+      return isNaN(d.getTime()) ? s : d.toISOString().split('T')[0];
+    }
+  }
+  return s;
+}
+const _WO_DATE_KEYS = ['basic_start', 'completion_date'];  // v8.16 FIX-2 — IW39 date columns
+
 function confirmIW39FleetImport() {
   const mapping = {};
   WO_FIELDS.forEach(f => {
@@ -4069,7 +4108,14 @@ function confirmIW39FleetImport() {
   if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
   const wos = _woRaw.map(row => {
     const item = {};
-    WO_FIELDS.forEach(f => { if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? '').trim(); });
+    WO_FIELDS.forEach(f => {
+      if (mapping[f.key] === undefined) return;
+      const raw = String(row[mapping[f.key]] ?? '').trim();
+      // v8.16 FIX-2 — date columns converted at the import boundary; knownWOs
+      // recording downstream then stores ISO, and the next IW39 upload's sticky
+      // _setIf overwrite self-heals any serials saved by pre-FIX-2 sessions.
+      item[f.key] = _WO_DATE_KEYS.includes(f.key) ? _xlDateStr(raw) : raw;
+    });
     return item;
   }).filter(i => i.wo_number);
   _fleetWideIW39 = wos;
@@ -5041,16 +5087,16 @@ function renderGantt(projId) {
   container.innerHTML = _cancelledBanner + `
     <div class="gantt-axis">
       ${axisTicks}
-      <div class="gantt-today-line" style="left:calc(200px + ${todayPct}% * (100% - 200px) / 100)"></div>
-      <div class="gantt-today-label" style="left:calc(200px + ${todayPct}% * (100% - 200px) / 100)">TODAY</div>
-      <div class="gantt-start-line" style="left:calc(200px + ${projStartPct}% * (100% - 200px) / 100)"></div>
-      ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + ${projEndPct}% * (100% - 200px) / 100);top:0;bottom:0;width:2px;background:var(--red);opacity:.35;pointer-events:none;z-index:3"></div>` : ''}
+      <div class="gantt-today-line" style="left:calc(200px + (100% - 200px) * ${todayPct} / 100)"></div>
+      <div class="gantt-today-label" style="left:calc(200px + (100% - 200px) * ${todayPct} / 100)">TODAY</div>
+      <div class="gantt-start-line" style="left:calc(200px + (100% - 200px) * ${projStartPct} / 100)"></div>
+      ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + (100% - 200px) * ${projEndPct} / 100);top:0;bottom:0;width:2px;background:var(--red);opacity:.35;pointer-events:none;z-index:3"></div>` : ''}
     </div>
     ${shutdownWindowRow}
     ${rows}
-    <div style="position:absolute;left:calc(200px + ${todayPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:3px;background:var(--gold);opacity:.85;pointer-events:none;z-index:30;box-shadow:0 0 6px rgba(255,213,79,0.35)"></div>
-    <div style="position:absolute;left:calc(200px + ${projStartPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:2px;background:var(--green);opacity:.4;pointer-events:none;z-index:2"></div>
-    ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + ${projEndPct}% * (100% - 200px) / 100);top:28px;bottom:10px;width:2px;background:var(--red);opacity:.3;pointer-events:none;z-index:2"></div>` : ''}
+    <div style="position:absolute;left:calc(200px + (100% - 200px) * ${todayPct} / 100);top:28px;bottom:10px;width:3px;background:var(--gold);opacity:.85;pointer-events:none;z-index:30;box-shadow:0 0 6px rgba(255,213,79,0.35)"></div>
+    <div style="position:absolute;left:calc(200px + (100% - 200px) * ${projStartPct} / 100);top:28px;bottom:10px;width:2px;background:var(--green);opacity:.4;pointer-events:none;z-index:2"></div>
+    ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + (100% - 200px) * ${projEndPct} / 100);top:28px;bottom:10px;width:2px;background:var(--red);opacity:.3;pointer-events:none;z-index:2"></div>` : ''}
   `;
 
   // Store timeline metadata on the container for drag calculations
