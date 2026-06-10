@@ -1357,16 +1357,43 @@ const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7
 // file.  Restoring merges the diff back into DATA[] on load.
 // Key is scoped to version so it doesn't clash with older saves.
 // ═══════════════════════════════════════════════════════════════════
-const VERSION  = '18.5.9';           // single source of truth for version-scoped keys
-// SAVE_KEY is scoped to both version AND clientCode to prevent cross-client state bleed.
-// Computed dynamically after file load — use getSaveKey() everywhere instead of bare constant.
-const _SAVE_KEY_PREFIX = 'pcr_autosave_v' + VERSION + '_';
-const _LEGACY_SAVE_KEY = 'pcr_autosave_v' + VERSION;  // old unscoped key — cleared on load
+const VERSION  = '18.6';             // display/labels only — v18.6 ITEM-D: storage keys no longer embed VERSION
+// SAVE_KEY is scoped to clientCode to prevent cross-client state bleed.
+// v18.6 ITEM-D — keys are now VERSION-FREE (matches the Deploy/Intake/Lens convention).
+// Pre-v18.6, every version bump silently orphaned all per-client autosaves and reset
+// the usage/billing counters (2026-06-10 review findings). One-time lazy migration from
+// the v18.5.9 keys happens in getSaveKey() / _loadUsage(); old keys are deliberately
+// LEFT IN PLACE so a rollback to v18.5.9 finds its own keys untouched.
+// NOTE: legacy literals are hardcoded — never derive them from VERSION again.
+const _SAVE_KEY_PREFIX = 'pcr_autosave_';
+const _V1859_SAVE_KEY_PREFIX = 'pcr_autosave_v18.5.9_';  // migration source (per-client)
+const _LEGACY_SAVE_KEY = 'pcr_autosave_v18.5.9';  // old unscoped key — cleared on load
 function getSaveKey() {
   const code = (_meta && _meta.clientCode) ? _meta.clientCode.replace(/[^A-Z0-9_]/gi,'_') : 'default';
-  return _SAVE_KEY_PREFIX + code;
+  const key = _SAVE_KEY_PREFIX + code;
+  // v18.6 ITEM-D — lazy one-time migration per client from the v18.5.9 scoped key.
+  try {
+    if (localStorage.getItem(key) == null) {
+      const old = localStorage.getItem(_V1859_SAVE_KEY_PREFIX + code);
+      if (old != null) localStorage.setItem(key, old);
+    }
+  } catch(e) {}
+  return key;
 }
 const DEFAULT_VISIBLE_MONTHS = 24;   // default planning horizon; used by filter reset
+
+// v18.6 ITEM-C — SINGLE source for the owned date-override slice. This exact
+// filter+map was hand-copied in three save paths (_doSave, buildJSONSnapshot,
+// _ownedSliceForShell) — the same copy-drift class that caused the v18.5.6
+// orphan-override incident. All three now delegate here. If the override
+// semantics ever change, change them HERE and nowhere else.
+function _collectOwnedDateOverrides() {
+  return state.data
+    .filter(r => r.changeout_date !== r.original_date)
+    .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
+    .map(r => ({ id: r.id, changeout_date: r.changeout_date }));
+}
+
 let _saveTimer = null;
 
 function _scheduleSave() {
@@ -1384,10 +1411,7 @@ function _doSave() {
       fleetOrder: state.projConfig.fleetOrder,
       projects:   state.projects,
       // Only store records where the date was actually changed
-      componentDates: state.data
-        .filter(r => r.changeout_date !== r.original_date)
-        .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
-        .map(r => ({ id: r.id, changeout_date: r.changeout_date })),
+      componentDates: _collectOwnedDateOverrides(),   // v18.6 ITEM-C — shared collector
       decisionLog: state.decisionLog,
       visibleMonths: state.visibleMonths,
       granularity:   state.granularity,
@@ -1727,7 +1751,7 @@ function applyTermLabel() {
 // Two counters per activity: _usageSession (memory, resets on load)
 // and _usageRolling (persisted to localStorage, survives file re-opens).
 // Suitable as a pay-per-use billing signal.
-const USAGE_KEY = 'pcr_usage_v' + VERSION;
+const USAGE_KEY = 'pcr_usage';  // v18.6 ITEM-D — version-free ("cumulative since first install" now survives version bumps)
 const ACTIVITY_DEFS = [
   { key: 'move_component',  label: 'Move Component'        },
   { key: 'create_project',  label: 'Create Project'        },
@@ -1747,7 +1771,9 @@ let _usageSession = {};
 
 function _loadUsage() {
   try {
-    const raw = localStorage.getItem(USAGE_KEY);
+    // v18.6 ITEM-D — one-time migration from the v18.5.9 version-scoped key
+    // (old key left in place for rollback safety).
+    const raw = localStorage.getItem(USAGE_KEY) || localStorage.getItem('pcr_usage_v18.5.9');
     if (raw) _usageRolling = JSON.parse(raw);
   } catch(e) {}
   ACTIVITY_DEFS.forEach(a => { if (_usageRolling[a.key] == null) _usageRolling[a.key] = 0; });
@@ -2118,45 +2144,15 @@ function logEvent(type, desc, projId, before, after) {
   }
 }
 
-// ─── DEMO SEED PROJECTS ───────────────────────────────────────────
-// 6 pre-built projects for testing (2 excavators, 2 775 haul trucks, 2 dozers).
-// Populated after FLEET_COLORS is ready so bar colors are correct.
-(function seedDemoProjects() {
-  const seed = [
-    { id:'P001', name:'EX401 – Mar-26',  fleet:'EXCAVATOR',  model:'6015', unit:'EX401',
-      start_date:'2026-03-01', end_date:'2026-03-31',
-      linkedIds:[823,824,825,826,827,828,829,830,831,832,833,834,835,836,837,838,841,842,843,844,845] },
-    { id:'P002', name:'EX302 – Mar-26',  fleet:'EXCAVATOR',  model:'390F', unit:'EX302',
-      start_date:'2026-03-01', end_date:'2026-03-31',
-      linkedIds:[784,785,786,787,788,789,790,791,799,800,801,802] },
-    { id:'P003', name:'TD409 – Jul-27',  fleet:'HAUL TRUCK', model:'775G', unit:'TD409',
-      start_date:'2027-07-01', end_date:'2027-07-31',
-      linkedIds:[145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162] },
-    { id:'P004', name:'TD408 – Sep-27',  fleet:'HAUL TRUCK', model:'775G', unit:'TD408',
-      start_date:'2027-09-01', end_date:'2027-09-30',
-      linkedIds:[126,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144] },
-    { id:'P005', name:'BD301 – Mar-26',  fleet:'DOZER',      model:'D8T', unit:'BD301',
-      start_date:'2026-03-01', end_date:'2026-03-31',
-      linkedIds:[481,482,483,484,485,486,487,488,489,490,491,493,494,495,496,497,498,499,500,502,503,504] },
-    { id:'P006', name:'BD401 – Dec-26',  fleet:'DOZER',      model:'D9T', unit:'BD401',
-      start_date:'2026-12-01', end_date:'2026-12-31',
-      linkedIds:[608,609,610,611,612,613,615,616,618,619,620,621] },
-  ];
-  seed.forEach(p => {
-    p.color = FLEET_COLORS[p.fleet] || '#388bfd';
-    state.projects.push(p);
-    // Stamp component changeout dates to match the project start (they link to the project)
-    const pStart = p.start_date;
-    p.linkedIds.forEach(rid => {
-      const rec = DATA.find(r => r.id === rid);
-      if (rec) rec.changeout_date = pStart;
-    });
-  });
-  // Ensure fleet order config includes these fleets
-  ['EXCAVATOR','HAUL TRUCK','DOZER'].forEach(f => {
-    if (!state.projConfig.fleetOrder.includes(f)) state.projConfig.fleetOrder.push(f);
-  });
-})();
+// ─── DEMO SEED PROJECTS — REMOVED in v18.6 (ITEM-B, 2026-06-10 review Critical #2) ───
+// The seedDemoProjects IIFE that lived here pushed 6 hardcoded projects (P001–P006,
+// small-integer linkedIds) into state.projects at script load. It dated from the era
+// when CPT carried a baked-in DATA array; since the two-file split DATA starts empty
+// (L1326), so the seed could only ever inject phantoms into REAL client files — any
+// fleet JSON without a workingData.projects array kept them, their linkedIds collided
+// with real component ids (suppressing solid recompute), and the next save persisted
+// them. Loading projects is now unconditional in _initFromJSON (a file with no
+// projects array loads with NONE). Do not reintroduce seed data into this file.
 
 // ─── PROJECT HELPERS ──────────────────────────────────────────────
 // _projCounter is SELF-HEALING: every call reconciles against the highest
@@ -7162,8 +7158,11 @@ function _initFromJSON(json) {
   const _loadedDeColOrder = Array.isArray(wd.deColOrder) ? wd.deColOrder
                           : (Array.isArray(wf.deColOrder) ? wf.deColOrder : null);
 
-  if (_projects) {
-    state.projects = _projects;
+  {
+    // v18.6 ITEM-B — unconditional reset (was `if (_projects)`: a file WITHOUT a
+    // projects array kept whatever was already in state.projects — the demo-seed
+    // leak vector). A file with no projects now loads with none.
+    state.projects = _projects || [];
     // ── De-dup pass: heal any duplicate project IDs that may exist in the
     //    loaded file (legacy bug — pre-FIX-3 releases could create collisions
     //    because _projCounter was not reconciled after JSON load). Keep the
@@ -7374,12 +7373,50 @@ function buildJSONSnapshot() {
   const base = _originalJSON || {};
   const _isV5 = !!(base.masterData && typeof base.masterData === 'object');
 
+  // ── v18.6 ITEM-A — emit-time restore of derived fields ─────────────────────
+  // Operator principle (2026-06-10): "The ERP date is system calculated and must
+  // remain in the JSON file... although we calculate the theoretical date in
+  // Cadence, the ERP date is still a reference date." In MEMORY the shadow
+  // (original_date) always recomputes — that semantic is unchanged. In the FILE,
+  // the ERP anchor belongs to Intake (refreshed on rebuild/Full update) and must
+  // round-trip exactly as loaded; same for the client's raw category vocabulary.
+  // DATA (not the as-loaded array) stays the emit source so Data Editor edits and
+  // Excel-import enrichment persist — only the fields below are restored/stripped.
+  // Pre-v18.6 this function emitted DATA verbatim, permanently replacing the ERP
+  // anchor with the recompute on every save (2026-06-10 review Critical #1).
+  const _srcById = {};
+  ((_isV5 ? (base.masterData && base.masterData.components) : base.components) || [])
+    .forEach(c => { if (c && c.id != null) _srcById[c.id] = c; });
+  const _emitComponents = DATA.map(r => {
+    const out = Object.assign({}, r);
+    const src = _srcById[r.id];
+    if (src) {
+      // ERP anchor: restore exactly as loaded. V5 files carry the anchor in
+      // changeout_date_erp and may have no original_date at all — the in-memory
+      // original_date there is the compat-shim mirror and must not be persisted.
+      if (src.original_date !== undefined) out.original_date = src.original_date;
+      else delete out.original_date;
+      // Raw category vocabulary (deliberate Data Editor category edits write
+      // through to _origCategory, so they survive this restore).
+      if (out._origCategory !== undefined) out.category = out._origCategory;
+      // color: render-runtime in Cadence; restore the as-loaded value (Intake
+      // emits color:null on V5 components — keep the file shape stable).
+      if (src.color !== undefined) out.color = src.color;
+      else delete out.color;
+    } else {
+      delete out.color;
+    }
+    // Strip runtime-only fields. _util_rate_inferred is deliberately KEPT —
+    // persisting the inferred value WITH its flag is the locked data-model rule.
+    Object.keys(out).forEach(k => {
+      if (k.charAt(0) === '_' && k !== '_util_rate_inferred') delete out[k];
+    });
+    return out;
+  });
+
   // Cadence-owned working slices (same content for both shapes; only the
   // wrapping key differs — V5 'componentDateOverrides' vs V4 'componentDates').
-  const _ownedDateOverrides = state.data
-    .filter(r => r.changeout_date !== r.original_date)
-    .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
-    .map(r => ({ id: r.id, changeout_date: r.changeout_date }));
+  const _ownedDateOverrides = _collectOwnedDateOverrides();   // v18.6 ITEM-C — shared collector
   const _ownedUiPrefs = {
     projects:      state.projects,
     decisionLog:   state.decisionLog,
@@ -7404,7 +7441,7 @@ function buildJSONSnapshot() {
       }),
       masterData: {
         ...baseMaster,
-        components:       DATA,
+        components:       _emitComponents,   // v18.6 ITEM-A — derived fields restored (was raw DATA)
         componentHistory: HIST
       },
       workingData: {
@@ -7424,7 +7461,7 @@ function buildJSONSnapshot() {
       schemaVersion: 'v' + VERSION,                // FIX-A: always write the current production version — never an intermediate tag
       clientCode:    _meta.clientCode || 'CLIENT'  // FIX-B: never write an empty clientCode; 'CLIENT' is the safe fallback
     }),
-    components:       DATA,
+    components:       _emitComponents,   // v18.6 ITEM-A — derived fields restored (was raw DATA)
     componentHistory: HIST,
     working: {
       ...baseWorking,                              // preserves deployData and any other foreign keys
@@ -7552,10 +7589,7 @@ function _ownedSliceForShell() {
   // Mirror buildJSONSnapshot's owned-slice logic but emit ONLY the slice this
   // tool writes — the parent merges; it does not replace. Round-tripped on
   // both V5 and V4-Flat shapes so embedding works in either schema.
-  const _ownedDateOverrides = state.data
-    .filter(r => r.changeout_date !== r.original_date)
-    .filter(r => !_isTodayClampedOverride(r))   // v18.5.6 — exclude today-clamp artefacts (Cause 3)
-    .map(r => ({ id: r.id, changeout_date: r.changeout_date }));
+  const _ownedDateOverrides = _collectOwnedDateOverrides();   // v18.6 ITEM-C — shared collector
   const _ownedUiPrefs = {
     projects:      state.projects,
     decisionLog:   state.decisionLog,
@@ -7658,7 +7692,7 @@ const DE_COLS = [
   { key:'notes',            label:'Notes',           type:'text',   w:200 },
   { key:'planned_wo',       label:'Planned WO#',     type:'text',   w:100 },
   { key:'new_component_sn', label:'New Comp S/N',    type:'text',   w:110 },
-  { key:'original_date',    label:'Orig. Predicted', type:'text',   w:110 },
+  { key:'original_date',    label:'Orig. Predicted', type:'text',   w:110, ro:true },  // v18.6 ITEM-A — ERP reference is system-calculated (Intake's to write); not hand-editable in Cadence
   { key:'changeout_date',   label:'Eff. Change-out', type:'text',   w:110 },
   { key:'hyperion_group',   label:'Hyperion Grp',    type:'text',   w:110 },
   { key:'comments',         label:'Comments',        type:'text',   w:200 },
@@ -7874,6 +7908,12 @@ function renderDataEditor() {
       const sr = state.data.find(r => r.id === id);
       if (dr) dr[key] = val;
       if (sr) sr[key] = val;
+      // v18.6 ITEM-A — write-through: a deliberate category edit updates the
+      // raw-vocabulary stash so the save-time restore doesn't undo it.
+      if (key === 'category') {
+        if (dr) dr._origCategory = val;
+        if (sr) sr._origCategory = val;
+      }
       _scheduleSave();
       // Re-render so CM row styling updates immediately
       renderDataEditor();
@@ -7900,6 +7940,12 @@ function renderDataEditor() {
       } else {
         if (dr) dr[key] = val;
         if (sr) sr[key] = val;
+        // v18.6 ITEM-A — write-through: category edits update the raw-vocabulary
+        // stash so the save-time restore doesn't undo a deliberate edit.
+        if (key === 'category') {
+          if (dr) dr._origCategory = val;
+          if (sr) sr._origCategory = val;
+        }
       }
       _scheduleSave();
     });
