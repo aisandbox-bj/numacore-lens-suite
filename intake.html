@@ -294,6 +294,16 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
   <button class="mode-btn" onclick="setMode('idling')" id="modeBtn-idling">⊘ IDLING</button>
 </div>
 
+<!-- v8.8 FEAT-1 — Session JSON banner. Visible whenever an apply has retained a
+     result in memory. Shows the chain of operations + downloaded state; offers
+     the final download and an explicit discard. -->
+<div id="sessionBanner" style="display:none;margin:10px 24px 0;padding:10px 14px;background:rgba(212,175,55,0.08);border:1px solid var(--gold);border-radius:8px;font-size:12px;color:var(--text2);align-items:center;gap:10px;flex-wrap:wrap">
+  <span id="sessionBannerText"></span>
+  <span style="flex:1"></span>
+  <button class="btn btn-gold btn-sm" onclick="downloadSessionJSON()">⬇ Download session JSON</button>
+  <button class="btn btn-outline btn-sm" onclick="discardSessionJSON()">✕ Discard session</button>
+</div>
+
 <!-- ════════════════════════════════════════════════════════ BUILD MODE -->
 <div id="mode-build" class="panel active">
 
@@ -565,6 +575,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <p style="font-size:12px">Drop [ClientCode]_fleet.json here or <span>browse</span></p>
       </div>
       <input type="file" id="fileInputJSON" accept=".json" style="display:none" onchange="onFileSelectJSON(event)">
+      <!-- v8.8 FEAT-1 — chain off the in-memory session result instead of re-uploading -->
+      <button class="btn btn-outline btn-sm" id="useSessionUpdateBtn" style="display:none;margin-top:8px;width:100%" onclick="useSessionInUpdate()">⛓ Use session JSON (no re-upload)</button>
     </div>
   </div>
 
@@ -695,6 +707,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <p>Drop fleet.json here, or <span>browse for file</span></p>
     </div>
     <input type="file" id="fileInputConmonJSON" accept=".json" style="display:none" onchange="onFileSelectConmonJSON(event)">
+    <!-- v8.8 FEAT-1 — chain off the in-memory session result instead of re-uploading -->
+    <button class="btn btn-outline btn-sm" id="useSessionConmonBtn" style="display:none;margin-top:8px;width:100%" onclick="useSessionInConmon()">⛓ Use session JSON (no re-upload)</button>
   </div>
 
   <!-- STEP 2: Drop PDFs -->
@@ -716,7 +730,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div id="conmonUnmatchedBox"></div>
     <div id="conmonPreviewTable"></div>
     <div class="btn-row" style="margin-top:14px">
-      <button class="btn btn-gold" id="conmonCommitBtn" onclick="commitConmonSamples()">⬇ Commit &amp; Download Updated Fleet JSON</button>
+      <button class="btn btn-gold" id="conmonCommitBtn" onclick="commitConmonSamples(true)">⬇ Commit &amp; Download Updated Fleet JSON</button>
+      <!-- v8.8 FEAT-1 — commit into the in-memory session only; final download later -->
+      <button class="btn btn-outline" onclick="commitConmonSamples(false)">⛓ Commit to session (no download)</button>
       <button class="btn btn-outline btn-sm" onclick="clearConmonQueue()">✕ Clear queue (keep fleet)</button>
       <button class="btn btn-outline btn-sm" onclick="clearConmon()">↺ Clear / Start Over</button>
     </div>
@@ -746,6 +762,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <p>Drop fleet.json here, or <span>browse for file</span></p>
     </div>
     <input type="file" id="fileInputIdlingJSON" accept=".json" style="display:none" onchange="onFileSelectIdlingJSON(event)">
+    <!-- v8.8 FEAT-1 — chain off the in-memory session result instead of re-uploading -->
+    <button class="btn btn-outline btn-sm" id="useSessionIdlingBtn" style="display:none;margin-top:8px;width:100%" onclick="useSessionInIdling()">⛓ Use session JSON (no re-upload)</button>
     <div id="idlingJsonStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
   </div>
 
@@ -779,7 +797,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div id="idlingUnmatchedBox"></div>
     <div id="idlingPreviewTable" style="margin-top:10px;max-height:340px;overflow-y:auto"></div>
     <div class="btn-row" style="margin-top:14px">
-      <button class="btn btn-gold" id="idlingApplyBtn" onclick="applyIdlingToJSON()">⬇ Apply &amp; Download Updated Fleet JSON</button>
+      <button class="btn btn-gold" id="idlingApplyBtn" onclick="applyIdlingToJSON(true)">⬇ Apply &amp; Download Updated Fleet JSON</button>
+      <!-- v8.8 FEAT-1 — apply into the in-memory session only; final download later -->
+      <button class="btn btn-outline" onclick="applyIdlingToJSON(false)">⛓ Apply to session (no download)</button>
       <button class="btn btn-outline btn-sm" onclick="clearIdling()">↺ Clear / Start Over</button>
     </div>
   </div>
@@ -803,7 +823,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.7';
+const VERSION = '8.8';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -964,6 +984,122 @@ const parseDate = (window.NumaCoreLib && NumaCoreLib.parseDate) || function(val)
   }
   return null;
 };
+
+// v8.7 FIX-5 (2026-06-10) — shared numeric parser for XLSX cell values.
+// parseFloat("12,345") stops at the comma and silently returns 12 — EAM exports
+// routinely deliver text-formatted numbers with thousands separators or currency
+// symbols ("12,345", "$8,400.50", "12 345"). Strip grouping characters first;
+// real numbers pass straight through. Returns NaN for blank/unparseable input
+// (same contract as parseFloat) so existing `|| 0` / `|| null` / isNaN / isFinite
+// guards behave unchanged. Note: comma is treated as a grouping character
+// (en-CA / en-AU exports), never as a decimal separator.
+function parseNum(val) {
+  if (val == null || val === '') return NaN;
+  if (typeof val === 'number') return val;
+  return parseFloat(String(val).replace(/[\s,$]/g, ''));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// v8.8 FEAT-1 (2026-06-10) — SESSION JSON CHAINING
+// Operator request: "when I do an update, I would like to be able to add ConMon
+// and Idling data without having to drop the JSON out and upload every time."
+// Every apply (UPDATE modes 1-4, CONMON commit, IDLING apply) now RETAINS its
+// result in this in-memory session store. Each mode's Step-1 loader gains a
+// "Use session JSON" button so the next operation chains off the previous
+// result; one final download at the end. Explicit buttons only — nothing is
+// auto-carried (consistent with the Idling 3-box explicit-config principle).
+// The session is memory-only: it is never written to localStorage (a fleet
+// JSON can exceed the quota) and dies with the tab — hence the banner warning
+// + beforeunload guard while work is undownloaded.
+// ═══════════════════════════════════════════════════════════════
+let sessionJSON = { json: null, ops: [], downloaded: false, client: '' };
+
+function _setSessionJSON(json, opLabel) {
+  sessionJSON.json = json;
+  sessionJSON.ops.push(opLabel);
+  sessionJSON.downloaded = false;
+  sessionJSON.client = (json && json.meta && json.meta.clientCode) || sessionJSON.client || 'CLIENT';
+  renderSessionBanner();
+}
+
+function _markSessionDownloaded() {
+  if (!sessionJSON.json) return;
+  sessionJSON.downloaded = true;
+  renderSessionBanner();
+}
+
+function renderSessionBanner() {
+  const b = document.getElementById('sessionBanner');
+  if (!b) return;
+  const has = !!sessionJSON.json;
+  b.style.display = has ? 'flex' : 'none';
+  ['useSessionUpdateBtn', 'useSessionConmonBtn', 'useSessionIdlingBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = has ? '' : 'none';
+  });
+  if (has) {
+    document.getElementById('sessionBannerText').innerHTML =
+      `📦 <strong>Session JSON</strong> — ${esc(sessionJSON.client)} · ` +
+      `${sessionJSON.ops.map(esc).join(' → ')} · ` +
+      (sessionJSON.downloaded
+        ? '<span style="color:var(--green)">✓ downloaded</span>'
+        : '<strong style="color:var(--gold)">not yet downloaded</strong>');
+  }
+}
+
+function downloadSessionJSON() {
+  if (!sessionJSON.json) return;
+  const clientCode = (sessionJSON.json.meta && sessionJSON.json.meta.clientCode) || 'CLIENT';
+  let filename;
+  if (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function') {
+    filename = window.NumaCoreLib.buildSaveFilename(clientCode, { fleetData: sessionJSON.json });
+  } else {
+    const ts = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+    filename = `${clientCode}_fleet_${ts}.json`;
+  }
+  const blob = new Blob([JSON.stringify(sessionJSON.json, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+  _markSessionDownloaded();
+  if (window.NumaCoreLib && NumaCoreLib.showToast) {
+    NumaCoreLib.showToast('Session JSON downloaded: ' + filename, 'success', 3500);
+  }
+}
+
+function discardSessionJSON() {
+  sessionJSON = { json: null, ops: [], downloaded: false, client: '' };
+  renderSessionBanner();
+  if (window.NumaCoreLib && NumaCoreLib.showToast) {
+    NumaCoreLib.showToast('Session JSON discarded — modes will need a file upload again.', 'info', 3000);
+  }
+}
+
+// Hand the session JSON to each mode's Step-1 slot. These reuse the same
+// adopt helpers as the file loaders so all prefill side effects stay identical.
+function useSessionInUpdate() {
+  if (!sessionJSON.json) return;
+  _adoptUpdateJSON(sessionJSON.json, '⛓ Session JSON — ' + sessionJSON.ops.join(' → '));
+}
+function useSessionInConmon() {
+  if (!sessionJSON.json) return;
+  _adoptConmonJSON(sessionJSON.json, '⛓ Session JSON — ' + sessionJSON.ops.join(' → '));
+}
+function useSessionInIdling() {
+  if (!sessionJSON.json) return;
+  _adoptIdlingJSON(sessionJSON.json, '⛓ Session JSON — ' + sessionJSON.ops.join(' → '));
+}
+
+// Guard against losing chained-but-undownloaded work on tab close/refresh.
+window.addEventListener('beforeunload', function(e) {
+  if (sessionJSON.json && !sessionJSON.downloaded) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // STATE
@@ -1561,15 +1697,15 @@ function processMapping() {
     const fleet_type  = String(getVal(row, 'fleet_type') || 'UNKNOWN').trim();
     const model       = String(getVal(row, 'model') || '').trim();
     const unit_sn     = String(getVal(row, 'unit_sn') || '').trim();
-    const last_smu    = parseFloat(getVal(row, 'last_smu')) || 0;
+    const last_smu    = parseNum(getVal(row, 'last_smu')) || 0;
     const last_date   = parseDate(getVal(row, 'last_read_date'));
-    const util_rate   = parseFloat(getVal(row, 'util_rate')) || null;
+    const util_rate   = parseNum(getVal(row, 'util_rate')) || null;
     // v8.5 (Ship 4) — parse unit-level idle percentages from this row. We don't
     // use `|| null` here because we want to differentiate "0%" (valid) from
     // "blank" (skip) — parseFloat('') is NaN which the isFinite check below
     // rejects. Values are percentages (0-100), stored as-is.
-    const idle_pct_life_raw = parseFloat(getVal(row, 'idle_pct_life'));
-    const idle_pct_3mo_raw  = parseFloat(getVal(row, 'idle_pct_3mo'));
+    const idle_pct_life_raw = parseNum(getVal(row, 'idle_pct_life'));
+    const idle_pct_3mo_raw  = parseNum(getVal(row, 'idle_pct_3mo'));
     const comp_name   = String(getVal(row, 'comp_name') || '').trim();
     // Up/Down flag: 'UP' = active, anything else = standby/inactive
     const upDownRaw   = String(getVal(row, 'unit_active') || '').trim().toUpperCase();
@@ -1638,9 +1774,9 @@ function processMapping() {
       const comp_id      = makeComponentId(unit_floc, comp_name, null);
 
       const install_date       = parseDate(getVal(row, 'install_date'));
-      const install_hours      = parseFloat(getVal(row, 'install_hours')) || 0;
-      const benchmark          = parseFloat(getVal(row, 'benchmark')) || 0;
-      const cost               = parseFloat(getVal(row, 'comp_cost')) || null;
+      const install_hours      = parseNum(getVal(row, 'install_hours')) || 0;
+      const benchmark          = parseNum(getVal(row, 'benchmark')) || 0;
+      const cost               = parseNum(getVal(row, 'comp_cost')) || null;
       const part_number        = String(getVal(row, 'part_number') || '').trim() || null;
       const mm_number          = String(getVal(row, 'mm_number') || '').trim() || null;
       const notes              = String(getVal(row, 'comp_notes') || '').trim() || null;
@@ -1650,7 +1786,7 @@ function processMapping() {
       const changeout_date_erp = parseDate(getVal(row, 'changeout_date_erp'));
       // estimated_smu and current_pct_bench are source-system computed values —
       // stored as reference only; Lens recomputes these at runtime
-      const estimated_smu     = parseFloat(getVal(row, 'estimated_smu')) || null;
+      const estimated_smu     = parseNum(getVal(row, 'estimated_smu')) || null;
 
       const strategy = (state.compEdits[comp_id] && state.compEdits[comp_id].replacement_strategy)
         || autoStrategy(category);
@@ -2295,10 +2431,20 @@ function loadJSONFile(file) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      state.updateFleetJSON = JSON.parse(e.target.result);
+      _adoptUpdateJSON(JSON.parse(e.target.result), file.name);
+    } catch(err) { alert('Error reading JSON: ' + err.message); }
+  };
+  reader.readAsText(file);
+}
+
+// v8.8 FEAT-1 — shared adopt path for UPDATE Step-1: used by both the file
+// loader above and the "Use session JSON" handoff, so prefill side effects
+// (client code/name/settings inheritance) stay identical for both sources.
+function _adoptUpdateJSON(json, displayLabel) {
+      state.updateFleetJSON = json;
       const dz = document.getElementById('dropZoneJSON');
       dz.classList.add('loaded');
-      dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${file.name}</strong></p>`;
+      dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${esc(displayLabel)}</strong></p>`;
       // Pre-fill client code
       if (state.updateFleetJSON.meta?.clientCode) {
         document.getElementById('clientCode').value = state.updateFleetJSON.meta.clientCode;
@@ -2329,9 +2475,6 @@ function loadJSONFile(file) {
         saveState();
       }
       checkUpdateReady();
-    } catch(err) { alert('Error reading JSON: ' + err.message); }
-  };
-  reader.readAsText(file);
 }
 
 function populateUpdateSheets() {
@@ -2411,17 +2554,30 @@ function runSMUUpdate() {
 
   let updatedComponents = 0;
   const now = new Date().toISOString().split('T')[0];
+  // v8.7 FIX-4 (2026-06-10) — unit matching is now case-insensitive, extending the
+  // v8.4 BUILD-boundary CAPS rule to the UPDATE boundary ("ex401" in a source export
+  // must match "EX401" in the JSON; raw comparison made the row a silent no-op).
+  // Unmatched source units and unreadable SMU cells are now counted and reported
+  // instead of silently doing nothing.
+  const unmatchedUnits = new Set();
+  let skippedBadSmu = 0;
 
   dataRows.forEach(row => {
     const unit_id = String(row[unitCol] || '').trim();
-    const smu     = parseFloat(row[smuCol]);
+    const smu     = parseNum(row[smuCol]);   // v8.7 FIX-5 — tolerate "12,345"-style cells
     const date    = dateCol >= 0 ? parseDate(row[dateCol]) : now;
 
-    if (!unit_id || isNaN(smu)) return;
+    if (!unit_id) return;
+    if (isNaN(smu)) { skippedBadSmu++; return; }
 
+    const unitKey = unit_id.toUpperCase();
     // In v17 format, unit identifier is stored as c.unit; in v5 it is c.unit_id
-    compArray.filter(c => (c.unit === unit_id || c.unit_id === unit_id ||
-                           c.unit_floc === unit_id)).forEach(c => {
+    const matches = compArray.filter(c =>
+      String(c.unit      || '').toUpperCase() === unitKey ||
+      String(c.unit_id   || '').toUpperCase() === unitKey ||
+      String(c.unit_floc || '').toUpperCase() === unitKey);
+    if (matches.length === 0) { unmatchedUnits.add(unit_id); return; }
+    matches.forEach(c => {
       if (smu > (c.last_smu || 0)) {
         c.last_smu  = smu;
         c.last_read = date;
@@ -2434,15 +2590,31 @@ function runSMUUpdate() {
   fleetJSON.meta.lastImportDate = now;
 
   state.updatedFleetJSON = fleetJSON;
+  _setSessionJSON(fleetJSON, 'SMU update'); // v8.8 FEAT-1 — retain for chaining
 
   // Show results
+  // v8.7 FIX-4 — report unmatched units and unreadable SMU cells (R3/R4 audit
+  // discipline: a source row that produced no update must be visible, never silent).
   document.getElementById('updateResults').style.display = 'block';
   document.getElementById('updateResultStats').innerHTML = `
     <div class="stat-pill"><div class="stat-num s-green">${updatedComponents}</div><div class="stat-lbl">Components Updated</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${dataRows.length}</div><div class="stat-lbl">Source Rows</div></div>
+    ${unmatchedUnits.size > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${unmatchedUnits.size}</div><div class="stat-lbl">Unmatched Units</div></div>` : ''}
+    ${skippedBadSmu > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${skippedBadSmu}</div><div class="stat-lbl">Unreadable SMU Cells</div></div>` : ''}
   `;
+  const unmatchedList = [...unmatchedUnits];
+  const unmatchedHTML = unmatchedUnits.size > 0
+    ? `<div class="alert alert-warn" style="margin-top:8px">
+         ⚠ ${unmatchedUnits.size} source unit(s) matched nothing in the loaded JSON and were skipped:
+         <b>${unmatchedList.slice(0, 20).map(u => esc(u)).join(', ')}${unmatchedList.length > 20 ? ` +${unmatchedList.length - 20} more` : ''}</b>
+         — check for renamed/retired units or a wrong sheet.
+       </div>` : '';
+  const badSmuHTML = skippedBadSmu > 0
+    ? `<div class="alert alert-warn" style="margin-top:8px">
+         ⚠ ${skippedBadSmu} row(s) had an SMU cell that could not be read as a number and were skipped.
+       </div>` : '';
   document.getElementById('updateResultDetail').innerHTML =
-    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>`;
+    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>${unmatchedHTML}${badSmuHTML}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2581,7 +2753,7 @@ function runComponentHistoryUpdate() {
     if (state.mergeExcluded && state.mergeExcluded.size > 0 && state.mergeExcluded.has(xlKey)) return;
 
     const newInstallDate  = parseDate(getVal(row, 'install_date'));
-    const newInstallHours = parseFloat(getVal(row, 'install_hours')) || 0;
+    const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = c.install_date || null;
     const oldInstallHours = c.install_hours || 0;
 
@@ -2630,8 +2802,8 @@ function runComponentHistoryUpdate() {
     }
 
     // Field sync — update benchmark, cost, part#, MM#, notes if changed
-    const newBenchmark = parseFloat(getVal(row, 'benchmark'))   || null;
-    const newCost      = parseFloat(getVal(row, 'comp_cost'))   || null;
+    const newBenchmark = parseNum(getVal(row, 'benchmark'))   || null;
+    const newCost      = parseNum(getVal(row, 'comp_cost'))   || null;
     const newPartNum   = String(getVal(row, 'part_number') || '').trim() || null;
     const newMM        = String(getVal(row, 'mm_number')   || '').trim() || null;
     const newNotes     = String(getVal(row, 'comp_notes')  || '').trim() || null;
@@ -2648,6 +2820,7 @@ function runComponentHistoryUpdate() {
   fleetJSON.meta.lastSaved      = new Date().toISOString();
   fleetJSON.meta.lastImportDate = now;
   state.updatedFleetJSON        = fleetJSON;
+  _setSessionJSON(fleetJSON, 'Component History update'); // v8.8 FEAT-1 — retain for chaining
 
   // Remove orphaned components the user explicitly unchecked in the review
   if (state.mergeOrphanRemove && state.mergeOrphanRemove.size > 0) {
@@ -2733,7 +2906,11 @@ function runFullUpdate() {
   const xlUnitMap = {};    // unit_id → { smu, date, utilRate, upDown, model, fleetType }
   const xlCompMap = {};    // "UNIT||COMP" → row
   dataRows.forEach(row => {
-    const unit = String(getVal(row, 'unit_id') || '').trim();
+    // v8.7 FIX-4 (2026-06-10) — key the unit map by the UPPERCASED unit id so
+    // Pass 1's lookup can't miss on case ("ex401" source vs "EX401" JSON). Extends
+    // the v8.4 BUILD-boundary CAPS rule to the UPDATE boundary; Pass 2 consequently
+    // creates new units with uppercase ids, matching what BUILD emits.
+    const unit = String(getVal(row, 'unit_id') || '').trim().toUpperCase();
     const comp = String(getVal(row, 'comp_name') || '').trim();
     if (!unit) return;
     if (!xlUnitMap[unit]) {
@@ -2741,12 +2918,12 @@ function runFullUpdate() {
       // units in Pass 2) and existing-unit sync (Pass 1.5 below). Differentiate
       // "0" (valid value) from blank — use isFinite check, not `|| null`, then
       // round to 1 dp for display consistency.
-      const idleLifeRaw = parseFloat(getVal(row, 'idle_pct_life'));
-      const idle3MoRaw  = parseFloat(getVal(row, 'idle_pct_3mo'));
+      const idleLifeRaw = parseNum(getVal(row, 'idle_pct_life'));
+      const idle3MoRaw  = parseNum(getVal(row, 'idle_pct_3mo'));
       xlUnitMap[unit] = {
-        smu:          parseFloat(getVal(row, 'last_smu'))   || null,
+        smu:          parseNum(getVal(row, 'last_smu'))   || null,
         date:         parseDate(getVal(row, 'last_read_date')),
-        utilRate:     parseFloat(getVal(row, 'util_rate'))  || null,
+        utilRate:     parseNum(getVal(row, 'util_rate'))  || null,
         upDown:       String(getVal(row, 'unit_active') || '').trim().toUpperCase(),
         model:        String(getVal(row, 'model') || '').trim(),
         fleetType:    String(getVal(row, 'fleet_type') || '').trim(),
@@ -2771,7 +2948,7 @@ function runFullUpdate() {
   compArray.forEach(c => {
     const unitKey  = String(c.unit || c.unit_id || '').toUpperCase();
     const compKey  = String(c.component || c.name || '').toUpperCase();
-    const unitData = xlUnitMap[c.unit || c.unit_id || ''];
+    const unitData = xlUnitMap[unitKey]; // v8.7 FIX-4 — case-normalised lookup (was raw c.unit; missed on case)
     const xlKey    = `${unitKey}||${compKey}`;
     const row      = xlCompMap[xlKey];
 
@@ -2789,7 +2966,7 @@ function runFullUpdate() {
 
     // Component replacement detection
     const newInstallDate  = parseDate(getVal(row, 'install_date'));
-    const newInstallHours = parseFloat(getVal(row, 'install_hours')) || 0;
+    const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = c.install_date || null;
     const oldInstallHours = c.install_hours || 0;
     const dateChanged     = newInstallDate && newInstallDate !== oldInstallDate;
@@ -2822,8 +2999,8 @@ function runFullUpdate() {
     }
 
     // Field sync
-    const newBenchmark = parseFloat(getVal(row, 'benchmark'))   || null;
-    const newCost      = parseFloat(getVal(row, 'comp_cost'))   || null;
+    const newBenchmark = parseNum(getVal(row, 'benchmark'))   || null;
+    const newCost      = parseNum(getVal(row, 'comp_cost'))   || null;
     const newPartNum   = String(getVal(row, 'part_number') || '').trim() || null;
     const newMM        = String(getVal(row, 'mm_number')   || '').trim() || null;
     const newNotes     = String(getVal(row, 'comp_notes')  || '').trim() || null;
@@ -2960,9 +3137,9 @@ function runFullUpdate() {
       if (state.mergeExcluded && state.mergeExcluded.size > 0 && state.mergeExcluded.has(`${unit.toUpperCase()}||${comp_name.toUpperCase()}`)) return;
 
       const install_date  = parseDate(getVal(row, 'install_date'));
-      const install_hours = parseFloat(getVal(row, 'install_hours')) || 0;
-      const benchmark     = parseFloat(getVal(row, 'benchmark'))     || 0;
-      const cost          = parseFloat(getVal(row, 'comp_cost'))      || null;
+      const install_hours = parseNum(getVal(row, 'install_hours')) || 0;
+      const benchmark     = parseNum(getVal(row, 'benchmark'))     || 0;
+      const cost          = parseNum(getVal(row, 'comp_cost'))      || null;
       const part_number   = String(getVal(row, 'part_number') || '').trim() || null;
       const mm_number     = String(getVal(row, 'mm_number')   || '').trim() || null;
       const notes         = String(getVal(row, 'comp_notes')  || '').trim() || null;
@@ -3037,18 +3214,27 @@ function runFullUpdate() {
   // Rule: drop any entry whose stored changeout_date now matches the component's
   // original_date (they agree → entry is redundant, no ghost should show).
   // Entries where the planner genuinely set a different date are preserved.
+  // v8.7 FIX-3 (2026-06-10) — orphaned entries (component id not re-found after this
+  // update) are now KEPT and reported, no longer silently deleted. Planner overrides
+  // are Cadence's slice — the service deliverable — and ids can legitimately stop
+  // matching (operator-removed orphans, id drift between files). Intake destroying
+  // them with no count and no warning was a cross-slice data-loss bug; true orphans
+  // are Cadence's call to clear via its Override Audit toolkit (v18.5.x), not ours.
+  let redundantOverridesCleared = 0;
+  const orphanedOverridesKept = [];
   if (isV17 && fleetJSON.working && Array.isArray(fleetJSON.working.componentDates)) {
     const compById = {};
     compArray.forEach(c => { if (c.id) compById[c.id] = c; });
     fleetJSON.working.componentDates = fleetJSON.working.componentDates.filter(entry => {
       const comp = compById[entry.id];
-      if (!comp) return false;                           // orphaned — component no longer exists
-      if (entry.changeout_date === comp.original_date) return false; // redundant — matches ERP anchor
+      if (!comp) { orphanedOverridesKept.push(entry); return true; } // FIX-3: keep + report (was: silent drop)
+      if (entry.changeout_date === comp.original_date) { redundantOverridesCleared++; return false; } // redundant — matches ERP anchor
       return true;                                       // genuine planner override — keep it
     });
   }
 
   state.updatedFleetJSON        = fleetJSON;
+  _setSessionJSON(fleetJSON, 'Full update'); // v8.8 FEAT-1 — retain for chaining
 
   // Remove orphaned components the user explicitly unchecked in the review
   if (state.mergeOrphanRemove && state.mergeOrphanRemove.size > 0) {
@@ -3152,9 +3338,21 @@ function runFullUpdate() {
     <div class="stat-pill"><div class="stat-num s-yellow">${newComponents}</div><div class="stat-lbl">New Components</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${histArray.length}</div><div class="stat-lbl">History Records</div></div>
     ${materialERPLog.length > 0 ? `<div class="stat-pill"><div class="stat-num ${linkedERPChanges.length > 0 ? 's-yellow' : 's-blue'}">${materialERPLog.length}</div><div class="stat-lbl">Date Shifts${linkedERPChanges.length > 0 ? ` (${linkedERPChanges.length} linked)` : ''}</div></div>` : ''}
+    ${orphanedOverridesKept.length > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${orphanedOverridesKept.length}</div><div class="stat-lbl">Orphaned Overrides Kept</div></div>` : ''}
   `;
+  // v8.7 FIX-3 — planner-override audit trail: orphaned entries are kept and
+  // surfaced here instead of being silently dropped from working.componentDates.
+  const overridesHTML = orphanedOverridesKept.length > 0
+    ? `<div class="alert alert-warn" style="margin-top:8px">
+         ⚠ ${orphanedOverridesKept.length} Cadence planner override(s) reference component ids that no longer match any
+         component after this update. They were <b>kept, not deleted</b> — open Cadence → Override Audit to review or
+         clear them.${redundantOverridesCleared > 0 ? ` (${redundantOverridesCleared} redundant override(s) matching the ERP anchor were cleared as usual.)` : ''}
+         <div style="margin-top:4px;font-size:11px;color:var(--text3)">
+           ${orphanedOverridesKept.slice(0, 10).map(e => `${esc(String(e.id))} → ${esc(e.changeout_date || '—')}`).join(' · ')}${orphanedOverridesKept.length > 10 ? ` · +${orphanedOverridesKept.length - 10} more` : ''}
+         </div>
+       </div>` : '';
   document.getElementById('updateResultDetail').innerHTML  =
-    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
+    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
 
   // [TWEAK-2] Click-to-sort on result tables (in-place DOM sort, date/number/text autodetect)
   attachTableSort(document.getElementById('updateResultDetail'));
@@ -3276,7 +3474,7 @@ function buildAndShowDiffReport() {
 
     // Check for replacement (install_date or install_hours change)
     const newInstallDate  = parseDate(getVal(row, 'install_date'));
-    const newInstallHours = parseFloat(getVal(row, 'install_hours')) || 0;
+    const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = existing.install_date || null;
     const oldInstallHours = existing.install_hours || 0;
     const isReplacement   = (newInstallDate && newInstallDate !== oldInstallDate) ||
@@ -3287,9 +3485,9 @@ function buildAndShowDiffReport() {
     const candidates = [
       { field: 'install_date',   xlVal: newInstallDate,                                    jsonVal: existing.install_date || null },
       { field: 'install_hours',  xlVal: newInstallDate ? newInstallHours : null,           jsonVal: existing.install_hours || 0 },
-      { field: 'last_smu',       xlVal: parseFloat(getVal(row, 'last_smu')) || null,       jsonVal: existing.last_smu || 0 },
-      { field: 'benchmark',      xlVal: parseFloat(getVal(row, 'benchmark')) || null,      jsonVal: existing.benchmark || null },
-      { field: 'cost',           xlVal: parseFloat(getVal(row, 'comp_cost')) || null,      jsonVal: existing.cost || null },
+      { field: 'last_smu',       xlVal: parseNum(getVal(row, 'last_smu')) || null,       jsonVal: existing.last_smu || 0 },
+      { field: 'benchmark',      xlVal: parseNum(getVal(row, 'benchmark')) || null,      jsonVal: existing.benchmark || null },
+      { field: 'cost',           xlVal: parseNum(getVal(row, 'comp_cost')) || null,      jsonVal: existing.cost || null },
       { field: 'part_number',    xlVal: String(getVal(row, 'part_number') || '').trim() || null, jsonVal: existing.part_number || null },
       { field: 'mm_number',      xlVal: String(getVal(row, 'mm_number') || '').trim() || null,   jsonVal: existing.mm_number || null },
       { field: 'notes',          xlVal: String(getVal(row, 'comp_notes') || '').trim() || null,  jsonVal: existing.notes || null },
@@ -3529,6 +3727,7 @@ function exportUpdatedJSON() {
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
+  _markSessionDownloaded(); // v8.8 FEAT-1 — updatedFleetJSON is the session's latest state
 }
 
 
@@ -3597,14 +3796,14 @@ function buildAndShowHistoricDiffReport() {
     if (!rawUnit || !rawComp) return;
     const unitKey = rawUnit.toUpperCase(); const compKey = rawComp.toUpperCase();
     const installDate  = parseDate(getVal(row, 'install_date'));
-    const installHours = parseFloat(getVal(row, 'install_hours')) || null;
-    const removeSmu    = parseFloat(getVal(row, 'hist_remove_smu')) || null;
+    const installHours = parseNum(getVal(row, 'install_hours')) || null;
+    const removeSmu    = parseNum(getVal(row, 'hist_remove_smu')) || null;
     const removeDate   = parseDate(getVal(row, 'hist_remove_date'));
-    const realizedHrs  = parseFloat(getVal(row, 'hist_realized_hours')) || null;
+    const realizedHrs  = parseNum(getVal(row, 'hist_realized_hours')) || null;
     const replaceWO    = String(getVal(row, 'hist_replace_wo') || '').trim() || null;
     const exchangePart = String(getVal(row, 'hist_exchange_part') || '').trim() || null;
-    const benchmark    = parseFloat(getVal(row, 'benchmark')) || null;
-    const compCost     = parseFloat(getVal(row, 'comp_cost')) || null;
+    const benchmark    = parseNum(getVal(row, 'benchmark')) || null;
+    const compCost     = parseNum(getVal(row, 'comp_cost')) || null;
     const mmNum        = String(getVal(row, 'mm_number') || '').trim() || null;
     const installWO    = String(getVal(row, 'install_wo') || '').trim() || null;
     const compSN       = String(getVal(row, 'comp_sn') || '').trim() || null;
@@ -3857,6 +4056,7 @@ function runHistoricImport(diff, excluded) {
   });
   fleetJSON.meta.lastSaved = new Date().toISOString();
   state.updatedFleetJSON = fleetJSON;
+  _setSessionJSON(fleetJSON, 'Historical import'); // v8.8 FEAT-1 — retain for chaining
   document.getElementById('updateResults').style.display = 'block';
   document.getElementById('updateResultStats').innerHTML = `
     <div class="stat-pill"><div class="stat-num s-green">${imported}</div><div class="stat-lbl">Imported</div></div>
@@ -3998,14 +4198,14 @@ function processHistoricForBuild() {
     const unitKey = rawUnit.toUpperCase();
     const compKey = rawComp.toUpperCase();
     const installDate  = parseDate(getVal(row, 'install_date'));
-    const installHours = parseFloat(getVal(row, 'install_hours')) || null;
-    const removeSmu    = parseFloat(getVal(row, 'hist_remove_smu')) || null;
+    const installHours = parseNum(getVal(row, 'install_hours')) || null;
+    const removeSmu    = parseNum(getVal(row, 'hist_remove_smu')) || null;
     const removeDate   = parseDate(getVal(row, 'hist_remove_date'));
-    const realizedHrs  = parseFloat(getVal(row, 'hist_realized_hours')) || null;
+    const realizedHrs  = parseNum(getVal(row, 'hist_realized_hours')) || null;
     const replaceWO    = String(getVal(row, 'hist_replace_wo') || '').trim() || null;
     const exchangePart = String(getVal(row, 'hist_exchange_part') || '').trim() || null;
-    const benchmark    = parseFloat(getVal(row, 'benchmark')) || null;
-    const compCost     = parseFloat(getVal(row, 'comp_cost')) || null;
+    const benchmark    = parseNum(getVal(row, 'benchmark')) || null;
+    const compCost     = parseNum(getVal(row, 'comp_cost')) || null;
     const mmNum        = String(getVal(row, 'mm_number') || '').trim() || null;
     const installWO    = String(getVal(row, 'install_wo') || '').trim() || null;
     const compSN       = String(getVal(row, 'comp_sn') || '').trim() || null;
@@ -4361,18 +4561,23 @@ function loadIdlingFleetJSON(file) {
   const r = new FileReader();
   r.onload = function(ev) {
     try {
-      idlingState.fleetJSON     = JSON.parse(ev.target.result);
-      idlingState.fleetFilename = file.name;
-      const units = (idlingState.fleetJSON.masterData && idlingState.fleetJSON.masterData.units) || [];
-      document.getElementById('idlingJsonStatus').textContent =
-        '✓ Loaded: ' + file.name + ' · ' + units.length + ' units found in masterData.units[]';
-      const step2 = document.getElementById('idlingStep2Card');
-      step2.style.opacity = '1'; step2.style.pointerEvents = '';
+      _adoptIdlingJSON(JSON.parse(ev.target.result), file.name);
     } catch (err) {
       document.getElementById('idlingJsonStatus').textContent = '✗ Could not parse JSON: ' + err.message;
     }
   };
   r.readAsText(file);
+}
+
+// v8.8 FEAT-1 — shared adopt path for IDLING Step-1 (file loader + session handoff).
+function _adoptIdlingJSON(json, displayLabel) {
+  idlingState.fleetJSON     = json;
+  idlingState.fleetFilename = displayLabel;
+  const units = (json.masterData && json.masterData.units) || [];
+  document.getElementById('idlingJsonStatus').textContent =
+    '✓ Loaded: ' + displayLabel + ' · ' + units.length + ' units found in masterData.units[]';
+  const step2 = document.getElementById('idlingStep2Card');
+  step2.style.opacity = '1'; step2.style.pointerEvents = '';
 }
 
 function loadIdlingXLSX(file) {
@@ -4655,7 +4860,7 @@ function renderIdlingPreview() {
       const sn       = colSN      >= 0 ? String(row[colSN]      == null ? '' : row[colSN]).trim()      : '';
       const callout  = colCallout >= 0 ? String(row[colCallout] == null ? '' : row[colCallout]).trim() : '';
       const rawCell  = row[colIdle];
-      let   raw      = (typeof rawCell === 'number' && isFinite(rawCell)) ? rawCell : parseFloat(rawCell);
+      let   raw      = (typeof rawCell === 'number' && isFinite(rawCell)) ? rawCell : parseNum(rawCell); // v8.7 FIX-5
 
       // v8.7 — format normalisation. Decimal (0-1) → multiply by 100 to get
       // percent (the stored convention). Percent (0-100) → use as-is.
@@ -4804,7 +5009,9 @@ function renderIdlingPreview() {
   previewEl.innerHTML = pv;
 }
 
-function applyIdlingToJSON() {
+// v8.8 FEAT-1 — `download` param: true = legacy apply + download; false = apply
+// into the in-memory session JSON only (chaining; final download later).
+function applyIdlingToJSON(download = true) {
   const preview = idlingState.preview;
   if (!preview || !preview.writes.length) {
     alert('Nothing to apply. Drop an XLSX, assign sheets, and click Preview first.');
@@ -4879,8 +5086,14 @@ function applyIdlingToJSON() {
   const dateStr = new Date().toISOString().split('T')[0];
   fleet.meta.notes = (fleet.meta.notes || '') +
     (fleet.meta.notes ? '\n' : '') +
-    'Idling import via Intake v8.7 FIX-2 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
+    'Idling import via Intake v8.8 — ' + dateStr + ' — ' + written + ' unit-field writes from ' + esc(idlingState.workbookFilename || 'XLSX') + ' — schema: ' + schemaLabel;
 
+  // v8.8 FEAT-1 — retain the applied result in the session for chaining. The
+  // applied clone becomes the session's latest state (the loaded reference in
+  // idlingState stays untouched, exactly as before).
+  _setSessionJSON(fleet, 'Idling ' + written + ' write' + (written === 1 ? '' : 's'));
+
+  if (download) {
   // Build filename — reuse NumaCoreLib helper if available; safe fallback otherwise.
   const clientCode = String((fleet.meta && fleet.meta.clientCode) || 'CLIENT').replace(/[^A-Z0-9_]/gi, '_');
   let fname;
@@ -4899,10 +5112,17 @@ function applyIdlingToJSON() {
   document.body.appendChild(a);
   a.click();
   setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+  _markSessionDownloaded();
 
   // Quiet toast (operator-locked: no confirm() prompts).
   if (window.NumaCoreLib && typeof window.NumaCoreLib.showToast === 'function') {
     window.NumaCoreLib.showToast('Applied ' + written + ' idle value(s). Downloaded ' + fname, 'success', 3500);
+  }
+  } else {
+    // Session-only apply — no file written yet; banner carries the warning.
+    if (window.NumaCoreLib && typeof window.NumaCoreLib.showToast === 'function') {
+      window.NumaCoreLib.showToast('Applied ' + written + ' idle value(s) to the session JSON — download from the session banner when done.', 'success', 3500);
+    }
   }
 }
 
@@ -4937,19 +5157,23 @@ function loadConmonFleetJSON(file) {
   const reader = new FileReader();
   reader.onload = ev => {
     try {
-      const j = JSON.parse(ev.target.result);
-      state.conmonFleetJSON = j;
-      const dz = document.getElementById('dropZoneConmonJSON');
-      dz.classList.add('loaded');
-      const nComps = Array.isArray(j.components) ? j.components.length : 0;
-      dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${file.name}</strong> — ${nComps} components</p>`;
-      const step2 = document.getElementById('conmonStep2Card');
-      step2.style.opacity = '1';
-      step2.style.pointerEvents = 'auto';
-      if (j.meta && j.meta.clientCode) document.getElementById('clientCode').value = j.meta.clientCode;
+      _adoptConmonJSON(JSON.parse(ev.target.result), file.name);
     } catch(err) { alert('Invalid JSON: ' + err.message); }
   };
   reader.readAsText(file);
+}
+
+// v8.8 FEAT-1 — shared adopt path for CONMON Step-1 (file loader + session handoff).
+function _adoptConmonJSON(j, displayLabel) {
+  state.conmonFleetJSON = j;
+  const dz = document.getElementById('dropZoneConmonJSON');
+  dz.classList.add('loaded');
+  const nComps = Array.isArray(j.components) ? j.components.length : 0;
+  dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${esc(displayLabel)}</strong> — ${nComps} components</p>`;
+  const step2 = document.getElementById('conmonStep2Card');
+  step2.style.opacity = '1';
+  step2.style.pointerEvents = 'auto';
+  if (j.meta && j.meta.clientCode) document.getElementById('clientCode').value = j.meta.clientCode;
 }
 
 async function loadConmonPdfs(files) {
@@ -5099,7 +5323,9 @@ function renderConmonPreview() {
   if (typeof attachTableSort === 'function') attachTableSort(document.getElementById('conmonPreviewTable'));
 }
 
-function commitConmonSamples() {
+// v8.8 FEAT-1 — `download` param: true = legacy behaviour (commit + download);
+// false = commit into the session JSON only (chaining; final download later).
+function commitConmonSamples(download = true) {
   const fj = state.conmonFleetJSON;
   if (!fj) { alert('No fleet JSON loaded.'); return; }
   if (!state.conmonSamples.length) { alert('No samples parsed.'); return; }
@@ -5159,6 +5385,9 @@ function commitConmonSamples() {
   fj.conditionMonitoring = trimmed;
   if (!fj.meta) fj.meta = {};
   fj.meta.lastConmonImport = new Date().toISOString();
+  // v8.8 FEAT-1 — retain the committed result in the session for chaining.
+  _setSessionJSON(fj, `ConMon +${newRecords.length} sample${newRecords.length===1?'':'s'}`);
+  if (download) {
   // Download
   const clientCode = (fj.meta && fj.meta.clientCode) ? fj.meta.clientCode : 'CLIENT';
   // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
@@ -5173,6 +5402,8 @@ function commitConmonSamples() {
   a.href = URL.createObjectURL(blob);
   a.download = filename;
   a.click();
+  _markSessionDownloaded();
+  } // end if (download)
   // v8.2 Bug A UX fix: distinguish new-to-fleet vs updated-existing in the commit alert.
   // Previously said "Committed N samples" without telling operator whether those N were
   // additions or replacements of existing same-sample_id entries.
@@ -5183,7 +5414,7 @@ function commitConmonSamples() {
   if (newToFleet > 0)      parts.push(`${newToFleet} new`);
   if (updatedExisting > 0) parts.push(`${updatedExisting} updated existing entr${updatedExisting===1?'y':'ies'}`);
   const breakdown = parts.length ? ` — ${parts.join(', ')}` : '';
-  alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).`);
+  alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).${download ? '' : ' Retained in session — download from the session banner when done.'}`);
 }
 
 // v8.2 Bug B fix companion: clears just the parsed-samples queue without dropping the
