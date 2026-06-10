@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.13 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.17 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -816,6 +816,36 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
   </div>
 </div>
 
+<!-- v8.17 — Deactivate choice modal (operator-requested park vs clear).
+     Park = today's behaviour (retain everything). Clear = wipe this project's
+     working data back to a never-activated shell; fleet-wide WO memory
+     (deploy.knownFleetWOs) is NEVER touched by a project clear. -->
+<div class="modal-ov" id="modalDeactivate">
+  <div class="modal" style="min-width:520px">
+    <div class="modal-title">⏸ Deactivate Project</div>
+    <div class="mrow">
+      <span class="mlbl">Project</span>
+      <div style="font-size:13px;color:var(--txt2);font-weight:600" id="deactProjName"></div>
+    </div>
+    <div class="mrow">
+      <span class="mlbl">This project currently holds</span>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6" id="deactCounts"></div>
+    </div>
+    <div class="mrow">
+      <div style="font-size:11px;color:var(--muted);line-height:1.5">
+        <strong style="color:var(--txt2)">🅿 Park</strong> keeps all of it for later (today's behaviour — reactivate any time).<br>
+        <strong style="color:var(--red)">🧹 Clear</strong> wipes everything listed above back to a clean, never-activated shell.
+        <strong>Cannot be undone.</strong> Fleet-wide WO memory and Cadence's project are not affected.
+      </div>
+    </div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="_cancelDeactivate()">Cancel</button>
+      <button class="mbtn secondary" id="deactClearBtn" style="border-color:var(--red);color:var(--red)" onclick="_deactivateClear()">🧹 Clear project memory</button>
+      <button class="mbtn primary"   onclick="_deactivatePark()">🅿 Park (keep everything)</button>
+    </div>
+  </div>
+</div>
+
 <!-- Gate detail (Gantt click) -->
 <div class="modal-ov" id="modalGate">
   <div class="modal" style="min-width:420px">
@@ -1122,7 +1152,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.16';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
+const VERSION = '8.17';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1642,6 +1672,17 @@ function ensurePD(id, templateId) {
   // drops rows whose ack is more recent than the closed-transition's
   // last_seen_iso. Re-surfaces on subsequent transitions of the same WO.
   if (!p.recentlyClosedAcked || typeof p.recentlyClosedAcked !== 'object') p.recentlyClosedAcked = {};
+  // v8.16 FIX-6 — per-WO notes keyed by WO number (mirrors woHide). The old
+  // notes lived on index-addressed p.workOrders[i] rows — TypeError on the
+  // fleet-wide path (workOrders empty since v8.15) and wrong-row writes when
+  // filtered. One-time migration pulls any non-empty legacy row notes across.
+  if (!p.woNotes || typeof p.woNotes !== 'object') {
+    p.woNotes = {};
+    (Array.isArray(p.workOrders) ? p.workOrders : []).forEach(w => {
+      const n = String((w && w.wo_number) || '').trim();
+      if (n && w.notes && String(w.notes).trim() && !p.woNotes[n]) p.woNotes[n] = String(w.notes);
+    });
+  }
   p.gates.forEach(g => { if (!g.type) g.type = 'task'; });
   // v8.11 Item-4 — Gates ↔ Gantt source-of-truth consolidation. Pre-v8.11,
   // Gantt-added "custom tasks" were stored in a separate p.customTasks[]
@@ -1816,13 +1857,11 @@ function renderSidebar() {
 // ─────────────────────────────────────────────
 function handleToggle(id) {
   if (isActive(id)) {
-    // Deactivate
-    if (deploy.projects[id]) deploy.projects[id].activated = false;
-    renderSidebar();
-    if (selProjId === id) renderProjHeader(id);
-    renderOverview();
-    if (selProjId === id && curTab === 'gantt') renderGantt(id);   // re-render so cancelled overlay appears
-    _markUnsaved();
+    // v8.17 — deactivation is now a CHOICE (operator-requested 2026-06-10:
+    // "when I de-activate a project I should have the choice to retain the
+    // work / comments / entries to that point or delete it"). Park = the old
+    // silent behaviour (retain everything); Clear = wipe to a clean shell.
+    _openDeactivateModal(id);
   } else {
     // v8.11 Item-2 — reactivation path. A project with an existing
     // activatedDate but activated=false has been cancelled and is now being
@@ -1867,6 +1906,84 @@ function handleToggle(id) {
     populateTemplateSel('actTemplate');
     openModal('modalActivate');
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v8.17 — Deactivate choice: PARK (retain — the pre-v8.17 behaviour) vs
+// CLEAR (wipe this project's working data back to a never-activated shell).
+// Cardinal rules: a project clear NEVER touches deploy.knownFleetWOs (that
+// memory belongs to the whole fleet and feeds the Lens Risk Report), and the
+// clear also purges the project's legacy dual-shape twin (workingData/
+// working .projectDetails) so the v8.10 richer-side merge cannot resurrect
+// the cleared data from the stale copy on a later load.
+// ─────────────────────────────────────────────────────────────────────────
+let _pendingDeactivateId = null;
+
+function _openDeactivateModal(id) {
+  const p  = ensurePD(id);
+  const fp = fleetProjects.find(x => x.id === id);
+  _pendingDeactivateId = id;
+  document.getElementById('deactProjName').textContent = fp ? `${fp.unit} — ${fp.name}` : id;
+  const gatesTouched = (p.gates || []).filter(g => g.status && g.status !== 'not_started').length;
+  const counts = [
+    `${gatesTouched} gate${gatesTouched === 1 ? '' : 's'} with progress`,
+    `${(p.bom || []).length} BOM row${(p.bom || []).length === 1 ? '' : 's'}`,
+    `${(p.notes || []).length} note${(p.notes || []).length === 1 ? '' : 's'}`,
+    `${(p.actions || []).length} action${(p.actions || []).length === 1 ? '' : 's'}`,
+    `${Object.keys(p.woNotes || {}).length} WO note${Object.keys(p.woNotes || {}).length === 1 ? '' : 's'}`,
+    `${Object.keys(p.knownWOs || {}).length} remembered WO${Object.keys(p.knownWOs || {}).length === 1 ? '' : 's'} (this project)`
+  ];
+  document.getElementById('deactCounts').textContent = counts.join(' · ');
+  // Disarm the two-click Clear safety on every open.
+  const btn = document.getElementById('deactClearBtn');
+  if (btn) { btn.dataset.armed = ''; btn.textContent = '🧹 Clear project memory'; }
+  openModal('modalDeactivate');
+}
+
+function _cancelDeactivate() {
+  _pendingDeactivateId = null;
+  closeModal('modalDeactivate');
+}
+
+function _deactivatePark() {
+  const id = _pendingDeactivateId;
+  if (!id) { closeModal('modalDeactivate'); return; }
+  _pendingDeactivateId = null;
+  closeModal('modalDeactivate');
+  // Pre-v8.17 deactivate behaviour, verbatim: flag off, retain everything.
+  if (deploy.projects[id]) deploy.projects[id].activated = false;
+  renderSidebar();
+  if (selProjId === id) renderProjHeader(id);
+  renderOverview();
+  if (selProjId === id && curTab === 'gantt') renderGantt(id);   // re-render so cancelled overlay appears
+  _markUnsaved();
+  toast('Project parked — all work retained. Reactivate any time.', 'success');
+}
+
+function _deactivateClear() {
+  const id = _pendingDeactivateId;
+  if (!id) { closeModal('modalDeactivate'); return; }
+  // Two-click safety: first click arms, second click clears.
+  const btn = document.getElementById('deactClearBtn');
+  if (btn && btn.dataset.armed !== '1') {
+    btn.dataset.armed = '1';
+    btn.textContent = '🧹 Click again to confirm — clears everything listed above';
+    return;
+  }
+  const old   = deploy.projects[id];
+  const tplId = old && old.templateId;
+  delete deploy.projects[id];
+  ensurePD(id, tplId);   // re-seed a fresh never-activated shell (template gates, empty everything)
+  // Tombstone purge — both schema spellings of the legacy dual-shape twin.
+  try { if (fleetData && fleetData.workingData && fleetData.workingData.projectDetails) delete fleetData.workingData.projectDetails[id]; } catch (e) {}
+  try { if (fleetData && fleetData.working && fleetData.working.projectDetails) delete fleetData.working.projectDetails[id]; } catch (e) {}
+  _pendingDeactivateId = null;
+  closeModal('modalDeactivate');
+  renderSidebar();
+  renderOverview();
+  if (selProjId === id) { renderProjHeader(id); switchTab(curTab); }
+  _markUnsaved();
+  toast('Project memory cleared — reset to a clean shell. Fleet-wide WO memory untouched.', 'success');
 }
 
 function cancelActivate() {
@@ -3209,6 +3326,23 @@ function _recordKnownWOs(projId, sourceWOs, sourceAsOfIso) {
     } else {
       const existing = p.knownWOs[num];
       if (existing.last_status !== newStatus) changed = true;
+      // v8.16 FIX-7 — capture the open→closed transition BEFORE last_status is
+      // overwritten. The Recently Closed bucket and the v8.14 import toast
+      // checked "was previously open" AFTER this overwrite had already run, so
+      // the condition could never pass — the feature has never fired. The
+      // persisted stamp also survives the WO dropping off the next open-WO
+      // export (which closed WOs routinely do). A reopen clears the stamp.
+      const _ropen = ['REL', 'CRTD'];
+      const _rtok  = s => String(s || '').trim().split(/[\s,;|/]+/)[0].toUpperCase();
+      if (newStatus && _ropen.includes(_rtok(existing.last_status)) && !_ropen.includes(_rtok(newStatus))) {
+        existing.prev_open_status      = _rtok(existing.last_status);
+        existing.closed_transition_iso = nowIso;
+        changed = true;
+      } else if (newStatus && _ropen.includes(_rtok(newStatus)) && existing.closed_transition_iso) {
+        delete existing.closed_transition_iso;
+        delete existing.prev_open_status;
+        changed = true;
+      }
       existing.last_seen_iso = nowIso;
       existing.last_status   = newStatus || existing.last_status;
       if (wo.description) existing.description = String(wo.description).trim();
@@ -3334,21 +3468,27 @@ function _recentlyClosedWOs(projId, currentSourcePool) {
   const recent = [];
   Object.keys(p.knownWOs).forEach(num => {
     const k = p.knownWOs[num];
-    // Filter: was previously open
-    if (!_OPEN.has(_tok(k.last_status))) return;
     const currentRow = currentMap.get(num);
-    if (!currentRow) return;                              // silent disappear — skip
-    if (_OPEN.has(_tok(currentRow.status))) return;       // still open — not a transition
-    // Closed transition detected
-    const daysSinceLastSeen = Math.max(0, Math.floor((Date.now() - new Date(k.last_seen_iso).getTime()) / 86400000));
+    // v8.16 FIX-7 — qualify via the persisted transition stamp (written by
+    // _recordKnownWOs at the moment it overwrites an open status with a closed
+    // one). The old live-compare ("stored status open AND pool status closed")
+    // could never match because recording always ran first; it is kept only as
+    // a fallback for any call path that reads before recording.
+    const liveTransition    = _OPEN.has(_tok(k.last_status)) && currentRow && !_OPEN.has(_tok(currentRow.status));
+    const stampedTransition = !!k.closed_transition_iso && !_OPEN.has(_tok(k.last_status));
+    if (!liveTransition && !stampedTransition) return;
+    // Closed transition detected. days_since anchors on the TRANSITION moment
+    // (last_seen_iso updates on every load, so it always read ~0 before).
+    const transIso = k.closed_transition_iso || k.last_seen_iso;
+    const daysSinceLastSeen = Math.max(0, Math.floor((Date.now() - new Date(transIso).getTime()) / 86400000));
     recent.push({
       wo_number:      num,
-      last_status:    _tok(k.last_status),
-      current_status: _tok(currentRow.status) || 'CLOSED',
-      description:    k.description || String(currentRow.description || '').trim(),
-      component:      k.component   || String(currentRow.component   || '').trim(),
+      last_status:    k.prev_open_status || _tok(k.last_status),
+      current_status: currentRow ? (_tok(currentRow.status) || 'CLOSED') : (_tok(k.last_status) || 'CLOSED'),
+      description:    k.description || String((currentRow && currentRow.description) || '').trim(),
+      component:      k.component   || String((currentRow && currentRow.component)   || '').trim(),
       days_since:     daysSinceLastSeen,
-      last_seen_iso:  k.last_seen_iso
+      last_seen_iso:  transIso   // ack-compare anchor = the transition moment
     });
   });
   // Sort newest-transitions-first (smallest days_since on top)
@@ -3704,7 +3844,7 @@ function renderWorkOrders(id) {
 
   if (!wos.length) {
     if (_fleetWideLoaded) {
-      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No <strong>open</strong> work orders match the current filter for unit <strong>${esc(_unitId || '—')}</strong>.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total; ${_filteredOutCount.toLocaleString()} excluded by the active filter).<br><br><span style="color:var(--faint);font-size:11px">Active filter: Order types = <strong>${esc(_orderTypesLbl)}</strong> · Hide descriptions containing = <strong>${esc(_excludeKwsLbl)}</strong> · Status = REL/CRTD only.<br>Adjust filters above or check the Sort Field is set on this project.</span></div>`;
+      el.innerHTML += `<div class="empty"><span class="empty-icon">⚙️</span>No <strong>open</strong> work orders match the current filter for unit <strong>${esc(_unitId || '—')}</strong>.<br>The fleet-wide IW39 is loaded (${_fleetWideIW39.length.toLocaleString()} WOs total; ${_filteredOutCount.toLocaleString()} excluded by the active filter).<br><br><span style="color:var(--faint);font-size:11px">Active filter: Order types = <strong>${esc(_orderTypesLbl)}</strong> · Description filters = <strong>${esc(_descFiltersLbl)}</strong> · Status = REL/CRTD only.<br>Adjust filters above or check the Sort Field is set on this project.</span></div>`;
     } else {
       // v8.15 — empty-state now directs operator to the fleet-wide IW39 pill
       // exclusively (per-project upload removed). Legacy p.workOrders[] still
@@ -3769,6 +3909,10 @@ function renderWorkOrders(id) {
   let visible = _woFilter === 'all' ? wos
               : wos.filter(w => _statusToken(w.status) === _woFilter);
 
+  // v8.16 FIX-6 — notes render from the WO-number-keyed map (legacy wo.notes
+  // as fallback for anything the ensurePD migration didn't claim).
+  const _pNotes = ensurePD(id).woNotes || {};
+
   const rows = visible.map((wo, ri) => {
     const planned = parseFloat(wo.planned_cost)||0;
     const actual  = parseFloat(wo.actual_cost) ||0;
@@ -3801,8 +3945,8 @@ function renderWorkOrders(id) {
         ${varPct!==null ? `${varAmt>0?'+':''}${fmtCost(varAmt)} <span style="font-size:9px">(${varPct>0?'+':''}${varPct}%)</span>` : '—'}
       </td>
       <td style="font-size:10px;color:var(--muted)">${esc(wo.floc||'')}</td>
-      <td><input class="inline-inp" value="${esc(wo.notes||'')}" placeholder="Notes…"
-        onchange="updateWONote('${id}',${wos.indexOf(wo)},this.value)"></td>
+      <td><input class="inline-inp" value="${esc(_pNotes[String(wo.wo_number||'').trim()] || wo.notes || '')}" placeholder="Notes…"
+        onchange="updateWONote('${id}','${_woNumEsc}',this.value)"></td><!-- v8.16 FIX-6: keyed by WO number (was filtered-pool index into a different array) -->
       <td style="text-align:center;width:30px"><button onclick="hideWO('${id}','${_woNumEsc}')" title="Hide this WO from this project (can be restored from the top pill)" style="background:transparent;border:none;color:var(--faint);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--faint)'">✕</button></td>
     </tr>`; }).join('');
 
@@ -3821,7 +3965,19 @@ function renderWorkOrders(id) {
 
 function setWoFilter(f, id) { _woFilter = f; renderWorkOrders(id); }
 
-function updateWONote(id, i, v) { deploy.projects[id].workOrders[i].notes = v; _markUnsaved(); }
+// v8.16 FIX-6 — notes are keyed by WO number in p.woNotes{} (mirrors woHide).
+// The old signature wrote deploy.projects[id].workOrders[i].notes where i was
+// an index into the FILTERED fleet-wide pool: TypeError on the live path
+// (workOrders is empty since v8.15) and wrong-row writes on legacy data.
+function updateWONote(id, woNumber, v) {
+  const p = ensurePD(id);
+  if (!p.woNotes || typeof p.woNotes !== 'object') p.woNotes = {};
+  const key = String(woNumber || '').trim();
+  if (!key) return;
+  if (v && String(v).trim()) p.woNotes[key] = String(v);
+  else delete p.woNotes[key];
+  _markUnsaved();
+}
 
 function clearWOs(id) {
   if (!confirm('Clear all work orders for this project?')) return;
