@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.0 — Mission Control</title>
+<title>NumaCore Lens v4.7 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2127,7 +2127,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.6';
+const VERSION = '4.7';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4100,6 +4100,18 @@ function buildFleetData(json) {
   });
   const _isMissing = (v) => v == null || v === '' || v === 'undefined' || v === 'Undefined';
 
+  // v4.7 FIX — apply Cadence's planner date overrides to the DISPLAYED date.
+  // The override slice was already merged into lensRawData by Mission Control
+  // (or present in the loaded file) but was never read — Pulse/Vitals showed
+  // the baseline date while embedded Cadence showed the dragged one (2026-06-10
+  // review: "two screens disagree in the same client meeting").
+  // Shape-agnostic: V5 workingData.componentDateOverrides / V4 working.componentDates.
+  const _ovr = {};
+  const _wk = _readWorking(json);
+  const _ovrArr = Array.isArray(_wk.componentDateOverrides) ? _wk.componentDateOverrides
+                : (Array.isArray(_wk.componentDates) ? _wk.componentDates : []);
+  _ovrArr.forEach(o => { if (o && o.id != null && o.changeout_date) _ovr[o.id] = o.changeout_date; });
+
   _readComponents(json).forEach(c => {
     // FIX-1 — resolve fleet/unit/component names from V5 fields when V4 fields are missing.
     // Mutates c in place so all downstream reads (here AND later code paths that re-read
@@ -4113,12 +4125,15 @@ function buildFleetData(json) {
       } else {
         c.fleet = 'Unassigned';            // No fleet identity at all → cleaner label than 'Unknown'
       }
+      (c._lensResolved = c._lensResolved || []).push('fleet');       // v4.7 — stripped at export
     }
     if (_isMissing(c.unit) && !_isMissing(c.unit_id)) {
       c.unit = c.unit_id;
+      (c._lensResolved = c._lensResolved || []).push('unit');        // v4.7 — stripped at export
     }
     if (_isMissing(c.component) && !_isMissing(c.name)) {
       c.component = c.name;
+      (c._lensResolved = c._lensResolved || []).push('component');   // v4.7 — stripped at export
     }
 
     const fleet = c.fleet || 'Unknown';
@@ -4136,7 +4151,7 @@ function buildFleetData(json) {
       est_hours:            estHours,
       pct:                  pct,
       install_date:         c.install_date,
-      pred_changeout:       c.changeout_date,
+      pred_changeout:       (c.id != null && _ovr[c.id]) ? _ovr[c.id] : c.changeout_date,  // v4.7 — override-aware (planner's dragged date wins)
       original_date:        c.original_date,
       last_smu:             c.last_smu,
       last_read:            c.last_read,
@@ -4243,8 +4258,16 @@ function loadLensJSON(json) {
   // Re-render panels
   hideLoadScreen();
   try { renderFleet(); } catch(e) { console.warn('renderFleet:', e); }
-  try { renderFleetHealth(); } catch(e) { console.warn('renderFleetHealth:', e); }
   if(typeof renderFleetCol==='function') { try { renderFleetCol(); } catch(e) { console.warn('renderFleetCol:', e); } }
+
+  // v4.7 FIX — re-sync any already-loaded embedded tools with the NEW canonical
+  // fleet. Without this, loading Client B while a Cadence/Deploy tab was open
+  // left the child holding Client A; its next fleet-updated then merged A's
+  // working slices into B's file (2026-06-10 review: the cross-client
+  // contamination path in Mission Control).
+  Object.keys(embedReady).forEach(function(tool) {
+    if (embedReady[tool]) _postToEmbed(tool, { type: 'load-fleet', fleet: lensRawData });
+  });
 }
 
 // ── SAVE TO DISK (v3.5 sub3 / v4 Chunk 5) ──────────────────────────────────
@@ -4254,6 +4277,21 @@ function loadLensJSON(json) {
 function exportFleetJSON() {
   if (!lensRawData) { showToast('No fleet file loaded.', 'warn'); return; }
   const out = JSON.parse(JSON.stringify(lensRawData));  // deep clone; preserves loaded shape
+  // v4.7 FIX — strip the V5→V4 compat backfills that buildFleetData wrote onto
+  // the master records (fleet/unit/component name mirrors + the marker field).
+  // Lens owns ui_settings + meta.lastSaved ONLY; persisting derived name fields
+  // into masterData lets stale strings shadow future fleet/unit renames
+  // suite-wide (2026-06-10 review). The in-memory copies keep the resolved
+  // names — display behaviour is unchanged; only the FILE is restored.
+  const _outComps = (out.masterData && Array.isArray(out.masterData.components))
+    ? out.masterData.components
+    : (Array.isArray(out.components) ? out.components : []);
+  _outComps.forEach(c => {
+    if (c && Array.isArray(c._lensResolved)) {
+      c._lensResolved.forEach(k => { delete c[k]; });
+      delete c._lensResolved;
+    }
+  });
   out.ui_settings = buildUISettings();
   out.meta = out.meta || {};
   out.meta.lastSaved = new Date().toISOString();
@@ -4345,89 +4383,12 @@ document.addEventListener('DOMContentLoaded', function initLoadScreen() {
 // ══════════════════════════════════════════════════════
 //  FLEET HEALTH TAB
 // ══════════════════════════════════════════════════════
-function renderFleetHealth() {
-  let total=0, nHealthy=0, nMonitor=0, nCaution=0, nCritical=0;
-  const riskItems = [];
-  const fleetStats = {};
-
-  Object.keys(FLEET_DATA).forEach(fleet => {
-    const models = FLEET_DATA[fleet];
-    let fTotal=0, fWorst='green', fTotalPct=0, fCompCount=0;
-    Object.keys(models).forEach(model => {
-      Object.keys(models[model]).forEach(unit => {
-        total++; fTotal++;
-        const comps = models[model][unit] || [];
-        let unitWorst = 'green';
-        comps.forEach(c => {
-          const clr = getColor(c.pct);
-          fTotalPct += c.pct; fCompCount++;
-          if(COLOR_RANK[clr] > COLOR_RANK[unitWorst]) unitWorst = clr;
-          if(c.pct > 0.9) riskItems.push({unit,fleet,model,comp:c.component,pct:c.pct,clr});
-        });
-        if(COLOR_RANK[unitWorst] > COLOR_RANK[fWorst]) fWorst = unitWorst;
-        if(unitWorst==='green') nHealthy++;
-        else if(unitWorst==='yellow') nMonitor++;
-        else if(unitWorst==='orange') nCaution++;
-        else nCritical++;
-      });
-    });
-    fleetStats[fleet] = {total:fTotal, worst:fWorst, avgPct:fCompCount ? fTotalPct/fCompCount : 0};
-  });
-
-  document.getElementById('fhk-total-val').textContent = total;
-  document.getElementById('fhk-healthy-val').textContent = nHealthy;
-  document.getElementById('fhk-monitor-val').textContent = nMonitor;
-  document.getElementById('fhk-caution-val').textContent = nCaution;
-  document.getElementById('fhk-critical-val').textContent = nCritical;
-
-  const body = document.getElementById('fh-fleet-table-body');
-  body.innerHTML = '';
-  const lblMap={green:'Healthy',yellow:'Monitor',orange:'Caution',red:'Critical'};
-  const bgMap={green:'rgba(76,175,80,0.15)',yellow:'rgba(255,193,7,0.12)',orange:'rgba(255,112,67,0.12)',red:'rgba(244,67,54,0.15)'};
-
-  Object.keys(fleetStats).sort().forEach(fleet => {
-    const s = fleetStats[fleet];
-    const imgSrc = FLEET_IMAGE[fleet] || '';
-    const avgPctVal = Math.round(s.avgPct * 100);
-    const barClr = getHex(getColor(s.avgPct));
-    const row = document.createElement('div');
-    row.className = 'fh-fleet-row';
-    row.onclick = () => { switchTab('vitals'); setTimeout(() => vtGoToFleet(fleet), 120); };
-    row.innerHTML = `
-      <div class="fh-fleet-name">
-        ${imgSrc ? `<img src="${imgSrc}" class="fh-fleet-thumb" alt="">` : ''}
-        ${fleet}
-      </div>
-      <div class="fh-fleet-count">${s.total}</div>
-      <div><span class="fh-worst-badge" style="background:${bgMap[s.worst]};color:${getHex(s.worst)};border:1px solid ${getHex(s.worst)}40">${lblMap[s.worst]}</span></div>
-      <div>
-        <div class="fh-health-bar-wrap"><div class="fh-health-bar" style="width:${Math.min(avgPctVal,100)}%;background:${barClr}"></div></div>
-        <div style="font-size:0.57rem;color:#1d9e75;margin-top:2px">${avgPctVal}% avg consumed</div>
-      </div>
-      <button class="fh-view-btn" onclick="event.stopPropagation();switchTab('vitals');setTimeout(()=>vtGoToFleet('${fleet}'),120)">View →</button>
-    `;
-    body.appendChild(row);
-  });
-
-  riskItems.sort((a,b) => b.pct - a.pct);
-  const riskList = document.getElementById('fh-risk-list');
-  riskList.innerHTML = '';
-  riskItems.slice(0,8).forEach(r => {
-    const hex = getHex(r.clr);
-    const div = document.createElement('div');
-    div.className = 'fh-risk-item';
-    // FIX-1: r.unit, r.comp JSON-derived.
-    div.innerHTML = `<div class="fh-risk-dot" style="background:${hex};box-shadow:0 0 6px ${hex}80"></div><div class="fh-risk-unit">${esc(r.unit)}</div><div class="fh-risk-comp">${esc(r.comp)}</div><div class="fh-risk-pct" style="color:${hex}">${(r.pct*100).toFixed(0)}%</div>`;
-    div.onclick = () => navigateToUnit(r.fleet, r.model, r.unit);
-    riskList.appendChild(div);
-  });
-
-  const worstFleet = Object.keys(fleetStats).reduce((a,b) => COLOR_RANK[fleetStats[b].worst] >= COLOR_RANK[fleetStats[a].worst] ? b : a, Object.keys(fleetStats)[0]);
-  const heroImg = document.getElementById('fh-hero-img');
-  const heroLbl = document.getElementById('fh-hero-label');
-  if(FLEET_IMAGE[worstFleet]) heroImg.src = FLEET_IMAGE[worstFleet];
-  heroLbl.textContent = worstFleet + ' · ' + Object.keys(FLEET_DATA[worstFleet]||{})[0];
-}
+// ── renderFleetHealth — REMOVED in v4.7 (2026-06-10 review) ───────────────────
+// The Fleet Health tab was retired to a placeholder, but this renderer kept
+// being called, threw on the missing DOM (fhk-total-val etc.), and aborted
+// every render pipeline it sat in — settings toggles left Vitals/Pulse stale.
+// All call sites removed in v4.7. The ~80-line body is preserved in the BASE
+// snapshot (archive/Lens/v4.7/) if the tab is ever revived.
 
 // ══════════════════════════════════════════════════════
 
@@ -4451,7 +4412,9 @@ function _scKey(parts) { return parts.join('||'); }
 
 function _applyAll() {
   if (typeof renderFleet === 'function') renderFleet();
-  if (typeof renderFleetHealth === 'function') renderFleetHealth();
+  // v4.7 FIX — renderFleetHealth call removed: the function targeted DOM retired
+  // with the Fleet Health tab, threw on every call, and aborted the renders
+  // below — settings toggles left Vitals/Pulse stale (2026-06-10 review).
   if (currentTab === 'vitals' && typeof renderVitals   === 'function') renderVitals();
   if (currentTab === 'pulse'  && typeof renderPulse    === 'function') renderPulse();
 }
@@ -4885,7 +4848,7 @@ function renderConfigPanel() {
       row.querySelector('input').addEventListener('change', function() {
         if (!lensVisible[fleet]) lensVisible[fleet] = {};
         lensVisible[fleet][model] = this.checked;
-        renderFleet(); renderFleetHealth();
+        renderFleet();   /* v4.7 — renderFleetHealth removed (retired tab) */
         if (currentTab === 'vitals') renderVitals();
         if (currentTab === 'pulse') renderPulse();
       });
@@ -5841,7 +5804,7 @@ function cfgSelectAll(fleet, val) {
   Object.keys(FLEET_DATA[fleet]||{}).forEach(function(model) { lensVisible[fleet][model] = val; });
   var block = document.querySelector('.cfg-fleet-block[data-fleet="'+fleet+'"]');
   if (block) block.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = val);
-  renderFleet(); renderFleetHealth();
+  renderFleet();   /* v4.7 — renderFleetHealth removed (retired tab) */
   if (currentTab === 'vitals') renderVitals();
   if (currentTab === 'pulse') renderPulse();
   // v4.3.5 — direct lensVisible mutation; persist.
