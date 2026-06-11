@@ -5248,16 +5248,26 @@ function renderGantt(projId) {
   container.innerHTML = _cancelledBanner + `
     <div class="gantt-axis">
       ${axisTicks}
-      <div class="gantt-today-line" style="left:calc(200px + (100% - 200px) * ${todayPct} / 100)"></div>
-      <div class="gantt-today-label" style="left:calc(200px + (100% - 200px) * ${todayPct} / 100)">TODAY</div>
-      <div class="gantt-start-line" style="left:calc(200px + (100% - 200px) * ${projStartPct} / 100)"></div>
-      ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + (100% - 200px) * ${projEndPct} / 100);top:0;bottom:0;width:2px;background:var(--red);opacity:.35;pointer-events:none;z-index:3"></div>` : ''}
+      <!-- v8.17 FIX-3 (operator screenshot, 2026-06-10) — .gantt-axis already has
+           margin-left:200px, so its children live in CHART coordinates: plain pct%
+           (matching the axis ticks). FIX-4's full-container calc() double-offset
+           these four — TODAY label sat right of the TODAY line. The three
+           row-spanning markers BELOW are children of the full-width container and
+           correctly keep the 200px calc(). -->
+      <div class="gantt-today-line" style="left:${todayPct}%"></div>
+      <div class="gantt-today-label" style="left:${todayPct}%">TODAY</div>
+      <div class="gantt-start-line" style="left:${projStartPct}%"></div>
+      ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:${projEndPct}%;top:0;bottom:0;width:2px;background:var(--red);opacity:.35;pointer-events:none;z-index:3"></div>` : ''}
     </div>
     ${shutdownWindowRow}
     ${rows}
-    <div style="position:absolute;left:calc(200px + (100% - 200px) * ${todayPct} / 100);top:28px;bottom:10px;width:3px;background:var(--gold);opacity:.85;pointer-events:none;z-index:30;box-shadow:0 0 6px rgba(255,213,79,0.35)"></div>
-    <div style="position:absolute;left:calc(200px + (100% - 200px) * ${projStartPct} / 100);top:28px;bottom:10px;width:2px;background:var(--green);opacity:.4;pointer-events:none;z-index:2"></div>
-    ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(200px + (100% - 200px) * ${projEndPct} / 100);top:28px;bottom:10px;width:2px;background:var(--red);opacity:.3;pointer-events:none;z-index:2"></div>` : ''}
+    <!-- v8.17 FIX-3 — these three are absolutely positioned against the PADDING box
+         (#ganttContainer pads 20px/side); the axis + ticks live in the content box.
+         220px = padding-left + label column; 240px = both paddings + label column.
+         Keeps row-spanning markers pixel-aligned with the axis ticks above. -->
+    <div style="position:absolute;left:calc(220px + (100% - 240px) * ${todayPct} / 100);top:28px;bottom:10px;width:3px;background:var(--gold);opacity:.85;pointer-events:none;z-index:30;box-shadow:0 0 6px rgba(255,213,79,0.35)"></div>
+    <div style="position:absolute;left:calc(220px + (100% - 240px) * ${projStartPct} / 100);top:28px;bottom:10px;width:2px;background:var(--green);opacity:.4;pointer-events:none;z-index:2"></div>
+    ${projEndPct>=0&&projEndPct<=100 ? `<div style="position:absolute;left:calc(220px + (100% - 240px) * ${projEndPct} / 100);top:28px;bottom:10px;width:2px;background:var(--red);opacity:.3;pointer-events:none;z-index:2"></div>` : ''}
   `;
 
   // Store timeline metadata on the container for drag calculations
