@@ -264,8 +264,11 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
-  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-05-17 — covers Lens v4.3.6 + FIX-1 · <strong>Cadence v18.5.9 (P/Lock + cleanup toolkit + save-time safety net + Override Audit accessed from Config + multi-select + 4 master buttons + Clear All Orphans + FIX today-clamp orphan self-generation + FIX JSON drag-drop on splash + 🩺 Health Check button + 4-level Fleet/Model/Unit/Component roll-up)</strong> · Deploy v8.13 + FIX-1 · Intake v8.7 + FIX-2 · numacore_lib v1.5.1 · Tab 13 Forecast Dates updated for v18.5.9</p>
-  <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-05-08.</div>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-06-10 — covers <strong>Lens v4.8 · Cadence v18.7 · Deploy v8.18 · Intake v8.8 · numacore_lib v1.5.1</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
+  <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-06-10.</div>
+  <div style="max-width:880px;margin:10px auto 0;background:rgba(61,201,160,0.06);border:1px solid rgba(61,201,160,0.25);border-radius:8px;padding:10px 16px;font-size:11.5px;color:var(--text-sec,#b8c4cc);line-height:1.6">
+    <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-06-10):</b> versions referenced inside narrative sections below are historical and left as written. Headline changes since the 2026-05-17 revision: Cadence v18.6 save-integrity (ERP reference dates round-trip untouched) + v18.7 security/vendoring; Deploy v8.14–v8.18 (Cadence-shift continuity · fleet-wide WO persistence · park-vs-clear deactivation · Gantt marker fixes · dual-shape retirement); Lens v4.4–v4.8 (override-aware dates · embed re-sync on file load · escaping sweep · dead-code purge); Intake v8.8 (session JSON chaining across UPDATE/CONMON/IDLING + update-integrity fixes). See the Record of Change for the full ledger.
+  </div>
 </header>
 
 <nav class="section-nav" id="sectionNav">
@@ -460,21 +463,20 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
   <h3>File layout on disk</h3>
 <pre>4 - Build Output/
-├── Lens v4.3.6.html            ← host app (Mission Control) — visibility autosave + Util % bands
-├── Cadence v18.4.html          ← standalone scheduler
-├── Deploy v8.11.html           ← standalone execution — Gates/Tasks UX bundle
-├── Intake v8.7.html            ← data ingestion (FIX-1 in-place) — Idling tab
+├── Lens v4.8.html              ← host app (Mission Control)
+├── Cadence v18.7.html          ← standalone scheduler
+├── Deploy v8.18.html           ← standalone execution
+├── Intake v8.8.html            ← data ingestion
 ├── FleetConfig v0.1.html       ← fleet/model/unit editor
-├── migrate.html                ← V4 Flat → V5 migrator
+├── migrate.html                ← V4 Flat → V5 migrator (GATED — see Migrate tab)
 ├── numacore_lib.js             ← shared library (v1.5.1) — esc, parseDate, makeComponentId,
 │                                  V5 validator, showToast (top-clearance applied), fmtDate
-└── tools/
-    ├── index.html              ← Pages landing
-    ├── cadence.html            ← iframe target
-    ├── deploy.html             ← iframe target
-    ├── intake.html             ← Pages link
-    └── fleetconfig.html        ← Pages link</pre>
-  <p class="note">Versions shown reflect live Pages state at the time of the most recent manual revision (see header). Run <code>archive/&lt;Tool&gt;/v&lt;N&gt;/</code> to find rollback snapshots and per-version Backlog.md files.</p>
+├── vendor/                     ← vendored libraries (v8.18-era P5 ship)
+│   ├── xlsx.full.min.js        ← SheetJS 0.20.2 (local-first; CDN fallback in each tool)
+│   ├── pdf.min.js              ← pdf.js 3.11.174
+│   └── pdf.worker.min.js
+└── archive/                    ← per-version snapshots + Backlog.md files</pre>
+  <p class="note">Versions shown reflect live Pages state at the time of the most recent manual revision (see header). The GitHub suite repo serves the same files under flat names (index.html / cadence.html / deploy.html / intake.html / fleetconfig.html). The old <code>tools/</code> subfolder is a stale staging area — do not use it. Run <code>archive/&lt;Tool&gt;/v&lt;N&gt;/</code> to find rollback snapshots and per-version Backlog.md files.</p>
 
   <h3>file:// vs GitHub Pages — both first-class</h3>
   <p>The suite must work identically from a local file system AND from a hosted GitHub Pages deploy. Two contexts, one codebase.</p>
@@ -489,10 +491,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
   </table>
 
   <h3>Allowed external dependencies</h3>
-  <p>Two CDN libraries only:</p>
+  <p>Two libraries only — <b>vendored locally since 2026-06-10 (review P5)</b>, with a CDN fallback tag in each tool if the local copy fails to load:</p>
   <ul>
-    <li><b>SheetJS 0.18.5</b> — Excel read/write (Cadence export, Intake ingestion)</li>
-    <li><b>pdf.js 3.11.174</b> — PDF text extraction (Intake CONMON FluidLife reader)</li>
+    <li><b>SheetJS 0.20.2</b> — Excel read/write (Cadence export, Intake ingestion). Upgraded from CDN-pinned 0.18.5, which had published CVEs triggered by crafted spreadsheets and a frozen cdnjs channel.</li>
+    <li><b>pdf.js 3.11.174</b> — PDF text extraction (Intake CONMON FluidLife reader). Pinned deliberately: 4.x is ES-modules-only.</li>
   </ul>
   <div class="callout warn">
     <div class="callout-title">No new dependencies</div>
@@ -501,7 +503,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
   <h3>JSON-in JSON-out workflow</h3>
   <ol>
-    <li>Open <code>Lens v4.0.html</code> in a browser.</li>
+    <li>Open <code>Lens v4.8.html</code> (or the suite's <code>index.html</code> on GitHub Pages) in a browser.</li>
     <li>Click <b>Load Fleet</b> → pick <code>[ClientCode]_fleet.json</code>.</li>
     <li>Work across Pulse / Vitals / Horizon / Cadence / Deploy panels. Cadence and Deploy autosave their slices into <code>lensRawData</code> via postMessage.</li>
     <li>Click <b>Save Final</b> at meeting end → browser download writes the updated JSON. Replace the file on disk.</li>
@@ -524,7 +526,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
   <p class="lede">The shell that hosts the five panels and routes JSON between them. Loads Cadence and Deploy as iframes; renders Pulse, Vitals, and Horizon natively. Owns file I/O and the Config / Capability Gating layer.</p>
 
   <h3>Mission Control architecture in one paragraph</h3>
-  <p>One JSON loaded at meeting start (Lens reads it). Children (Cadence, Deploy iframes) receive their copy via <code>load-fleet</code> postMessage on tab switch. Each child autosaves locally, then broadcasts a <code>fleet-updated</code> message containing its current snapshot. Lens swaps the snapshot into <code>lensRawData</code> and re-broadcasts to siblings via <code>refresh-fleet</code>. At meeting end, <b>Save Final</b> writes the consolidated JSON to disk via download.</p>
+  <p>One JSON loaded at meeting start (Lens reads it). Children (Cadence, Deploy iframes) receive their copy via <code>load-fleet</code> postMessage — on first activation, on every tab re-activation, and (since v4.7) immediately when a new fleet file is loaded while embeds are open. Each child autosaves locally, then sends a <code>fleet-updated</code> message containing its owned slice; Lens allow-list-merges it into <code>lensRawData</code>. Siblings pick up the change on their next <code>load-fleet</code> re-push (there is no separate sibling-broadcast message). At meeting end, <b>Save Final</b> writes the consolidated JSON to disk via download.</p>
 
   <h3>Slice ownership — the canonical table</h3>
   <p>Each tool owns specific slices and never writes outside its lane. Round-trip preservation depends on this contract.</p>
@@ -533,7 +535,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
     <tbody>
       <tr><td><b>Lens</b></td><td><code>ui_settings</code></td><td>Everything (canonical store)</td></tr>
       <tr><td><b>Cadence</b></td><td><code>workingData.{projects, componentDateOverrides, decisionLog, projConfig, visibleMonths, granularity, abScopeState, deColOrder}</code></td><td><code>masterData.*</code>, <code>components[]</code>, <code>componentHistory[]</code></td></tr>
-      <tr><td><b>Deploy</b></td><td><code>workingData.{projectDetails, checklistItems, actionItems, projectNotes}</code></td><td><code>workingData.projects[]</code> (from Cadence), <code>masterData.*</code></td></tr>
+      <tr><td><b>Deploy</b></td><td><code>workingData.deployData</code> (single canonical slice since v8.18 — the legacy <code>projectDetails/checklistItems/actionItems/projectNotes</code> keys are retired and purged on load)</td><td><code>workingData.projects[]</code> (from Cadence), <code>masterData.*</code></td></tr>
       <tr><td><b>Intake</b></td><td><code>components[]</code>, <code>componentHistory[]</code>, <code>oil_samples[]</code>, <code>meta.{unmatched_conmon[], unclassified_test_names[]}</code></td><td>Source files (XLSX/PDF), existing JSON for UPDATE merges</td></tr>
       <tr><td><b>FleetConfig</b></td><td><code>masterData.{fleets[], units[], utilizationProfiles[], unitActivitySchedule[]}</code></td><td><code>readings[]</code> (for "Suggest from readings")</td></tr>
     </tbody>
@@ -545,9 +547,8 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
     <tbody>
       <tr><td>Child → Lens</td><td><code>tool-ready</code></td><td>iframe loaded and ready to receive JSON</td></tr>
       <tr><td>Lens → Child</td><td><code>load-fleet</code></td><td>Tab activated; pushes initial snapshot</td></tr>
-      <tr><td>Child → Lens</td><td><code>fleet-updated</code></td><td>Autosave fired in child; child sends fresh snapshot</td></tr>
-      <tr><td>Lens → Child</td><td><code>refresh-fleet</code></td><td>Sibling edit happened; pushes refreshed snapshot</td></tr>
-      <tr><td>Child → Lens</td><td><code>request-save</code></td><td>User clicked Save in child; Lens triggers download</td></tr>
+      <tr><td>Child → Lens</td><td><code>fleet-updated</code></td><td>Autosave fired in child; child sends its owned slice</td></tr>
+      <tr><td>Child → Lens</td><td><code>request-save</code></td><td>User clicked Save in child; Lens merges the slice and triggers download</td></tr>
     </tbody>
   </table>
   <p class="note">Origin filter: <code>'*'</code>. Acceptable for single-user file:// or single-origin GitHub Pages context.</p>
@@ -1044,16 +1045,16 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 Gate completion state is preserved either way.</pre>
   <p>If you choose <b>Reschedule from today</b>, Deploy shifts every gate's <code>planStart</code> + <code>planEnd</code> by <code>(today − origStart)</code> days so the relative position of each gate within the project window stays the same. The project window itself (<code>p.start</code> / <code>p.end</code>) is NOT touched — those dates are managed by Cadence and Deploy never writes them. If you need to also shift the project window, do that in Cadence.</p>
 
-  <div class="callout coming">
-    <div class="callout-title">Coming next — Cadence-shift continuity (Deploy v8.13)</div>
-    <p>If Cadence shifts a project's <code>start</code>/<code>end</code> dates AFTER Deploy gates have been placed, gates with explicit <code>planStart</code> currently stay at their fixed calendar dates while gates with empty planStart auto-spread on each render → mixed gates produce drift relative to the new window. v8.13 will detect external project-date changes on load and prompt: "Project schedule moved Δ days. Shift all gates by Δ to maintain relative position? Y/N." Mirrors the v8.11 reactivation prompt pattern. See <code>archive/Deploy/v8.11/Backlog.md</code> for the full deferred-item spec.</p>
+  <div class="callout tip">
+    <div class="callout-title">Shipped — Cadence-shift continuity (Deploy v8.14)</div>
+    <p>If Cadence shifts a project's <code>start</code>/<code>end</code> dates AFTER Deploy gates have been placed, Deploy detects the delta on load and shifts every gate's <code>planStart</code>/<code>planEnd</code> by the same number of days, so gates keep their relative position inside the project window. First sight of a legacy file bootstraps silently (no retroactive shift); when a shift IS applied you get a toast listing the projects and gate counts moved.</p>
   </div>
 
   <h3>Sub-tab terminology</h3>
   <p>The Materials sub-tab was renamed to <b>Bill of Materials</b> in v8.8 — matches dealer terminology and how operators verbally refer to the file.</p>
 
   <h3>Persistent WO memory + Recently Closed bucket (v8.13) <span class="badge done">v8.13</span></h3>
-  <p>Items 3+4 of the operator review V2 slide 3 four-item series (items 1+2 shipped as v8.10 FIX-4 — advanced description filter + per-row ✕ hide). v8.13 adds a persistence + reconciliation layer that turns the Work Orders tab into a project-level ledger of work tracked across IW39 snapshots. <strong>Version note:</strong> v8.12 is reserved for the planned dual-shape data model cleanup; this ships as v8.13 per the original deck slide's prediction.</p>
+  <p>Items 3+4 of the operator review V2 slide 3 four-item series (items 1+2 shipped as v8.10 FIX-4 — advanced description filter + per-row ✕ hide). v8.13 adds a persistence + reconciliation layer that turns the Work Orders tab into a project-level ledger of work tracked across IW39 snapshots. <strong>Version note:</strong> v8.12 was reserved for the planned dual-shape data model cleanup (which ultimately shipped as v8.18 on 2026-06-10); this ships as v8.13 per the original deck slide's prediction.</p>
 
   <h4>knownWOs map — what survives across IW39 loads</h4>
   <p>Each project now carries a <code>knownWOs</code> object map at <code>deploy.projects[id].knownWOs</code> keyed by WO number. Every WO seen on this project's IW39 pass (whether per-project upload or fleet-wide IW39 filtered to this project's unit) gets recorded as <code>{ first_seen_iso, last_seen_iso, last_status, description, component }</code>. The map persists in the fleet JSON, so the operator's full WO history for a project survives reloads, app restarts, and meeting-to-meeting continuity. Companion fields:</p>
@@ -1073,7 +1074,7 @@ Gate completion state is preserved either way.</pre>
 
   <div class="callout">
     <div class="callout-title">Why a separate v8.13, not in-place on v8.11</div>
-    <p>v8.11 Gates/Tasks UX was already a 4-item bundle plus mid-design adds (cancelled rendering, reactivation prompt). Adding WO memory would have inflated v8.11 + complicated rollback. The original deck slide for this feature predicted exactly this slot: <em>"OR as a standalone v8.13 if Gates/Tasks ships first."</em> v8.12 number stays reserved for the planned dual-shape data model cleanup.</p>
+    <p>v8.11 Gates/Tasks UX was already a 4-item bundle plus mid-design adds (cancelled rendering, reactivation prompt). Adding WO memory would have inflated v8.11 + complicated rollback. The original deck slide for this feature predicted exactly this slot: <em>"OR as a standalone v8.13 if Gates/Tasks ships first."</em> The v8.12 number stayed reserved for the planned dual-shape data model cleanup, which ultimately shipped as v8.18 (2026-06-10).</p>
   </div>
 
   <div class="callout coming">
@@ -1384,16 +1385,18 @@ Gate completion state is preserved either way.</pre>
     <li>FK-link audit: every reference resolved or flagged</li>
   </ul>
 
-  <h3>What migration does NOT change</h3>
+  <h3>What migration preserves — corrected 2026-06-10</h3>
+  <p>The earlier revision of this manual claimed "workingData preserved verbatim". <b>The 2026-06-10 code review found that claim to be false.</b> The current migrator rebuilds its output as a fresh structure and silently drops:</p>
   <ul>
-    <li>No data deleted. Every record carried forward.</li>
-    <li><code>workingData</code> preserved verbatim.</li>
-    <li>No tool behaviour change — V5 readers don't exist in production yet.</li>
+    <li><code>working.deployData</code> — Deploy's entire slice (gates, tasks, known WOs, BOM)</li>
+    <li><code>projConfig</code> (term label, fleet order) and Cadence view state (visibleMonths / granularity / abScopeState)</li>
+    <li>FleetConfig's root-level edits (fleets[] / units[] / utilizationProfiles[])</li>
+    <li>Root <code>readings[]</code> and several meta keys</li>
   </ul>
 
   <div class="callout danger">
-    <div class="callout-title">Sandbox-only — DO NOT USE IN PRODUCTION YET</div>
-    <p>The migrator is validated end-to-end but no tool currently reads V5. If you migrate and then load the result into Lens / Cadence / Deploy, every panel will see "0 records" until V5 readers ship. Cutover timing is operator-driven; treat the V5 output as a snapshot, not a working file.</p>
+    <div class="callout-title">GATED — DO NOT MIGRATE PRODUCTION FILES</div>
+    <p>All four tools read V5 natively, so a migrated file will load — which makes the silent data loss above <em>more</em> dangerous, not less: everything looks fine until you notice Deploy's projects or FleetConfig's edits are gone. The V5 cutover is gated until the migrator is fixed (review fix-plan P6: carry unrecognised working/meta keys through, prefer root fleet edits, run the suite validator on output). There is no operational need to migrate: every tool reads and writes V4 Flat files correctly today.</p>
   </div>
 
   <h3>Idempotency</h3>
@@ -1978,7 +1981,7 @@ Gate completion state is preserved either way.</pre>
       <tr><td>Deploy reload persistence (was Deploy v8.6 deferred)</td><td>Deploy v8.9 FIX-4 — silent restore of edits from localStorage on reload + the "Restored Deploy edits from HH:MM" toast.</td><td>Deploy</td></tr>
       <tr><td>Intake util_rate write on BUILD path</td><td>Intake v8.3 FIX-2 + FIX-3 — V5 BUILD now writes <code>util_rate</code> per component; UPDATE also keeps it synced.</td><td>Intake / Resolved issues</td></tr>
       <tr><td>Mission Control consolidation</td><td>Lens v4 — five-panel host with iframe-embedded Cadence + Deploy. Native Pulse / Vitals / Horizon.</td><td>Lens</td></tr>
-      <tr><td>Deploy v8.11+ — Persistent WO memory + closed-transition surfacing (operator review V2 slide 3 items 3+4)</td><td>Deploy v8.13 — <code>p.knownWOs</code> map + carried-over glow + Recently Closed bucket for REL/CRTD → TECO/CLSD/CNCL transitions. v8.12 number reserved for the dual-shape cleanup.</td><td>Deploy v8.13 subsection</td></tr>
+      <tr><td>Deploy v8.11+ — Persistent WO memory + closed-transition surfacing (operator review V2 slide 3 items 3+4)</td><td>Deploy v8.13 — <code>p.knownWOs</code> map + carried-over glow + Recently Closed bucket for REL/CRTD → TECO/CLSD/CNCL transitions. v8.12 number was reserved for the dual-shape cleanup (shipped as v8.18, 2026-06-10).</td><td>Deploy v8.13 subsection</td></tr>
     </tbody>
   </table>
 
@@ -2104,7 +2107,7 @@ Gate completion state is preserved either way.</pre>
     <dd>The advisory service. Predict when major components on heavy mining equipment reach end of life, build a rolling replacement schedule, manage execution. NumaCore Lens Suite is the delivery engine.</dd>
 
     <dt>postMessage bridge</dt>
-    <dd>The host-child message channel between Lens and embedded iframes. Five message types: <code>tool-ready</code>, <code>load-fleet</code>, <code>fleet-updated</code>, <code>refresh-fleet</code>, <code>request-save</code>.</dd>
+    <dd>The host-child message channel between Lens and embedded iframes. Four message types: <code>tool-ready</code>, <code>load-fleet</code>, <code>fleet-updated</code>, <code>request-save</code>. (An earlier revision documented a fifth, <code>refresh-fleet</code> — it never existed in code; siblings sync via <code>load-fleet</code> re-pushes.)</dd>
 
     <dt>Schema V4 Flat</dt>
     <dd>The current production data format. Root-level <code>components[]</code>, <code>componentHistory[]</code>, <code>working.{}</code>. Auto-increment integer component IDs. Every running tool implements this. Stable.</dd>
@@ -2261,7 +2264,7 @@ Treat the manual itself as a versioned product — Backlog.md per version.</pre>
 
 <footer>
   <div>NumaCore Lens Suite · User Manual v1 · Built 2026-05-08</div>
-  <div>Operator memory aid · 15 tabs · single-file HTML</div>
+  <div>Operator memory aid · 16 tabs · single-file HTML</div>
 </footer>
 
 </div>
@@ -2344,9 +2347,24 @@ Treat the manual itself as a versioned product — Backlog.md per version.</pre>
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand('copy'); done(); }
-    catch(e){ btn.textContent = 'Press Ctrl+C'; }
-    document.body.removeChild(ta);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch(e){}
+    if (ok) {
+      done();
+      document.body.removeChild(ta);
+    } else {
+      // P7 fix (2026-06-10): the old path removed the textarea while telling the
+      // user to Ctrl+C from it. Keep it on screen, visible and selected, until
+      // the user clicks away.
+      btn.textContent = 'Press Ctrl+C';
+      ta.style.opacity = '1'; ta.style.left = '20px'; ta.style.bottom = '20px';
+      ta.style.width = 'min(640px, 80vw)'; ta.style.height = '120px'; ta.style.zIndex = '9999';
+      ta.focus(); ta.select();
+      ta.addEventListener('blur', function(){
+        try { document.body.removeChild(ta); } catch(_){}
+        btn.textContent = 'Copy';
+      });
+    }
   }
 
   // Expose for debugging

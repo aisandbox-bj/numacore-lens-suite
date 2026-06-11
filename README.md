@@ -35,7 +35,7 @@ Plus three supporting artefacts:
 
 | File | Purpose |
 |---|---|
-| [`manual.html`](https://aisandbox-bj.github.io/numacore-lens-suite/manual.html) | Full user manual — 14 tabs covering every feature, every data flow, every design decision. Updated every release. |
+| [`manual.html`](https://aisandbox-bj.github.io/numacore-lens-suite/manual.html) | Full user manual — 16 tabs covering every feature, every data flow, every design decision. Updated every release. |
 | [`numacore_lib.js`](https://aisandbox-bj.github.io/numacore-lens-suite/numacore_lib.js) | Small shared library (~1k lines). Toast UI, category canonicalisation, sort-field normalisation, a few cross-tool utilities. |
 | [`migrate.html`](https://aisandbox-bj.github.io/numacore-lens-suite/migrate.html) | One-time V4 → V5 schema migrator. |
 

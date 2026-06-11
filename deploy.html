@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.17 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.18 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -781,7 +781,10 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 
 <!-- Hidden file inputs -->
 <input type="file" id="bomIn"     accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleBomFile(event)">
-<input type="file" id="woIn"      accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleWoFile(event)">
+<!-- v8.18 — #woIn input removed. The per-project WO import path (handleWoFile /
+     confirmWoImport / modalWoMap) had no remaining UI trigger since the fleet-wide
+     IW39 upload became the only live WO source (v8.15). Legacy p.workOrders data
+     in older fleet files still renders via the 'project' WO source branch. -->
 <!-- v8.9 — Component Snapshot (per-project) + fleet-wide Inventory Master + fleet-wide IW39 inputs -->
 <input type="file" id="snapshotIn"   accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleSnapshotFile(event)">
 <input type="file" id="invMasterIn"  accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.tsv" style="display:none" onchange="handleInvMasterFile(event)">
@@ -937,31 +940,8 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
   </div>
 </div>
 
-<!-- WO column mapper -->
-<div class="modal-ov" id="modalWoMap">
-  <div class="modal" style="min-width:540px">
-    <div class="modal-title">⚙️ Map IW39 Columns</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Match your SAP IW39 export columns to the required fields.</div>
-    <div class="cm-grid" id="woMapGrid"></div>
-    <!-- v8.8 (Slide 9) — optional Sort Field filter. When set, only WO rows whose
-         FLOC / Sort Field contains the entered string are imported. Operators use
-         this to import a single unit's WOs from a big multi-unit IW39 export.
-         The input value is normalised via numacore_lib.normaliseSortField() (uppercase
-         + trim) per the suite CAPS rule. Leave blank to import all rows. -->
-    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:11px">
-      <label style="display:flex;align-items:center;gap:10px">
-        <span style="color:var(--muted);min-width:170px">Sort Field filter (optional)</span>
-        <input type="text" id="woSortFieldFilter" placeholder="e.g. BD401 — leave blank for all" style="flex:1;padding:5px 8px;border:1px solid var(--border);background:var(--bg);color:var(--txt);border-radius:4px;font-size:11px;font-family:inherit" oninput="this.value=this.value.toUpperCase()">
-      </label>
-      <div style="color:var(--faint);font-size:10px;margin-top:4px;margin-left:180px">Substring match against the FLOC / Sort Field column. Always uppercased per the suite Sort Field CAPS rule.</div>
-    </div>
-    <div class="cm-hint" id="woRowCount"></div>
-    <div class="m-actions">
-      <button class="mbtn secondary" onclick="closeModal('modalWoMap')">Cancel</button>
-      <button class="mbtn primary"   onclick="confirmWoImport()">Import WOs →</button>
-    </div>
-  </div>
-</div>
+<!-- v8.18 — modalWoMap (per-project WO column mapper) removed with the dead
+     per-project import path. Fleet-wide IW39 mapping lives in modalIW39FleetMap. -->
 
 <!-- v8.9 FIX-1 (2026-05-12) — Multi-sheet BOM picker modal.
      Shown when the operator drops a BOM .xlsx with >1 sheet. Smart defaults
@@ -1157,7 +1137,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.17';  // single source of truth for tool version (v8.12 reserved for dual-shape data model cleanup)
+const VERSION = '8.18';  // single source of truth for tool version (v8.18 shipped the dual-shape cleanup long reserved as "v8.12")
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1434,51 +1414,71 @@ function parseFleet() {
   deploy = fleetData.workingData.deployData;          // alias — mutations here ARE mutations in fleetData
   if (!deploy.projects) deploy.projects = {};
 
-  // v8.10 (2026-05-12) — Mission Control dual-shape defensive merge.
-  // When Deploy is loaded standalone after a fleet was last saved from Lens
-  // (Mission Control flow), the file has FRESH iframe-edits at
-  // workingData.projectDetails but the workingData.deployData.projects copy
-  // is STALE — Lens never re-syncs deployData when iframe-Deploy posts edits
-  // back to the parent. Per-project, pick the richer side per Deploy-owned
-  // field (longer array / more keys). Symmetric: also recovers if the file
-  // was last saved by standalone Deploy and projectDetails is the stale one.
-  // Scheduled for proper architectural cleanup in v8.12 (dual-shape removal).
-  const _dualShapeFromPD = fleetData && fleetData.workingData && fleetData.workingData.projectDetails;
-  if (_dualShapeFromPD && typeof _dualShapeFromPD === 'object') {
-    const _richer = (a, b) => {
-      const lenA = Array.isArray(a) ? a.length : (a && typeof a === 'object' ? Object.keys(a).length : 0);
-      const lenB = Array.isArray(b) ? b.length : (b && typeof b === 'object' ? Object.keys(b).length : 0);
-      return lenA >= lenB ? a : b;
-    };
-    // v8.11 — customTasks dropped from the dep list. Item-4 consolidation
-    // merged Gantt-added tasks into p.gates so the Gates tab and Gantt share
-    // one source of truth. Legacy fleet files with customTasks are migrated
-    // on load (see ensurePD) so this drop is safe.
+  // v8.18 — dual-shape RETIREMENT (the cleanup reserved as "v8.12" since v8.10).
+  // History: pre-v8.15 Mission Control synced Deploy edits to
+  // workingData.projectDetails (+ checklistItems/actionItems/projectNotes)
+  // while standalone Deploy wrote workingData.deployData; the v8.10 merge
+  // bridged them by picking the "richer" side per field. Since v8.15 FIX-3
+  // Lens wholesale-replaces the deployData slice on every sync, so the legacy
+  // keys only ever went STALE — and the richer-side pick meant a deleted
+  // gate / note / BOM row could resurrect from the stale twin on every load.
+  // New contract: workingData.deployData is canonical. The legacy twin is
+  // consulted ONCE per load to (a) adopt whole projects missing from
+  // deployData and (b) fill fields that are EMPTY on the canonical side
+  // (recovery for files last saved by a pre-v8.15 Lens) — it can never
+  // overwrite non-empty live data. The retired keys are then dropped from
+  // the in-memory file (workingData AND the V4 working shape), so the file
+  // converges to single-shape on the next save.
+  // (v8.11 note preserved: customTasks intentionally absent from _depFields —
+  // Item-4 merged Gantt-added tasks into p.gates; ensurePD migrates legacy
+  // customTasks on load.)
+  const _legacyPD = fleetData && fleetData.workingData && fleetData.workingData.projectDetails;
+  if (_legacyPD && typeof _legacyPD === 'object') {
+    const _size = v => Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0);
     const _depFields = ['bom','componentSnapshot','componentSheetMap','gates','workOrders','actions','notes'];
-    let _mergedProjects = 0, _mergedFields = 0;
-    Object.keys(_dualShapeFromPD).forEach(pid => {
-      const fromPD = _dualShapeFromPD[pid];
+    let _adopted = 0, _filled = 0, _staleIgnored = 0;
+    Object.keys(_legacyPD).forEach(pid => {
+      const fromPD = _legacyPD[pid];
       if (!fromPD || typeof fromPD !== 'object') return;
       if (!deploy.projects[pid]) {
-        // Project only exists in projectDetails — adopt it wholesale.
+        // Project exists only in the legacy twin — adopt it wholesale.
         deploy.projects[pid] = fromPD;
-        _mergedProjects++;
+        _adopted++;
       } else {
-        // Both have it — pick the richer side per field.
         const dst = deploy.projects[pid];
         _depFields.forEach(field => {
-          const merged = _richer(fromPD[field], dst[field]);
-          if (merged !== undefined && merged !== dst[field]) {
-            dst[field] = merged;
-            _mergedFields++;
+          if (fromPD[field] === undefined) return;
+          if (_size(dst[field]) === 0 && _size(fromPD[field]) > 0) {
+            dst[field] = fromPD[field];   // fill a genuinely empty canonical field
+            _filled++;
+          } else if (_size(fromPD[field]) > _size(dst[field])) {
+            // Legacy twin is "richer" but the canonical side is non-empty:
+            // do NOT merge — this exact pick was the deletion-resurrection
+            // vector. Log so a real legacy-recovery case stays visible.
+            _staleIgnored++;
+            console.log('[v8.18 dual-shape] kept canonical ' + pid + '.' + field +
+              ' (' + _size(dst[field]) + ' entries) over stale legacy twin (' + _size(fromPD[field]) + ')');
           }
         });
       }
     });
-    if (_mergedProjects > 0 || _mergedFields > 0) {
-      console.log('[v8.10 dual-shape merge] projects adopted: ' + _mergedProjects + ', fields merged: ' + _mergedFields);
+    if (_adopted > 0 || _filled > 0 || _staleIgnored > 0) {
+      console.log('[v8.18 dual-shape retirement] projects adopted: ' + _adopted +
+        ', empty fields filled: ' + _filled + ', stale richer twins ignored: ' + _staleIgnored);
     }
   }
+  // Drop the retired legacy keys from the loaded file (Deploy-owned slice;
+  // the deletion persists on the next save, converging the file to one shape).
+  ['workingData', 'working'].forEach(shape => {
+    const wk = fleetData ? fleetData[shape] : null;
+    if (!wk || typeof wk !== 'object') return;
+    ['projectDetails', 'checklistItems', 'actionItems', 'projectNotes'].forEach(k => {
+      if (k in wk) {
+        delete wk[k];
+        console.log('[v8.18 dual-shape retirement] dropped legacy ' + shape + '.' + k);
+      }
+    });
+  });
 
   // Ensure config section exists — holds template library + per-fleet WO filters (v8.10 FIX-1)
   if (!deploy.config) deploy.config = { defaultTemplateId: 'standard_pcr', templates: {} };
@@ -1919,8 +1919,9 @@ function handleToggle(id) {
 // Cardinal rules: a project clear NEVER touches deploy.knownFleetWOs (that
 // memory belongs to the whole fleet and feeds the Lens Risk Report), and the
 // clear also purges the project's legacy dual-shape twin (workingData/
-// working .projectDetails) so the v8.10 richer-side merge cannot resurrect
-// the cleared data from the stale copy on a later load.
+// working .projectDetails) — belt-and-braces since v8.18 retired the
+// richer-side merge and purges those keys wholesale at load, but kept so a
+// clear is complete even in a file that has never been re-saved post-v8.18.
 // ─────────────────────────────────────────────────────────────────────────
 let _pendingDeactivateId = null;
 
@@ -3711,10 +3712,10 @@ function renderWorkOrders(id) {
       if (typeof _markUnsaved === 'function') _markUnsaved();
     }
   } else if (_woSource === 'project') {
-    // Per-project upload path: explicit commit handler (confirmWoImport) already
-    // calls _recordKnownWOs. But if a fleet JSON loads with pre-existing
-    // p.workOrders and knownWOs is still empty (e.g. file pre-dates v8.13),
-    // auto-record on first render so we don't lose the baseline.
+    // Legacy per-project WO data (importer removed in v8.18; data still renders).
+    // If a fleet JSON loads with pre-existing p.workOrders and knownWOs is still
+    // empty (e.g. file pre-dates v8.13), auto-record on first render so we
+    // don't lose the baseline.
     if ((!p.knownWOs || Object.keys(p.knownWOs).length === 0) && _sourcePool.length > 0) {
       _recordKnownWOs(id, _sourcePool);
     }
@@ -3984,83 +3985,12 @@ function updateWONote(id, woNumber, v) {
   _markUnsaved();
 }
 
-function clearWOs(id) {
-  if (!confirm('Clear all work orders for this project?')) return;
-  deploy.projects[id].workOrders = [];
-  renderWorkOrders(id);
-  _markUnsaved();
-  toast('Work orders cleared');
-}
-
-function handleWoFile(e) {
-  const file = e.target.files[0]; if (!file) return;
-  const r = new FileReader();
-  r.onload = ev => {
-    try {
-      const wb = XLSX.read(ev.target.result, { type:'binary' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
-      if (rows.length < 2) { toast('File appears empty','error'); return; }
-      _woHdrs = rows[0].map(h => String(h));
-      _woRaw  = rows.slice(1).filter(r => r.some(c => c !== ''));
-      buildMapper('wo');
-    } catch(err) { toast('Could not read file: ' + err.message, 'error'); }
-  };
-  r.onerror = () => toast('Could not read file', 'error');
-  r.readAsBinaryString(file);
-  e.target.value = '';
-}
-
-function confirmWoImport() {
-  const mapping = {};
-  WO_FIELDS.forEach(f => {
-    const s = document.getElementById('wm_' + f.key);
-    if (s && s.value !== '(skip)') mapping[f.key] = _woHdrs.indexOf(s.value);
-  });
-  if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
-
-  // v8.8 (Slide 9) — read the optional Sort Field filter. Normalise via the lib
-  // helper for the CAPS rule; fall back to inline toUpperCase if lib not loaded.
-  // Empty string = no filter (all rows pass).
-  const _rawSortFilter = String(document.getElementById('woSortFieldFilter')?.value || '').trim();
-  const _sortFilter    = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
-                          ? window.NumaCoreLib.normaliseSortField(_rawSortFilter)
-                          : _rawSortFilter.toUpperCase();
-
-  // Total rows BEFORE Sort Field filter — used in the result toast so the
-  // operator can see how many were skipped by their filter.
-  let _totalBeforeFilter = 0;
-
-  const wos = _woRaw.map(row => {
-    const item = { notes:'' };
-    WO_FIELDS.forEach(f => { if (mapping[f.key] !== undefined) item[f.key] = String(row[mapping[f.key]] ?? ''); });
-    return item;
-  }).filter(i => {
-    if (!i.wo_number) return false;
-    _totalBeforeFilter++;
-    // No filter set → keep all (CAPS-only check; empty string never matches anything anyway)
-    if (!_sortFilter) return true;
-    // Substring match on the normalised FLOC / Sort Field column
-    const flocNorm = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
-                      ? window.NumaCoreLib.normaliseSortField(i.floc || '')
-                      : String(i.floc || '').toUpperCase();
-    return flocNorm.indexOf(_sortFilter) !== -1;
-  });
-
-  deploy.projects[selProjId].workOrders = wos;
-  // v8.13 Item 1 — Persistent WO memory. Record the freshly-imported WO set
-  // into p.knownWOs so subsequent renders can light up the "carried-over"
-  // glow and detect status transitions to CLSD/TECO/CNCL.
-  _recordKnownWOs(selProjId, wos);
-  closeModal('modalWoMap');
-  const _skipped = _totalBeforeFilter - wos.length;
-  const _msg = _sortFilter
-    ? `Imported ${wos.length} of ${_totalBeforeFilter} work orders (Sort Field filter "${_sortFilter}" — ${_skipped} skipped)`
-    : `Imported ${wos.length} work orders`;
-  toast(_msg, 'success');
-  renderWorkOrders(selProjId);
-  _markUnsaved();
-}
+// v8.18 — clearWOs / handleWoFile / confirmWoImport removed (dead per-project
+// WO import path; no UI trigger since the fleet-wide IW39 upload became the only
+// live WO source in v8.15). The fleet-wide importer (handleIW39FleetFile /
+// confirmIW39FleetImport) shares _woHdrs/_woRaw/WO_FIELDS and is unaffected.
+// Legacy p.workOrders arrays in older fleet files still render read-only via
+// the 'project' WO source branch in renderWorkOrders.
 
 // ═════════════════════════════════════════════════════════════════════
 // v8.9 — COMPONENT SNAPSHOT + INVENTORY MASTER + FLEET-WIDE IW39 UPLOADS
@@ -4700,7 +4630,7 @@ function openStockDrillDown(projId, bomIdx) {
 // ─────────────────────────────────────────────
 const MAPPER_CFG = {
   bom:       { fields: BOM_FIELDS,       hdrsRef: () => _bomHdrs,   rawRef: () => _bomRaw,   prefix: 'bm',   gridId: 'bomMapGrid',         cntId: 'bomRowCount',         modalId: 'modalBomMap' },
-  wo:        { fields: WO_FIELDS,        hdrsRef: () => _woHdrs,    rawRef: () => _woRaw,    prefix: 'wm',   gridId: 'woMapGrid',          cntId: 'woRowCount',          modalId: 'modalWoMap' },
+  // v8.18 — 'wo' mapper entry removed with the dead per-project WO import path.
   snapshot:  { fields: SNAPSHOT_FIELDS,  hdrsRef: () => _snapHdrs,  rawRef: () => _snapRaw,  prefix: 'sm',   gridId: 'snapshotMapGrid',    cntId: 'snapshotRowCount',    modalId: 'modalSnapshotMap' },
   im:        { fields: INVMASTER_FIELDS, hdrsRef: () => _imHdrs,    rawRef: () => _imRaw,    prefix: 'imc',  gridId: 'invMasterMapGrid',   cntId: 'invMasterRowCount',   modalId: 'modalInvMasterMap' },
   iw39fleet: { fields: WO_FIELDS,        hdrsRef: () => _woHdrs,    rawRef: () => _woRaw,    prefix: 'wfm',  gridId: 'iw39FleetMapGrid',   cntId: 'iw39FleetRowCount',   modalId: 'modalIW39FleetMap' },
@@ -6412,26 +6342,18 @@ const _depInShell = (function() { try { return window.parent !== window; } catch
 function _depMsgTarget() { return (window.location.protocol === 'file:') ? '*' : window.location.origin; }
 
 function _depOwnedSliceForShell() {
-  // Deploy owns workingData.deployData.* — the legacy slice contract emitted
-  // workingData.{projectDetails,checklistItems,actionItems,projectNotes} only,
-  // which excluded any TOP-LEVEL deployData fields (like fleetWideIW39AsOf in
-  // v8.15 FIX-2). v8.15 FIX-3 (2026-05-17 evening): ALSO emit the full
-  // workingData.deployData (V5 shape) so cross-tool consumers (Lens Risk
-  // Report freshness gate) see Deploy-owned top-level metadata. Lens's
-  // allow-list must include 'workingData.deployData' for this to merge.
-  // Wasteful (projects duplicate between projectDetails and deployData.projects)
-  // but correct — and the dual-shape gets cleaned up in the v8.12 chunk.
+  // Deploy owns workingData.deployData.* — emitted as ONE canonical V5-shape
+  // slice; Lens wholesale-replaces lensRawData.workingData.deployData on
+  // receipt (slice-ownership rule). v8.18: the legacy duplicate keys
+  // (projectDetails / checklistItems / actionItems / projectNotes) are no
+  // longer emitted — pre-v8.15 contract, retired with the dual-shape merge.
+  // Lens v4.8 drops them from its allow-list and purges them from loaded
+  // files when this new-contract slice arrives. An older cached Lens still
+  // merges deployData fine (allow-listed since v4.4 FIX-2).
   const dep = (fleetData && fleetData.workingData && fleetData.workingData.deployData) || {};
   return {
     workingData: {
-      projectDetails: dep.projects || {},
-      checklistItems: dep.checklistItems || {},
-      actionItems:    dep.actionItems    || {},
-      projectNotes:   dep.projectNotes   || {},
-      // v8.15 FIX-3 — full V5-shape deployData slice. Lens wholesale-replaces
-      // its lensRawData.workingData.deployData on receipt (Deploy owns this
-      // slice per slice-ownership rule).
-      deployData:     dep
+      deployData: dep
     }
   };
 }
