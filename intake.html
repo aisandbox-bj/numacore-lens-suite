@@ -4159,6 +4159,12 @@ function newBuild() {
   const _he = document.getElementById('histEnable');  if (_he) _he.checked = false;
   const _hb = document.getElementById('histOptBody'); if (_hb) _hb.style.display = 'none';
 
+  // v8.9 FIX-1 — "New Build" is a global start-fresh control (it lives in the
+  // header, not the BUILD panel), but it only ever reset BUILD state, so a
+  // ConMon session left its loaded fleet + parsed queue on screen and the
+  // operator had to reload the page. Reset ConMon too.
+  clearConmon();
+
   showBuildStep(1);
   renderStepFlow();
   saveState();
@@ -6146,6 +6152,15 @@ function commitConmonSamples(download = true) {
 
   if (gateNotes.length) console.warn('[ConMon v8.9 QA gates]', gateNotes);
   alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).\n\n· ${detail}${gateNotes.length ? '\n\n' + gateNotes.join('\n') : ''}${download ? '' : '\n\nRetained in session — download from the session banner when done.'}`);
+
+  // v8.9 FIX-1 — after Commit & Download the session is finished, so clear the
+  // parsed-samples queue: the preview table was showing samples that are now
+  // committed to the downloaded file, and leaving it up meant the operator had
+  // to reload the page to start the next batch. The loaded fleet JSON is kept
+  // (same as "Clear queue, keep fleet") so another batch can be dropped without
+  // re-uploading. Session-only commits (download=false) leave the queue intact,
+  // because the operator is still assembling before the final download.
+  if (download) clearConmonQueue();
 }
 
 // v8.2 Bug B fix companion: clears just the parsed-samples queue without dropping the
@@ -6171,6 +6186,11 @@ function clearConmon() {
   document.getElementById('conmonPreviewCard').style.display = 'none';
   document.getElementById('conmonStep2Card').style.opacity = '0.5';
   document.getElementById('conmonStep2Card').style.pointerEvents = 'none';
+  // v8.9 FIX-1 — reset the coolant-config panel too (it reflected the loaded
+  // JSON, which is now gone). Guard each lookup: these are v8.9-only elements.
+  var _ct = document.getElementById('cfgCoolantType');   if (_ct) _ct.value = 'unknown';
+  var _cc = document.getElementById('cfgCoolantCadence'); if (_cc) _cc.value = 90;
+  var _cm = document.getElementById('cfgCoolantMsg');     if (_cm) _cm.textContent = '';
 }
 
 init();
