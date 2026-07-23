@@ -738,6 +738,33 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div id="conmonParseProgress" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
   </div>
 
+  <!-- v8.9 INT-4 — coolant interpretation keys. Collapsed by default: it is a
+       set-once-per-client setting, not a per-import step. Nitrite and pH limits
+       differ fundamentally between nitrited and OAT chemistry, so grading the
+       wrong one manufactures a fleet-wide crisis that is not there — hence
+       "unknown" suppresses chemistry bands rather than guessing. -->
+  <details class="card" id="conmonCoolantCfgCard" style="margin-top:12px">
+    <summary style="cursor:pointer;font-weight:600;color:var(--text)">Coolant settings <span style="font-weight:400;color:var(--text3);font-size:12px">— set once per client; gates all coolant chemistry grading</span></summary>
+    <div style="margin-top:12px;display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">
+      <label style="font-size:12px;color:var(--text2)">Coolant type
+        <select id="cfgCoolantType" style="display:block;margin-top:4px;padding:5px 8px">
+          <option value="unknown">unknown — bands off (default)</option>
+          <option value="conventional">conventional (nitrited)</option>
+          <option value="hybrid_nitrited">hybrid / nitrited</option>
+          <option value="oat">OAT — bands off</option>
+        </select>
+      </label>
+      <label style="font-size:12px;color:var(--text2)">Sampling cadence (days)
+        <input type="number" id="cfgCoolantCadence" min="1" step="1" value="90" style="display:block;margin-top:4px;padding:5px 8px;width:110px">
+      </label>
+      <button class="btn btn-outline btn-sm" onclick="saveCoolantConfig()">Save to fleet JSON</button>
+      <span id="cfgCoolantMsg" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+    <p style="font-size:11.5px;color:var(--text3);margin-top:10px;line-height:1.5">
+      Grey "coolant unmonitored" appears in Lens at 2x the cadence. Derived values are recomputed on every commit, so changing the type later corrects all historical grading — no rebuild needed.
+    </p>
+  </details>
+
   <!-- STEP 3: Preview -->
   <div class="card" id="conmonPreviewCard" style="display:none">
     <div class="card-title">Step 3 — Preview & Commit</div>
@@ -838,7 +865,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.8';
+const VERSION = '8.9';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -4462,11 +4489,30 @@ function extractConmonFields(full, p1, filename) {
     const mCool = p1.match(/Unit Mfr\/Model\s*:\s*([A-Z]+)\s+([A-Z0-9]+)\s+Sample\s*#/);
     if (mCool) { mfr = mCool[1].trim(); model = mCool[2].trim(); }
   }
-  // Detect OPC (Optical Particle Classification) report — has no sample rank but is NOT coolant
-  const isOPC = full.indexOf('Optical Particle Classification') >= 0;
-  // Detect report type from PDF header ("Oil Analysis" / "Coolant Analysis" appear
-  // co-located with "Comp Serial # :" in the stitched layout — most reliable signal available)
-  const isOilReport = !isOPC && /oil analysis/i.test(p1);
+  // ── v8.9 FIX-1 — report classification rewritten ──────────────
+  // The v8.8 rule was: OPC = contains "Optical Particle Classification";
+  // OIL = /oil analysis/ matches page 1; COOLANT = neither, and no rank.
+  // Two defects, both confirmed live against v8.8 on 2026-07-22:
+  //
+  //  1. EVERY FluidLife report — coolant included — carries the boilerplate
+  //     disclaimer "...related to this oil analysis report and recommendations".
+  //     So /oil analysis/ matched on coolant reports, they were graded as OIL,
+  //     and is_coolant was written FALSE with scope "component". Coolant has
+  //     therefore never been correctly typed in the fleet JSON.
+  //  2. Older reports (2018 era) title the particle page "OPC Test Results"
+  //     rather than "Optical Particle Classification", so they missed the OPC
+  //     test and fell through to coolant.
+  //
+  // The rule now mirrors fluidlife_fields.py / the split skill exactly, using
+  // POSITIVE signals in the same precedence rather than inferring from absence:
+  //   component says COOLANT  ->  COOLANT
+  //   particle page markers   ->  OPC
+  //   "Coolant Analysis" head ->  COOLANT
+  //   otherwise               ->  OIL
+  const compIsCoolant = /^COOLANT\b/i.test((comp || '').trim());
+  const isOPC = !compIsCoolant
+    && (full.indexOf('Optical Particle Classification') >= 0 || full.indexOf('OPC Test Results') >= 0);
+  const isOilReport = !compIsCoolant && !isOPC && !/Coolant\s*Analysis/i.test(full);
   // Sample date — first YYYY/MM/DD after "Sample Information"
   let sampleDate = null;
   const si = p1.indexOf('Sample Information');
@@ -4499,11 +4545,14 @@ function extractConmonFields(full, p1, filename) {
     }
   }
   trends.sort((a, b) => b.rank - a.rank);
-  // Classification priority:
-  //   1. OPC  → always oil-type (particle count, no rank)
-  //   2. Header says "Oil Analysis" → always oil (even if rank missing / single-page report)
-  //   3. All other reports with no rank → coolant (Coolant Analysis reports have no rank)
-  const isCoolant = !isOPC && !isOilReport && (rank === null);
+  // v8.9 FIX-1 — coolant is now decided by the component field / report header
+  // (see the classification block above), NOT by "no rank and not oil". The old
+  // rule made every rank-less report coolant by default, which swallowed the
+  // 2018-format OPC and oil reports that carry no Sample Rank at all.
+  const isCoolant = !isOPC && !isOilReport;
+  // v8.9 INT-1 / INT-3 — OPC page + coolant chemistry extraction.
+  const opc     = isOPC     ? extractOpcFields(full, smNum)     : null;
+  const coolant = isCoolant ? extractCoolantFields(full, smNum) : null;
   return {
     filename,
     unit_id: unit,
@@ -4518,9 +4567,298 @@ function extractConmonFields(full, p1, filename) {
     trends: trends.slice(0, 4),
     is_coolant: isCoolant,
     is_opc: isOPC,
+    opc,                  // v8.9 INT-1 — particle/morphology values, or null
+    coolant,              // v8.9 INT-3 — chemistry values, or null
     component_id: null,   // populated by match step
     match_status: 'pending',
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// v8.9 INT-1 / INT-3 — OPC + coolant page extraction
+//
+// CONTRACT: these mirror fluidlife_fields.py (the Python module used by the
+// split skill). Field names and rules must stay in step with it — the
+// cross-parser gate diffs this tool's committed output against the sidecar's
+// conmon_extract.json on the shared fixture set.
+//
+// FORMAT (verified against real pdf.js output, 2026-07-22): conmonStitchLines()
+// rebuilds each visual row into one line, so a report reads as a small table —
+// ONE LINE PER SAMPLE, newest first, current sample in the first row. A value
+// the lab did not report prints as "-".
+//
+// WHY POSITIONAL, NOT "FIRST NUMBER AFTER THE LABEL": reports are multi-sample
+// (up to six historical columns). Live example — nitrite "612 253 - 248 359 308".
+// A first-number-wins regex skips the "-" and reports the PREVIOUS sample's
+// value as current. Every row here is parsed by column position; a missing
+// token stays null.
+// ═══════════════════════════════════════════════════════════════
+
+const CONMON_NULL_TOKENS = { '-':1, '--':1, 'NT':1, 'N/A':1, 'NA':1, '':1 };
+
+// '~21601' -> {v:21601, q:'est'} · '-' -> {v:null, q:'missing'} · never guesses.
+function conmonNum(tok) {
+  if (tok == null) return { v: null, q: 'missing' };
+  const t = String(tok).trim();
+  if (CONMON_NULL_TOKENS[t] || CONMON_NULL_TOKENS[t.toUpperCase()]) return { v: null, q: 'missing' };
+  const m = t.match(/^([~<>]?)(-?\d+(?:[.,]\d+)?)$/);
+  if (!m) return { v: null, q: 'unparsed' };
+  const val = parseFloat(m[2].replace(',', '.'));
+  if (isNaN(val)) return { v: null, q: 'unparsed' };
+  return { v: val, q: { '~':'est', '<':'lt', '>':'gt', '':null }[m[1]] };
+}
+
+// Controlled vocabulary — mirrors NARRATIVE_VOCAB in fluidlife_fields.py.
+const CONMON_NARRATIVE_VOCAB = [
+  ['OIL_CONTAM',        [/oil\s+contamination/, /oil\s+ingress/, /oil\s+was\s+found/]],
+  ['COMBUSTION_GAS',    [/combustion/, /blow[\s-]?by/]],
+  ['HAZY',              [/\bhazy\b/, /\bcloudy\b/]],
+  ['SLUDGE',            [/\bsludge\b/]],
+  ['CORROSION_MENTION', [/corrosion/, /corrosive/]],
+];
+
+// A lab telling you to GO LOOK for something is not the lab telling you it
+// FOUND something. Live example (WU405 2026-04-15): "Check for overheating or
+// exhaust gas blow-by" — a naive match grades the engine RED for a breach the
+// lab never reported. The finding on that sample is low pH, nothing more.
+const CONMON_ADVISORY_CUES = /(check\s+for|monitor\s+for|watch\s+for|inspect\s+for|test\s+for|look\s+for|may\s+\w+|might|can\s+lead|could|verify|consider|investigate|recommend|should\s+be)[^.]{0,80}$/i;
+
+// A coolant report prints the comment history for EVERY sample column, each
+// prefixed with its own date. Live example (TD405 2026-06-08): the current
+// sample is cloudy with magnetic precipitate, while the oil-contamination
+// comment belongs to the PREVIOUS sample. Reading the whole block grades the
+// current sample RED for someone else's breach — scoping changed the flag set
+// on 31 of 47 reports in the corpus.
+function conmonScopeToSample(narrative, sampleDate) {
+  if (!narrative || !sampleDate) return narrative || '';
+  const d = String(sampleDate).replace(/-/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(d + '([\\s\\S]*?)(?=\\d{4}\\/\\d{2}\\/\\d{2}|$)', 'g');
+  const segs = [];
+  let m;
+  while ((m = re.exec(narrative)) !== null) { segs.push(m[1]); if (re.lastIndex === m.index) re.lastIndex++; }
+  return segs.length ? segs.join('\n') : narrative;
+}
+
+function conmonNarrativeFlags(text, sampleDate) {
+  const src = sampleDate ? conmonScopeToSample(text, sampleDate) : (text || '');
+  const flags = [];
+  CONMON_NARRATIVE_VOCAB.forEach(pair => {
+    const flag = pair[0], pats = pair[1];
+    const hit = pats.some(p => {
+      const re = new RegExp(p.source, 'gi');
+      let m;
+      while ((m = re.exec(src)) !== null) {
+        // Look back to the start of the CURRENT SENTENCE — advice qualifies its
+        // own sentence only. Boundary is a period ONLY: the lab wraps lines
+        // mid-sentence ("Check for overheating or exhaust \ngas blow-by."), so
+        // treating a newline as a boundary truncates the lookback to "gas " and
+        // misses the advisory. Newlines are flattened first. Identical rule in
+        // fluidlife_fields.py — the cross-parser gate compares the two.
+        const head = src.slice(0, m.index).replace(/\n/g, ' ');
+        const before = head.slice(head.lastIndexOf('.') + 1);
+        if (!CONMON_ADVISORY_CUES.test(before)) return true;
+        if (re.lastIndex === m.index) re.lastIndex++;
+      }
+      return false;
+    });
+    if (hit) flags.push(flag);
+  });
+  return flags;
+}
+
+// Verbatim Results + Recommendations block (whitespace-normalised only).
+function conmonNarrative(full) {
+  const i = full.search(/(^|\n)\s*Results\b/);
+  if (i < 0) return null;
+  let body = full.slice(i);
+  const stop = body.search(/Key\s*:|Results\s+relate\s+only|Freeze\s+Point\s*-\s/);
+  if (stop > 0) body = body.slice(0, stop);
+  return body.replace(/[ \t]+/g, ' ').replace(/\n{2,}/g, '\n').trim() || null;
+}
+
+// ── OPC ─────────────────────────────────────────────────────────
+// Row layout (18 tokens): ref date >4 >6 >14 >21 >38 >70 ISO
+//                         cutting sliding fatigue nonmetal fibers
+//                         cutUm slidUm fatUm nonmetUm
+// The ISO code at index 8 is the alignment checkpoint — if it is not an X/Y/Z
+// code the row is mis-shaped and is refused rather than stored as 18
+// misaligned numbers.
+const OPC_COUNT_KEYS = ['opc_gt4_um','opc_gt6_um','opc_gt14_um','opc_gt21_um','opc_gt38_um','opc_gt70_um'];
+const OPC_MORPH_N    = ['morph_cutting_n','morph_sliding_n','morph_fatigue_n','morph_nonmetal_n','morph_fibers_n'];
+const OPC_MORPH_UM   = ['morph_cutting_um','morph_sliding_um','morph_fatigue_um','morph_nonmetal_um'];
+
+function parseOpcRow(t) {
+  if (!t || t.length < 18) return null;
+  if (!/^\d{4}\/\d{2}\/\d{2}$/.test(t[1])) return null;
+  if (!/^\d+\/\d+\/\d+$/.test(t[8])) return null;
+  const row = { sample_ref: t[0], opc_sample_date: t[1].replace(/\//g, '-'), iso_4406: t[8] };
+  OPC_COUNT_KEYS.forEach((k, i) => { row[k] = conmonNum(t[2 + i]).v; });
+  OPC_MORPH_N.forEach((k, i)    => { row[k] = conmonNum(t[9 + i]).v; });
+  OPC_MORPH_UM.forEach((k, i)   => { row[k] = conmonNum(t[14 + i]).v; });
+  return row;
+}
+
+function extractOpcFields(full, sampleNum) {
+  const out = { _unparsed: [] };
+  let block = full;
+  const lab = block.search(/Lab\s*Tracking\s*#/i);
+  if (lab >= 0) block = block.slice(lab);
+  const stop = block.search(/OPC\s*Wear\s*Trend|Wear\s*Count/i);
+  if (stop > 0) block = block.slice(0, stop);
+
+  // The lab sometimes declines the test and prints an empty row. That is a real
+  // no-result, not a parse failure.
+  if (/too\s+heavily\s+contaminated|unable\s+to\s+perform/i.test(block)) {
+    out._unparsed.push('lab-declined-no-opc-result');
+    out.no_result = true;
+  }
+
+  const toks = block.split(/\s+/).filter(Boolean);
+  const rows = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (/^\d{2}\/\d{2}-\d+$/.test(toks[i])) {
+      const r = parseOpcRow(toks.slice(i, i + 18));
+      if (r) rows.push(r);
+    }
+  }
+  if (!rows.length) { out._unparsed.push('no-opc-data-rows'); return out; }
+
+  // CRITICAL: when a sample number is supplied and no row matches it, there is
+  // NO current data — do not fall back to the newest row. Observed live (TD406
+  // 2026-01-29): the current sample had no OPC result, and a fallback would
+  // have published the PREVIOUS sample's particle counts under a fresh date.
+  let cur = null;
+  const m = String(sampleNum || '').match(/(\d{4})\/(\d{2})\/(\d{2})-(\w+)/);
+  if (m) {
+    const want = m[4];
+    cur = rows.filter(r => {
+      const got = r.sample_ref.split('-').pop();
+      return got === want || (/^\d+$/.test(got) && /^\d+$/.test(want) && parseInt(got, 10) === parseInt(want, 10));
+    })[0] || null;
+    if (!cur) { out._unparsed.push('current-sample-row-absent'); return out; }
+  } else {
+    cur = rows[0];
+    out._unparsed.push('current-row-assumed-newest');
+  }
+
+  Object.keys(cur).forEach(k => { out[k] = cur[k]; });
+  // Fibre-dominated samples mean the OTHER counts are not trustworthy — this
+  // downgrades the sample's confidence, it does not raise an alarm. No text-based
+  // SUSPECT_WATER here: a narrative search fired on 32% of reports off
+  // recommendation boilerplate. Water is a MEASURED value on the paired oil
+  // report, so that flag is set at merge time from structured data instead.
+  const fib = cur.morph_fibers_n;
+  const others = ['morph_cutting_n','morph_sliding_n','morph_fatigue_n','morph_nonmetal_n']
+    .map(k => cur[k]).filter(v => v != null);
+  out.opc_quality_flag = (fib != null && others.length && fib > others.reduce(function(a,b){return a+b;},0))
+    ? 'SUSPECT_FIBERS' : 'OK';
+  return out;
+}
+
+// ── COOLANT ─────────────────────────────────────────────────────
+// Physical row : date sampleNo changed [smu] [oilService] HR ri glycol freeze boil ph cond
+// Appearance   : date color odor clarity precipitate magneticPrecipitate nitrite
+// Both anchor on stable landmarks (the HR units token; the CLR|HAZ|CLD clarity
+// code) rather than fixed token counts, because the Oil Service column is blank
+// on most reports and would shift any fixed offset.
+function extractCoolantFields(full, sampleNum) {
+  const out = { _unparsed: [], history: [] };
+  const lines = full.split('\n');
+  const phys = {}, app = {};
+
+  // The Units column ("HR") is BLANK on some reports — live example BD402
+  // 2025-10-14: "2025/10/07 2025/10/14-213 N ~16782 1.3929 57.6 -48 108 7.93 2969".
+  // So the row is anchored from the END (the six physical values are always the
+  // last six tokens) rather than on an HR token that may not be there, with the
+  // hours reading taken as the first token after the coolant-changed flag.
+  const physRe = /^\s*(\d{4}\/\d{2}\/\d{2})\s+(\d{4}\/\d{2}\/\d{2}-\w+)\s+([YN])\s+(.+?)\s*$/i;
+  const appRe  = /^\s*(\d{4}\/\d{2}\/\d{2})\s+(.+?)\s+(CLR|HAZ|CLD)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s*$/i;
+
+  lines.forEach(function(ln) {
+    let m = ln.match(physRe);
+    if (m) {
+      const rest = (m[4] || '').split(/\s+/).filter(function(t){ return t && !/^HRS?$/i.test(t); });
+      const vals = rest.slice(-6);
+      const smuTok = rest.length > 6 ? rest[0] : null;
+      if (vals.length >= 6) {
+        const smu = conmonNum(smuTok);
+        phys[m[1]] = {
+          sample_date: m[1].replace(/\//g, '-'),
+          sample_no: m[2],
+          coolant_changed: m[3].toUpperCase(),
+          sample_smu: smu.v,
+          smu_estimated: smu.q === 'est',
+          refractive_index:   conmonNum(vals[0]).v,
+          glycol_pct:         conmonNum(vals[1]).v,
+          freeze_point_c:     conmonNum(vals[2]).v,
+          boil_point_c:       conmonNum(vals[3]).v,
+          ph:                 conmonNum(vals[4]).v,
+          conductivity_us_cm: conmonNum(vals[5]).v,
+        };
+      } else {
+        out._unparsed.push('physical-row-short(' + m[1] + ')');
+      }
+      return;
+    }
+    m = ln.match(appRe);
+    if (m) {
+      const co = (m[2] || '').trim().split(/\s+/).filter(Boolean);
+      const odor = co.length > 1 ? co[co.length - 1] : null;
+      const color = co.length > 1 ? co.slice(0, -1).join(' ') : (co[0] || null);
+      app[m[1]] = {
+        sample_date: m[1].replace(/\//g, '-'),
+        color: color ? color.toUpperCase() : null,
+        odor:  odor  ? odor.toUpperCase()  : null,
+        clarity: m[3].toUpperCase(),
+        precipitate: (m[4] || '').toUpperCase() || null,
+        magnetic_precipitate: (m[5] || '').toUpperCase() || null,
+        nitrite_ppm: conmonNum(m[6]).v,
+      };
+    }
+  });
+
+  const dates = Object.keys(phys).sort().reverse();
+  if (!dates.length) out._unparsed.push('no-coolant-data-rows');
+
+  // Current sample = the row whose Sample No. matches the report's Sample #.
+  let curDate = null;
+  if (sampleNum) {
+    curDate = dates.filter(function(d){ return phys[d].sample_no === sampleNum; })[0] || null;
+    if (!curDate) { curDate = dates[0] || null; if (curDate) out._unparsed.push('current-row-by-date-fallback'); }
+  } else {
+    curDate = dates[0] || null;
+  }
+
+  if (curDate) {
+    const src = phys[curDate];
+    Object.keys(src).forEach(function(k){ out[k] = src[k]; });
+    if (app[curDate]) { Object.keys(app[curDate]).forEach(function(k){ out[k] = app[curDate][k]; }); }
+    else out._unparsed.push('appearance-row-missing');
+  }
+
+  // Full history (newest first) — feeds the SCA depletion forecast, which needs
+  // >=2 nitrite points and their SMU. One report supplies the whole series, so
+  // no second import is required.
+  dates.forEach(function(d) {
+    const row = {};
+    Object.keys(phys[d]).forEach(function(k){ row[k] = phys[d][k]; });
+    if (app[d]) Object.keys(app[d]).forEach(function(k){ row[k] = app[d][k]; });
+    out.history.push(row);
+  });
+
+  // Coolant brand — interpretation key for the coolant-type audit.
+  const bm = full.match(/Manufacturer\s*:?\s*([^\n]{0,40}?)\s*(?:Brand|\n)/i);
+  const br = full.match(/\bBrand\s*:?\s*([^\n]{0,60}?)\s*(?:Grade|Sample\s*#|\n)/i);
+  const gr = full.match(/\bGrade\s*:?\s*([^\n]{0,40}?)\s*(?:Sample\s*#|Lab\s*Track|\n)/i);
+  const parts = [bm, br, gr].filter(function(x){ return x && x[1] && x[1].trim(); }).map(function(x){ return x[1].trim(); });
+  out.coolant_brand = parts.length ? parts.join(' ') : null;
+
+  out.narrative_text = conmonNarrative(full);
+  // Flags are scoped to THIS sample's comments and exclude advisory phrasing.
+  // narrative_text stays the full verbatim block so the operator can read the
+  // history — only grading is scoped.
+  out.narrative_flags = conmonNarrativeFlags(out.narrative_text || '', out.sample_date || null);
+  return out;
 }
 
 // ─────── UI HANDLERS ──────────────────────────────────────────
@@ -5199,6 +5537,33 @@ function _adoptConmonJSON(j, displayLabel) {
   step2.style.opacity = '1';
   step2.style.pointerEvents = 'auto';
   if (j.meta && j.meta.clientCode) document.getElementById('clientCode').value = j.meta.clientCode;
+  // v8.9 INT-4 — reflect any coolant config already stored in this fleet file.
+  const cc = (j.meta && j.meta.coolant_config) || {};
+  const tSel = document.getElementById('cfgCoolantType');
+  const cIn  = document.getElementById('cfgCoolantCadence');
+  if (tSel) tSel.value = cc.default_type || 'unknown';
+  if (cIn)  cIn.value  = cc.cadence_days != null ? cc.cadence_days : 90;
+}
+
+// v8.9 INT-4 — persist the coolant interpretation keys into the loaded fleet
+// JSON. Kept separate from commit so the operator can set it before any PDFs
+// are dropped; commit also back-fills defaults if this was never touched.
+function saveCoolantConfig() {
+  const fj = state.conmonFleetJSON;
+  const msg = document.getElementById('cfgCoolantMsg');
+  if (!fj) { if (msg) msg.textContent = 'Load a fleet JSON first.'; return; }
+  if (!fj.meta) fj.meta = {};
+  const cc = fj.meta.coolant_config || (fj.meta.coolant_config = {});
+  cc.default_type = document.getElementById('cfgCoolantType').value || 'unknown';
+  const days = parseInt(document.getElementById('cfgCoolantCadence').value, 10);
+  cc.cadence_days = (!isNaN(days) && days > 0) ? days : 90;
+  if (cc.unit_overrides == null) cc.unit_overrides = {};
+  if (!Array.isArray(fj.meta.coolantServiceEvents)) fj.meta.coolantServiceEvents = [];
+  // Re-derive immediately so the effect of the change is visible without a
+  // re-import — the same recompute the commit path runs.
+  if (Array.isArray(fj.conditionMonitoring)) computeConmonDerived(fj.conditionMonitoring, fj.meta);
+  const suppressed = !{ conventional:1, hybrid_nitrited:1 }[cc.default_type];
+  if (msg) msg.textContent = `Saved — chemistry bands ${suppressed ? 'SUPPRESSED (type not nitrited)' : 'ACTIVE'}. Commit to write the file.`;
 }
 
 async function loadConmonPdfs(files) {
@@ -5226,23 +5591,53 @@ async function loadConmonPdfs(files) {
   const seen = {};
   (state.conmonSamples || []).forEach(p => { seen[keyOf(p)] = p; });
   const priorCount = Object.keys(seen).length;
-  let dupesSkipped = 0;
+  let dupesSkipped = 0, paired = 0;
+  // v8.9 INT-2 — OPC↔OIL pairing replaces the old "OIL beats OPC" discard.
+  // An OPC report shares its Sample # with its OIL report, so the two are two
+  // halves of ONE sample: the OPC page's particle data is merged onto the oil
+  // record rather than thrown away. (The pre-v4 split skill made the same
+  // mistake at file level and silently dropped 477 OPC reports across the
+  // archive — see the 2026-07-22 recovery.) An OPC with no oil partner stays
+  // queued on its own, tagged orphan_opc, and is surfaced to the operator.
   parsed.forEach(p => {
     const k = keyOf(p);
-    if (seen[k]) {
-      // OIL beats OPC for same sample_num. Otherwise duplicate against existing queue entry.
-      if (p.is_opc && !seen[k].is_opc) { dupesSkipped++; return; }
-      if (!p.is_opc && seen[k].is_opc) { seen[k] = p; return; } // upgrade OPC → OIL
+    const prev = seen[k];
+    if (prev) {
+      if (p.is_opc && !prev.is_opc) {           // OPC arriving onto a queued OIL
+        if (p.opc && !prev.opc) { prev.opc = p.opc; paired++; }
+        else dupesSkipped++;
+        return;
+      }
+      if (!p.is_opc && prev.is_opc) {           // OIL arriving onto a queued OPC
+        if (prev.opc && !p.opc) { p.opc = prev.opc; paired++; }
+        seen[k] = p;                            // oil record carries rank+trends
+        return;
+      }
       dupesSkipped++;
       return;
     }
     seen[k] = p;
   });
   state.conmonSamples = Object.values(seen);
+  // Orphan flag + the water cross-check. SUSPECT_WATER is set HERE, from the
+  // paired oil sample's measured water factor, rather than from OPC narrative
+  // text — a text search fired on 32% of reports off recommendation boilerplate,
+  // which would have suppressed a third of the fleet's alerts.
+  let orphans = 0;
+  state.conmonSamples.forEach(s => {
+    if (s.is_opc && s.opc) { s.orphan_opc = true; orphans++; }
+    else if (s.orphan_opc) delete s.orphan_opc;
+    if (s.opc && s.opc.opc_quality_flag === 'OK') {
+      const wet = (s.trends || []).some(t => (t.category || '') === 'water');
+      if (wet) s.opc.opc_quality_flag = 'SUSPECT_WATER';
+    }
+  });
   const newCount = state.conmonSamples.length;
   const addedThisDrop = newCount - priorCount;
   // v8.2 Bug A UX fix: surface dedup outcome in the progress line so operator can see what happened.
   prog.textContent = `${newCount} queued · +${addedThisDrop} from this drop`
+    + (paired > 0 ? ` · ${paired} OPC paired` : '')
+    + (orphans > 0 ? ` · ${orphans} orphan OPC` : '')
     + (dupesSkipped > 0 ? ` · ${dupesSkipped} duplicate${dupesSkipped===1?'':'s'} skipped` : '')
     + (errors.length ? ` · ${errors.length} parse error${errors.length===1?'':'s'}` : '');
   renderConmonPreview();
@@ -5299,13 +5694,43 @@ function renderConmonPreview() {
   const oil     = samples.filter(s => !s.is_coolant).length;
   const coolant = samples.filter(s =>  s.is_coolant).length;
   const units   = new Set(samples.map(s => s.unit_id).filter(Boolean)).size;
+  // v8.9 — surface the two new data slices and the breach count at preview time,
+  // so the operator sees what is about to land before committing.
+  const withOpc  = samples.filter(s => s.opc).length;
+  const withChem = samples.filter(s => s.coolant).length;
+  const orphans  = samples.filter(s => s.orphan_opc);
+  const breaches = samples.filter(s => s.coolant && (s.coolant.narrative_flags || [])
+      .some(f => f === 'OIL_CONTAM' || f === 'COMBUSTION_GAS'));
   document.getElementById('conmonStats').innerHTML = `
     <div class="stat-pill"><div class="stat-num s-green">${samples.length}</div><div class="stat-lbl">Parsed</div></div>
     <div class="stat-pill"><div class="stat-num s-green">${oil}</div><div class="stat-lbl">Oil</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${coolant}</div><div class="stat-lbl">Coolant</div></div>
+    <div class="stat-pill"><div class="stat-num" style="color:var(--text)">${withOpc}</div><div class="stat-lbl">OPC data</div></div>
+    <div class="stat-pill"><div class="stat-num" style="color:var(--text)">${withChem}</div><div class="stat-lbl">Chemistry</div></div>
+    <div class="stat-pill"><div class="stat-num" style="color:${breaches.length ? 'var(--red)' : 'var(--text3)'}">${breaches.length}</div><div class="stat-lbl">Breach flags</div></div>
     <div class="stat-pill"><div class="stat-num" style="color:var(--text)">${units}</div><div class="stat-lbl">Units</div></div>
   `;
-  document.getElementById('conmonUnmatchedBox').innerHTML = '';
+  // v8.9 INT-2 — orphan OPC surfacing. Previously #conmonUnmatchedBox was only
+  // ever cleared (matchConmonSamples has no call site), so an OPC with no oil
+  // partner passed unseen. Deliberately a plain list, not a dialog: it is a
+  // "check this" notice, not a decision the operator has to resolve to proceed.
+  const box = document.getElementById('conmonUnmatchedBox');
+  const notices = [];
+  if (orphans.length) {
+    notices.push(`<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:6px;padding:9px 12px;margin:8px 0;font-size:12px">
+      <strong style="color:var(--gold)">${orphans.length} orphan OPC report${orphans.length===1?'':'s'}</strong>
+      <span style="color:var(--text2)">— particle data with no matching oil sample in this batch. It will be stored on its own; drop the matching oil PDF to pair it.</span>
+      <div style="color:var(--text3);margin-top:5px">${orphans.slice(0,12).map(o => esc(`${o.unit_id||'?'} ${o.component_name_pdf||''} ${o.sample_date||''}`)).join(' · ')}${orphans.length>12?' …':''}</div>
+    </div>`);
+  }
+  if (breaches.length) {
+    notices.push(`<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:6px;padding:9px 12px;margin:8px 0;font-size:12px">
+      <strong style="color:var(--red)">${breaches.length} coolant sample${breaches.length===1?'':'s'} flagging a breach signature</strong>
+      <span style="color:var(--text2)">— oil or combustion gas found in the coolant. Engine oil reads normal while this develops; verification is a pressure test + combustion-gas test + oil Na/K cross-check.</span>
+      <div style="color:var(--text3);margin-top:5px">${breaches.slice(0,12).map(o => esc(`${o.unit_id||'?'} ${o.sample_date||''}`)).join(' · ')}${breaches.length>12?' …':''}</div>
+    </div>`);
+  }
+  box.innerHTML = notices.join('');
   const BAND_COLOR = { normal:'var(--green)', elevated:'var(--gold)', high:'#ff7a3d', very_high:'var(--red)', unknown:'var(--text3)' };
   const rows = samples.map(s => {
     const bc       = BAND_COLOR[s.band] || 'var(--text3)';
@@ -5316,9 +5741,14 @@ function renderConmonPreview() {
       ? s.trends.slice(0, 4).map(t => `<span style="color:${BAND_COLOR[t.category] || 'var(--text3)'}">${esc(t.label)}</span>:<span style="font-weight:600">${t.rank}</span>`).join(' &nbsp;·&nbsp; ')
       : '<span style="color:var(--text3)">—</span>';
     const locCell = s.location ? esc(s.location) : '<span style="color:var(--text3)">—</span>';
-    const typeTag = s.is_coolant
+    // v8.9 — badge the new data slices so the operator can see at a glance which
+    // samples gained particle/chemistry content in this batch.
+    const opcTag = s.opc
+      ? `<span title="OPC particle data attached" style="color:var(--text);font-size:10px;background:rgba(255,255,255,.10);padding:1px 5px;border-radius:3px;margin-left:4px">OPC${s.orphan_opc ? '*' : ''}</span>`
+      : '';
+    const typeTag = (s.is_coolant
       ? `<span style="color:var(--blue);font-size:10px;background:rgba(59,130,246,.15);padding:1px 5px;border-radius:3px">coolant</span>`
-      : `<span style="color:var(--text3);font-size:10px">oil</span>`;
+      : `<span style="color:var(--text3);font-size:10px">oil</span>`) + opcTag;
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:5px 10px;text-align:center;font-weight:600">${esc(s.unit_id || '?')}</td>
       <td style="padding:5px 10px">${esc(s.component_name_pdf || '?')}</td>
@@ -5348,6 +5778,169 @@ function renderConmonPreview() {
   if (typeof attachTableSort === 'function') attachTableSort(document.getElementById('conmonPreviewTable'));
 }
 
+// ═══════════════════════════════════════════════════════════════
+// v8.9 INT-5 — derived ConMon fields (Intake owns ALL derivation; Lens renders)
+//
+// Recomputed from scratch on EVERY commit, never accumulated. That is the
+// self-heal: set the coolant type later, or add a service event you had
+// forgotten, commit again, and every historical stage/band/forecast corrects
+// itself. No file rebuild needed to fix a config mistake.
+// ═══════════════════════════════════════════════════════════════
+
+// Chemistry bands — ENGINEERING JUDGEMENT, held as config, not physics.
+// Gated on coolant type: nitrite and pH limits differ fundamentally between
+// nitrited and OAT chemistry, so grading OAT on these manufactures a fake
+// fleet crisis. Type "unknown" suppresses them entirely (see stageFor()).
+const CONMON_COOLANT_BANDS = {
+  nitrite_ppm: { redBelow: 400,  amberBelow: 800,  greenTo: 2400 },   // >2400 = over-treated (amber)
+  ph:          { redBelow: 7.0,  amberBelow: 7.5,  greenTo: 9.5,  amberTo: 10 },
+  glycol_pct:  { redBelow: 40,   amberBelow: 45,   greenTo: 60,   amberTo: 68 },
+};
+const CONMON_NITRITED_TYPES = { conventional: 1, hybrid_nitrited: 1 };
+
+// Coarse-particle thresholds — derived from THIS fleet's own distribution
+// (1,913 OPC history points, 2026-07-22), not a generic published number.
+// The Phase-1 brief proposed alerting on any count > 0; measured against real
+// data that fires on 44% of drivetrain samples (>38µm) and 14% (>70µm), which
+// is alert fatigue rather than a signal. These are the observed p90/p95.
+const CONMON_OPC_COARSE = { gt38_amber: 40, gt38_red: 80, gt70_amber: 10, gt70_red: 20 };
+const CONMON_SCA_FLOOR_PPM = 400;   // nitrite red floor — the RUL target
+
+function conmonBandFor(field, v) {
+  const b = CONMON_COOLANT_BANDS[field];
+  if (!b || v == null) return null;
+  if (v < b.redBelow) return 'red';
+  if (v < b.amberBelow) return 'amber';
+  if (b.amberTo != null) {           // two-sided (ph, glycol)
+    if (v <= b.greenTo) return 'green';
+    if (v <= b.amberTo) return 'amber';
+    return 'red';
+  }
+  return v <= b.greenTo ? 'green' : 'amber';   // one-sided (nitrite: high = over-treated)
+}
+
+function computeConmonDerived(records, meta) {
+  const cfg = (meta && meta.coolant_config) || {};
+  const defType = (cfg.default_type || 'unknown').toLowerCase();
+  const overrides = cfg.unit_overrides || {};
+  const events = Array.isArray(meta && meta.coolantServiceEvents) ? meta.coolantServiceEvents : [];
+
+  // Wipe every derived field first — nothing survives from a previous commit.
+  records.forEach(r => {
+    delete r.coolant_stage; delete r.fsi; delete r.pq_gap;
+    delete r.sca_depletion_rate; delete r.sca_exhaustion_smu; delete r.sca_confidence;
+    if (r.coolant) { delete r.coolant.field_bands; delete r.coolant.bands_suppressed; }
+  });
+
+  // ── OPC-derived: FSI + PQ-gap ────────────────────────────────
+  const opcByComp = {};
+  records.forEach(r => {
+    if (!r.opc) return;
+    const k = `${r.unit_id}_${r.target}_${r.location}`;
+    (opcByComp[k] = opcByComp[k] || []).push(r);
+    // Fatigue severity index — count x size, so a rising mean size registers as
+    // escalation even when the count is flat.
+    const n = r.opc.morph_fatigue_n, um = r.opc.morph_fatigue_um;
+    r.fsi = (n == null) ? null : n * Math.max((um == null ? 10 : um) / 10, 1);
+  });
+  Object.values(opcByComp).forEach(arr => {
+    arr.sort((a, b) => (b.sample_date || '').localeCompare(a.sample_date || ''));
+    arr.forEach((r, i) => {
+      const prev = arr[i + 1];
+      const nNow = r.opc.morph_fatigue_n, nPrev = prev && prev.opc ? prev.opc.morph_fatigue_n : null;
+      const fatigueRising = (nNow != null && nPrev != null && nNow > nPrev);
+      const coarse = (r.opc.opc_gt38_um != null && r.opc.opc_gt38_um >= CONMON_OPC_COARSE.gt38_amber)
+                  || (r.opc.opc_gt70_um != null && r.opc.opc_gt70_um >= CONMON_OPC_COARSE.gt70_amber);
+      // The spectro blind-spot read: large-particle activity WITHOUT a wear
+      // metal flagged means the spectrometer is under-reading, because RDE is
+      // blind above ~8-10um. Documented proxy — we test the sample's flagged
+      // trend categories, not a numeric Fe series (numeric wear metals are a
+      // later package).
+      const wearFlagged = (r.trends || []).some(t => (t.category || '') === 'wear');
+      r.pq_gap = !!((fatigueRising || coarse) && !wearFlagged);
+    });
+  });
+
+  // ── Coolant-derived: stage ladder + bands + SCA forecast ─────
+  const coolByUnit = {};
+  records.forEach(r => { if (r.coolant) (coolByUnit[r.unit_id] = coolByUnit[r.unit_id] || []).push(r); });
+
+  Object.keys(coolByUnit).forEach(unit => {
+    const arr = coolByUnit[unit];
+    arr.sort((a, b) => (b.sample_date || '').localeCompare(a.sample_date || ''));
+    const type = String(overrides[unit] || defType).toLowerCase();
+    const nitrited = !!CONMON_NITRITED_TYPES[type];
+    // Conductivity has no transferable absolute band (the additive package sets
+    // the baseline), so it is trend-only against this unit's own oldest reading.
+    const condSeries = arr.map(r => r.coolant.conductivity_us_cm).filter(v => v != null);
+    const condBase = condSeries.length ? condSeries[condSeries.length - 1] : null;
+
+    arr.forEach((r, i) => {
+      const c = r.coolant;
+      const prev = arr[i + 1] ? arr[i + 1].coolant : null;
+      const bands = {};
+      if (nitrited) {
+        ['nitrite_ppm', 'ph', 'glycol_pct'].forEach(f => { bands[f] = conmonBandFor(f, c[f]); });
+        // Buffered systems hold pH then fall off a cliff, so rate-of-change is
+        // the earlier witness than absolute position.
+        if (prev && c.ph != null && prev.ph != null && (c.ph - prev.ph) <= -0.5 && bands.ph === 'green') {
+          bands.ph = 'amber';
+          bands.ph_rate_rule = true;
+        }
+      }
+      if (condBase != null && c.conductivity_us_cm != null && condBase > 0) {
+        const delta = (c.conductivity_us_cm - condBase) / condBase;
+        bands.conductivity_us_cm = delta >= 0.50 ? 'red' : (delta >= 0.20 ? 'amber' : 'green');
+      }
+      c.field_bands = bands;
+      c.bands_suppressed = !nitrited;
+      c.coolant_type_resolved = type;
+
+      // Risk ladder. Breach signatures and appearance always apply; chemistry
+      // gates only once the coolant product is confirmed.
+      const flags = c.narrative_flags || [];
+      const breach = flags.indexOf('OIL_CONTAM') >= 0 || flags.indexOf('COMBUSTION_GAS') >= 0
+                  || c.precipitate === 'OIL';
+      const magnetic = c.magnetic_precipitate === 'P' || c.magnetic_precipitate === 'PRESENT';
+      const hazy = c.clarity === 'HAZ' || c.clarity === 'CLD';
+      let stage = 0;
+      if (hazy || bands.conductivity_us_cm === 'amber' || bands.nitrite_ppm === 'amber') stage = 1;
+      if (magnetic || bands.nitrite_ppm === 'red' || bands.ph === 'red') stage = 2;
+      if (breach) stage = 3;
+      r.coolant_stage = stage;
+    });
+
+    // SCA exhaustion forecast — the one genuine RUL on the coolant page.
+    // Nitrite depletes roughly monotonically with engine hours between services,
+    // so this is arithmetic, not a model. Uses the newest record's own history
+    // (a single report carries up to six columns), clamped to the last service.
+    const newest = arr[0];
+    if (nitrited && newest && Array.isArray(newest.coolant.history)) {
+      const lastSvc = events.filter(e => e && e.unit_id === unit && e.smu != null)
+                            .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+      const pts = newest.coolant.history
+        .filter(h => h.nitrite_ppm != null && h.sample_smu != null)
+        .filter(h => !lastSvc || h.sample_smu >= lastSvc.smu)
+        .sort((a, b) => b.sample_smu - a.sample_smu);
+      if (pts.length >= 2) {
+        const now = pts[0], older = pts[pts.length - 1];
+        const dHours = now.sample_smu - older.sample_smu;
+        const dPpm = older.nitrite_ppm - now.nitrite_ppm;      // positive = depleting
+        if (dHours > 0 && dPpm > 0) {
+          const rate = dPpm / dHours;                           // ppm per hour
+          const toFloor = (now.nitrite_ppm - CONMON_SCA_FLOOR_PPM) / rate;
+          newest.sca_depletion_rate = Math.round(rate * 1e6) / 1e6;
+          newest.sca_exhaustion_smu = Math.round(now.sample_smu + toFloor);
+          newest.sca_confidence = pts.length >= 3 ? 'ok' : 'low-2-points';
+        }
+        // A negative or flat rate means a recent recharge (or OAT) — no forecast.
+        // Deliberately left null rather than extrapolated.
+      }
+    }
+  });
+  return records;
+}
+
 // v8.8 FEAT-1 — `download` param: true = legacy behaviour (commit + download);
 // false = commit into the session JSON only (chaining; final download later).
 function commitConmonSamples(download = true) {
@@ -5373,6 +5966,17 @@ function commitConmonSamples(download = true) {
     band:         s.band,
     trends:       s.trends.map(t => ({ label: (t.label || '').toLowerCase(), rank: t.rank, category: (t.category || '').toLowerCase() })),
     is_coolant:   s.is_coolant,
+    // v8.9 — is_opc is now persisted. It was dropped at commit in v8.8, which
+    // left the merge unable to tell a particle-only record from a graded oil
+    // record: both carry the same sample_id (OIL and OPC share one Sample #),
+    // so an OPC-only re-import silently replaced the oil sample's rank/band/
+    // trends with nulls. The merge guard below depends on this field.
+    is_opc:       s.is_opc || undefined,
+    // v8.9 INT-6 — additive optional slices. Absent on oil-only samples and on
+    // every pre-v8.9 record, which is why Lens must null-guard rather than assume.
+    opc:          s.opc || undefined,
+    coolant:      s.coolant || undefined,
+    orphan_opc:   s.orphan_opc || undefined,
     source: {
       lab:        'fluidlife',
       sample_num: s.sample_num,
@@ -5382,10 +5986,33 @@ function commitConmonSamples(download = true) {
       model:      (s.model || '').toLowerCase(),
     },
   }));
-  // Dedup by sample_id; new overrides existing
+  // v8.9 INT-2 — dedup by sample_id, but MERGE rather than blind-override, so a
+  // re-import is idempotent and enriches instead of destroying: an incoming
+  // record absorbs any opc{}/coolant{} the stored one already has and it lacks,
+  // and an oil record arriving for a stored orphan OPC adopts its particle data.
+  // Without this, re-importing an oil PDF would wipe the OPC half of the sample.
   const keyed = {};
   existing.forEach(r => { if (r && r.sample_id) keyed[r.sample_id] = r; });
-  newRecords.forEach(r => { keyed[r.sample_id] = r; });
+  newRecords.forEach(r => {
+    const prev = keyed[r.sample_id];
+    if (prev) {
+      // An OPC-only record must NEVER displace the oil record that owns this
+      // sample's rank, band and trends. They share one Sample # — hence one
+      // sample_id — so a naive override would replace a graded oil sample with
+      // a rank-less particle record. It contributes its opc{} and steps aside.
+      // This is the exact path a re-import of OPC-only PDFs takes against a
+      // fleet JSON that already holds the oil half.
+      if (r.is_opc && !prev.is_opc) {
+        if (r.opc && !prev.opc) prev.opc = r.opc;
+        delete prev.orphan_opc;                      // pairing now resolved
+        return;                                      // keep the oil record
+      }
+      if (!r.opc && prev.opc) r.opc = prev.opc;
+      if (!r.coolant && prev.coolant) r.coolant = prev.coolant;
+      if (r.opc && !r.is_opc) delete r.orphan_opc;   // pairing resolved on re-import
+    }
+    keyed[r.sample_id] = r;
+  });
   // Per-component history cap: last 10 OR 365 days, looser wins (computed here so Lens receives a trimmed set)
   const byComp = {};
   Object.values(keyed).forEach(r => {
@@ -5406,10 +6033,44 @@ function commitConmonSamples(download = true) {
     const keep = by10.length >= by365.length ? by10 : by365;
     trimmed.push(...keep);
   });
+  // v8.9 INT-6 gate 4 — the newest coolant record for a unit must never be
+  // trimmed away. Coolant is sampled far less often than oil (roughly annually
+  // on this fleet), so a 365-day/last-10 window scoped per component can drop a
+  // unit's only coolant evidence and silently return the engine to "no coolant
+  // data" — the exact false-green this feature exists to remove.
+  const keptIds = new Set(trimmed.map(r => r.sample_id));
+  const newestCoolant = {};
+  Object.values(keyed).forEach(r => {
+    if (!r.coolant && !r.is_coolant) return;
+    const cur = newestCoolant[r.unit_id];
+    if (!cur || (r.sample_date || '') > (cur.sample_date || '')) newestCoolant[r.unit_id] = r;
+  });
+  let coolantRescued = 0;
+  Object.values(newestCoolant).forEach(r => {
+    if (!keptIds.has(r.sample_id)) { trimmed.push(r); keptIds.add(r.sample_id); coolantRescued++; }
+  });
+
+  // v8.9 INT-4 — coolant config travels inside the fleet JSON. Defaults are
+  // additive and never clobber an existing setting. default_type "unknown"
+  // deliberately SUPPRESSES chemistry bands until the operator confirms the
+  // coolant product: nitrite/pH limits differ fundamentally between nitrited
+  // and OAT chemistry, and grading the wrong one manufactures a fake crisis.
+  if (!fj.meta) fj.meta = {};
+  if (!fj.meta.coolant_config) fj.meta.coolant_config = {};
+  const cc = fj.meta.coolant_config;
+  if (cc.default_type == null)  cc.default_type = 'unknown';
+  if (cc.unit_overrides == null) cc.unit_overrides = {};
+  if (cc.cadence_days == null)  cc.cadence_days = 90;
+  if (!Array.isArray(fj.meta.coolantServiceEvents)) fj.meta.coolantServiceEvents = [];
+
+  // v8.9 INT-5 — recompute every derived value across the WHOLE array (not just
+  // this import) so retrospective config changes self-heal on the next commit.
+  computeConmonDerived(trimmed, fj.meta);
+
   // Write back — conditionMonitoring lives at root level of fleet schema (flat schema, no masterData wrapper)
   fj.conditionMonitoring = trimmed;
-  if (!fj.meta) fj.meta = {};
   fj.meta.lastConmonImport = new Date().toISOString();
+  fj.meta.conmon_rev = '2';   // v8.9 INT-6 — stamps the file as carrying opc{}/coolant{}
   // v8.8 FEAT-1 — retain the committed result in the session for chaining.
   _setSessionJSON(fj, `ConMon +${newRecords.length} sample${newRecords.length===1?'':'s'}`);
   if (download) {
@@ -5439,7 +6100,52 @@ function commitConmonSamples(download = true) {
   if (newToFleet > 0)      parts.push(`${newToFleet} new`);
   if (updatedExisting > 0) parts.push(`${updatedExisting} updated existing entr${updatedExisting===1?'y':'ies'}`);
   const breakdown = parts.length ? ` — ${parts.join(', ')}` : '';
-  alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).${download ? '' : ' Retained in session — download from the session banner when done.'}`);
+
+  // ── v8.9 INT-6 QA gates ─────────────────────────────────────
+  // Silent data loss is the failure mode this whole feature exists to remove,
+  // so the commit path proves its own arithmetic instead of trusting it.
+  const gateNotes = [];
+  const mergedIds = Object.keys(keyed);
+  // Gate 1 — reconciliation: every queued sample must land in the merged set.
+  const queuedIds = new Set(newRecords.map(r => r.sample_id));
+  const missingFromMerge = [...queuedIds].filter(id => !keyed[id]);
+  if (missingFromMerge.length) gateNotes.push(`⚠ ${missingFromMerge.length} queued sample(s) missing after merge`);
+  // Gate 2 — no duplicate sample_id survived, and nothing appeared from nowhere.
+  const outIds = trimmed.map(r => r.sample_id);
+  const dupOut = outIds.length - new Set(outIds).size;
+  if (dupOut > 0) gateNotes.push(`⚠ ${dupOut} duplicate sample_id in output`);
+  const phantom = outIds.filter(id => !keyed[id]).length;
+  if (phantom > 0) gateNotes.push(`⚠ ${phantom} phantom record(s) not traceable to input`);
+  // Gate 3 — narrative audit: a coolant comment mentioning a concerning term
+  // that produced NO flag is listed for review rather than passing silently.
+  const AUDIT_RE = /contaminat|combustion|blow[\s-]?by|hazy|cloudy|sludge|corrosion|leak/i;
+  const auditHits = trimmed.filter(r => r.coolant && r.coolant.narrative_text
+      && AUDIT_RE.test(r.coolant.narrative_text)
+      && !(r.coolant.narrative_flags || []).length).length;
+  if (auditHits > 0) gateNotes.push(`ℹ ${auditHits} coolant narrative(s) mention a concern but produced no flag — review`);
+  if (coolantRescued > 0) gateNotes.push(`ℹ ${coolantRescued} newest-coolant record(s) protected from retention trim`);
+
+  // Findings worth surfacing at commit time rather than leaving to discovery.
+  const nOpc     = trimmed.filter(r => r.opc).length;
+  const nCoolant = trimmed.filter(r => r.coolant).length;
+  const nStage3  = trimmed.filter(r => r.coolant_stage === 3).length;
+  const nPqGap   = trimmed.filter(r => r.pq_gap).length;
+  const nOrphan  = trimmed.filter(r => r.orphan_opc).length;
+  const nSca     = trimmed.filter(r => r.sca_exhaustion_smu != null).length;
+  const suppressed = trimmed.some(r => r.coolant && r.coolant.bands_suppressed);
+
+  const detail = [
+    `OPC data on ${nOpc} sample${nOpc===1?'':'s'}`,
+    `coolant chemistry on ${nCoolant}`,
+    nOrphan ? `${nOrphan} orphan OPC (no oil partner)` : null,
+    nStage3 ? `⚠ ${nStage3} coolant STAGE-3 (breach signature)` : null,
+    nPqGap  ? `${nPqGap} PQ-gap flag${nPqGap===1?'':'s'}` : null,
+    nSca    ? `${nSca} SCA exhaustion forecast${nSca===1?'':'s'}` : null,
+    suppressed ? 'coolant bands SUPPRESSED — set coolant type to enable grading' : null,
+  ].filter(Boolean).join('\n· ');
+
+  if (gateNotes.length) console.warn('[ConMon v8.9 QA gates]', gateNotes);
+  alert(`✓ Imported ${newRecords.length} sample${newRecords.length===1?'':'s'}${breakdown}. ConditionMonitoring total: ${trimmed.length} (after retention trim).\n\n· ${detail}${gateNotes.length ? '\n\n' + gateNotes.join('\n') : ''}${download ? '' : '\n\nRetained in session — download from the session banner when done.'}`);
 }
 
 // v8.2 Bug B fix companion: clears just the parsed-samples queue without dropping the

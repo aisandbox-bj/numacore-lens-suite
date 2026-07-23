@@ -411,6 +411,29 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 /* ConMon corner badge inside cards — pin top-right */
 .component-card { position:relative; }
 .component-card .conmon-badge-slot { position:absolute; top:6px; right:6px; z-index:2; }
+/* v4.9 LENS-2/5 — coolant status chip + OPC badges. The chip is deliberately
+   always present on a unit tile: "no coolant sample" is a state to show, not an
+   absence to hide. */
+.cm-coolant-chip { margin-left:auto; font-size:10px; font-weight:700; letter-spacing:.4px;
+  padding:2px 8px; border-radius:10px; white-space:nowrap; }
+.cm-opc-badge { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.3px;
+  padding:1px 5px; border-radius:3px; margin-left:6px; vertical-align:middle; }
+.cm-badge-pq   { background:rgba(248,113,113,.18); color:#F87171; border:1px solid rgba(248,113,113,.45); }
+.cm-badge-qual { background:rgba(148,163,184,.16); color:#94a3b8; border:1px solid rgba(148,163,184,.4); }
+.cm-stage3-mark { color:#F87171; font-weight:700; margin-left:6px; }
+/* coolant detail lane (history modal) */
+.cm-clnt-lane { margin:10px 0 14px; padding:12px 14px; border-radius:8px;
+  background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); }
+.cm-clnt-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(122px,1fr)); gap:9px; margin-top:9px; }
+.cm-clnt-cell { background:rgba(0,0,0,.22); border-radius:6px; padding:7px 9px; }
+.cm-clnt-k { font-size:9.5px; letter-spacing:.5px; text-transform:uppercase; opacity:.62; }
+.cm-clnt-v { font-size:15px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums; }
+.cm-clnt-note { font-size:11.5px; opacity:.72; margin-top:9px; line-height:1.5; }
+.cm-flag-pill { display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px;
+  margin:3px 5px 0 0; background:rgba(248,113,113,.18); color:#F87171; border:1px solid rgba(248,113,113,.45); }
+.cm-opc-tbl { width:100%; border-collapse:collapse; font-size:11.5px; margin-top:8px; }
+.cm-opc-tbl th { text-align:left; font-weight:600; opacity:.6; padding:3px 7px; font-size:10px; text-transform:uppercase; }
+.cm-opc-tbl td { padding:3px 7px; font-variant-numeric:tabular-nums; }
 /* Drill modal */
 #comp-drill-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9000; display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
 #comp-drill-overlay.open { display:flex; }
@@ -1784,7 +1807,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.8';
+const VERSION = '4.9';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2107,6 +2130,66 @@ function getBandFromRank(rank) {
 // live (ConMon history modal) and untouched.
 
 // Stale check per Design Spec §6.8. Uses lensUISettings.stale_threshold_days.
+// ══ v4.9 LENS-1 — coolant status resolver ═══════════════════════════════
+// Lens renders what Intake derived; it computes NOTHING here except age, which
+// follows the locked render-time staleness precedent. If a number is missing,
+// the fix belongs in Intake, not in a Lens-side recompute.
+//
+// The GREY state is the point of this whole feature. An engine with clean oil
+// and no current coolant sample is NOT green — it is unmonitored against the
+// failure family (head gasket / cracked head / liner seal / oil or EGR cooler)
+// that oil analysis is structurally blind to. Green-on-oil alone is a lie for
+// that family, so absence of coverage has to render as its own visible state.
+var COOLANT_STAGE_COLOUR = Object.freeze({
+  green: '#4ADE80',   // stage 0 — all bands normal, sample current
+  watch: '#FACC15',   // stage 1 — one soft signal
+  amber: '#FB923C',   // stage 2 — hard chemistry signal
+  red:   '#F87171',   // stage 3 — breach signature
+  grey:  '#546e7a'    // no coolant sample, or older than 2x cadence
+});
+var COOLANT_STAGE_LABEL = Object.freeze({
+  green: 'CLNT OK', watch: 'CLNT WATCH', amber: 'CLNT AMBER',
+  red: 'CLNT RED', grey: 'CLNT —'
+});
+var _COOLANT_STAGE_BY_NUM = ['green', 'watch', 'amber', 'red'];
+
+function _coolantCadenceDays() {
+  var cc = (lensMeta && lensMeta.coolant_config) || {};
+  var d = parseInt(cc.cadence_days, 10);
+  return (!isNaN(d) && d > 0) ? d : 90;
+}
+
+// Returns {state, latest, ageDays, cadence, reason} for a unit's coolant side.
+function coolantStatus(unit_id) {
+  var key = (unit_id || '').toLowerCase();
+  var samples = conMonByUnit[key] || [];
+  // Records are newest-first. is_coolant is the v8.9 contract; the coolant{}
+  // slice is accepted as a fallback because pre-FIX-1 files mis-typed coolant
+  // samples as components.
+  var latest = null;
+  for (var i = 0; i < samples.length; i++) {
+    if (samples[i].is_coolant || samples[i].coolant) { latest = samples[i]; break; }
+  }
+  var cadence = _coolantCadenceDays();
+  if (!latest) {
+    return { state: 'grey', latest: null, ageDays: null, cadence: cadence,
+             reason: 'no coolant sample on record' };
+  }
+  var ageDays = null;
+  var t = Date.parse(latest.sample_date);
+  if (!isNaN(t)) ageDays = Math.floor((Date.now() - t) / 86400000);
+  if (ageDays != null && ageDays > cadence * 2) {
+    return { state: 'grey', latest: latest, ageDays: ageDays, cadence: cadence,
+             reason: 'last coolant sample ' + ageDays + ' days ago (cadence ' + cadence + 'd)' };
+  }
+  var stage = latest.coolant_stage;
+  var state = (typeof stage === 'number' && _COOLANT_STAGE_BY_NUM[stage])
+    ? _COOLANT_STAGE_BY_NUM[stage]
+    : 'grey';   // pre-v8.9 record: chemistry never extracted, so not assessed
+  return { state: state, latest: latest, ageDays: ageDays, cadence: cadence,
+           reason: state === 'grey' ? 'coolant sample present but not assessed (pre-v8.9 import)' : null };
+}
+
 function isSampleStale(sample) {
   if (!sample || !sample.sample_date) return false;
   const days = (lensUISettings && lensUISettings.stale_threshold_days) || 90;
@@ -2520,10 +2603,22 @@ function renderConMonTile(unit_id) {
 
   tile.style.cssText = ''; // v3.8: layout owned by flex parent
 
+  // v4.9 LENS-2 — the coolant chip. Rendered even when the unit has NO ConMon
+  // data at all, because "no coolant sample" is exactly the state that must be
+  // visible rather than absent.
+  var cs = coolantStatus(unit_id);
+  var csCol = COOLANT_STAGE_COLOUR[cs.state];
+  var csTip = cs.reason ? cs.reason
+    : ('coolant stage ' + cs.latest.coolant_stage + (cs.ageDays != null ? ' · sampled ' + cs.ageDays + ' days ago' : ''));
+  var coolantChip =
+    '<span class="cm-coolant-chip" title="' + esc(csTip) + '" style="background:' + csCol + '22;color:' + csCol + ';border:1px solid ' + csCol + '">' +
+      COOLANT_STAGE_LABEL[cs.state] + '</span>';
+
   if (!samples.length) {
     tile.innerHTML =
       '<div class="cm-tile-header">' +
         '<span class="cm-tile-title">Condition Monitoring</span>' +
+        coolantChip +
       '</div>' +
       '<div class="cm-tile-empty">No condition monitoring data available.</div>';
     return;
@@ -2542,6 +2637,7 @@ function renderConMonTile(unit_id) {
     '<div class="cm-tile-header">' +
       '<span class="cm-tile-title">Condition Monitoring</span>' +
       '<span class="cm-tile-count">' + countLbl + '</span>' +
+      coolantChip +
     '</div>';
 
   groupOrder.forEach(function(gk) {
@@ -2550,13 +2646,27 @@ function renderConMonTile(unit_id) {
     var target  = latest.target || '—';
     var loc     = latest.location ? ' · ' + latest.location : '';
     var dateStr = latest.sample_date || 'Date unknown';
-    var coolant = latest.is_coolant;
+    var coolant = latest.is_coolant || !!latest.coolant;
     var rnkStr  = (!coolant && typeof latest.sample_rank === 'number')
       ? 'rank ' + latest.sample_rank.toFixed(1) : null;
     var stale   = isSampleStale(latest) ? ' · STALE' : '';
-    var meta    = dateStr + stale + (rnkStr ? ' · ' + rnkStr : '');
-    var bandLbl = coolant ? 'COOLANT'
-      : (latest.band || 'unknown').replace('_', ' ').toUpperCase();
+    // v4.9 LENS-2 — a coolant row now carries its assessed stage instead of a
+    // flat "COOLANT" pill with no severity, and v4.9 LENS-5 badges the samples
+    // whose particle data warrants opening the panel.
+    var bandLbl = (latest.band || 'unknown').replace('_', ' ').toUpperCase();
+    if (coolant) {
+      var st = (typeof latest.coolant_stage === 'number')
+        ? _COOLANT_STAGE_BY_NUM[latest.coolant_stage] : null;
+      colour  = st ? COOLANT_STAGE_COLOUR[st] : COOLANT_STAGE_COLOUR.grey;
+      bandLbl = st ? COOLANT_STAGE_LABEL[st].replace('CLNT ', 'COOLANT ') : 'COOLANT —';
+    }
+    var badges = '';
+    if (latest.pq_gap) badges += '<span class="cm-opc-badge cm-badge-pq" title="Large-particle wear with no wear metal flagged — spectrometry is under-reading. Escalate and request ferrography.">PQ-GAP</span>';
+    if (latest.opc && latest.opc.opc_quality_flag && latest.opc.opc_quality_flag !== 'OK') {
+      badges += '<span class="cm-opc-badge cm-badge-qual" title="Sample quality caveat: ' + esc(latest.opc.opc_quality_flag) + ' — counts on this sample are less reliable.">' + esc(latest.opc.opc_quality_flag.replace('SUSPECT_', '?')) + '</span>';
+    }
+    var meta    = dateStr + stale + (rnkStr ? ' · ' + rnkStr : '')
+                + (latest.fsi != null ? ' · FSI ' + Math.round(latest.fsi) : '');
     // v4.3.1 C1+C2 — per-row trend arrow. groups[gk] is newest-first per the
     // comment above; _componentTrend expects oldest→newest, so reverse before
     // passing. 'unknown' (≤4 samples or any null rank in the last 4) → no arrow.
@@ -2580,7 +2690,7 @@ function renderConMonTile(unit_id) {
       '<div class="cm-sample-row" data-gk="' + encodeURIComponent(gk) + '">' +
         '<span class="cm-band-pill" style="background:' + colour + '22;color:' + colour + ';border-color:' + colour + '">' + bandLbl + '</span>' +
         '<div class="cm-row-info">' +
-          '<span class="cm-row-target">' + esc(target) + esc(loc) + '</span>' +   /* v4.7 FIX-1 — esc */
+          '<span class="cm-row-target">' + esc(target) + esc(loc) + badges + '</span>' +   /* v4.7 FIX-1 — esc */
           '<span class="cm-row-meta">' + esc(meta) + '</span>' +
         '</div>' +
         trendHtml +
@@ -2614,6 +2724,136 @@ function _ensureConMonHistoryDom() {
   ov.addEventListener('click', function(ev) { if (ev.target === ov) closeConMonHistory(); });
   document.getElementById('cmh-close-btn').addEventListener('click', closeConMonHistory);
   document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape') closeConMonHistory(); });
+}
+
+// ══ v4.9 LENS-3 — coolant detail lane ═══════════════════════════════════
+// Band chips come from Intake's coolant.field_bands; Lens never grades. When
+// the coolant product is unconfirmed the bands are suppressed upstream and this
+// says so plainly rather than showing colours that would be wrong for OAT.
+var _CLNT_BAND_COL = { green:'#4ADE80', amber:'#FB923C', red:'#F87171' };
+
+function _clntCell(label, val, unit, band) {
+  if (val == null) return '';
+  var col = _CLNT_BAND_COL[band] || '';
+  return '<div class="cm-clnt-cell">' +
+    '<div class="cm-clnt-k">' + esc(label) + '</div>' +
+    '<div class="cm-clnt-v"' + (col ? ' style="color:' + col + '"' : '') + '>' +
+      esc(String(val)) + (unit ? '<span style="font-size:10px;opacity:.6"> ' + esc(unit) + '</span>' : '') +
+    '</div></div>';
+}
+
+function _renderCoolantLane(sorted) {
+  if (!sorted || !sorted.length) return '';
+  var latest = null;
+  for (var i = sorted.length - 1; i >= 0; i--) { if (sorted[i].coolant) { latest = sorted[i]; break; } }
+  if (!latest) return '';
+  var c = latest.coolant, b = c.field_bands || {};
+  var stage = (typeof latest.coolant_stage === 'number') ? latest.coolant_stage : null;
+  var stKey = stage != null ? _COOLANT_STAGE_BY_NUM[stage] : 'grey';
+  var stCol = COOLANT_STAGE_COLOUR[stKey];
+
+  var html = '<div class="cm-clnt-lane">' +
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+      '<strong style="font-size:12.5px">Coolant panel</strong>' +
+      '<span class="cm-coolant-chip" style="margin-left:0;background:' + stCol + '22;color:' + stCol + ';border:1px solid ' + stCol + '">' +
+        (stage != null ? 'STAGE ' + stage + ' · ' + stKey.toUpperCase() : 'NOT ASSESSED') + '</span>' +
+      '<span style="font-size:11px;opacity:.6">' + esc(latest.sample_date || '') + '</span>' +
+    '</div>';
+
+  html += '<div class="cm-clnt-grid">' +
+    _clntCell('Nitrite', c.nitrite_ppm, 'ppm', b.nitrite_ppm) +
+    _clntCell('pH', c.ph, '', b.ph) +
+    _clntCell('Glycol', c.glycol_pct, '%', b.glycol_pct) +
+    _clntCell('Conductivity', c.conductivity_us_cm, 'µS/cm', b.conductivity_us_cm) +
+    _clntCell('Freeze point', c.freeze_point_c, '°C', null) +
+    _clntCell('Clarity', c.clarity, '', c.clarity === 'CLR' ? 'green' : 'amber') +
+    _clntCell('Precipitate', c.precipitate, '', c.precipitate === 'OIL' ? 'red' : null) +
+    _clntCell('Magnetic', c.magnetic_precipitate, '', c.magnetic_precipitate === 'P' ? 'amber' : null) +
+    _clntCell('Hours', c.sample_smu != null ? Math.round(c.sample_smu) + (c.smu_estimated ? '~' : '') : null, 'h', null) +
+  '</div>';
+
+  if (c.bands_suppressed) {
+    html += '<div class="cm-clnt-note" style="color:#FACC15">Chemistry bands are OFF — coolant type is '
+      + esc(c.coolant_type_resolved || 'unknown')
+      + '. Nitrite and pH limits differ fundamentally between nitrited and OAT coolant, so grading the wrong one would invent a fleet-wide problem. Confirm the coolant product and set it in Intake to switch grading on.'
+      + (c.coolant_brand ? ' Label on this report: <strong>' + esc(c.coolant_brand) + '</strong>.' : '') + '</div>';
+  }
+  if ((c.narrative_flags || []).length) {
+    html += '<div style="margin-top:9px">' + c.narrative_flags.map(function(f) {
+      return '<span class="cm-flag-pill">' + esc(f.replace(/_/g, ' ')) + '</span>'; }).join('') + '</div>';
+  }
+  if (stage === 3) {
+    html += '<div class="cm-clnt-note" style="color:#F87171"><strong>Breach signature.</strong> Engine oil reads normal while this develops. Verification chain: cooling-system pressure test + combustion-gas (block) test + oil sample cross-check for sodium/potassium. A clean block test does NOT clear the flag — diesels give known false negatives.</div>';
+  }
+  if (latest.sca_exhaustion_smu != null) {
+    html += '<div class="cm-clnt-note">SCA protection exhausted at approximately <strong>'
+      + esc(String(latest.sca_exhaustion_smu)) + ' h</strong> (depletion '
+      + esc(String(latest.sca_depletion_rate)) + ' ppm/h) — schedule coolant service before then.'
+      + (latest.sca_confidence === 'low-2-points' ? ' <em>Low confidence: only two readings support this.</em>' : '') + '</div>';
+  }
+  if (c.narrative_text) {
+    html += '<details style="margin-top:9px"><summary style="cursor:pointer;font-size:11.5px;opacity:.75">Lab narrative (verbatim)</summary>'
+      + '<div style="font-size:11.5px;opacity:.8;white-space:pre-wrap;margin-top:6px;line-height:1.5">' + esc(c.narrative_text) + '</div></details>';
+  }
+  return html + '</div>';
+}
+
+// ══ v4.9 LENS-5 — OPC / morphology block ════════════════════════════════
+function _renderOpcBlock(sorted) {
+  if (!sorted || !sorted.length) return '';
+  var withOpc = sorted.filter(function(s) { return s.opc; });
+  if (!withOpc.length) return '';
+  var latest = withOpc[withOpc.length - 1];
+  var o = latest.opc;
+  var isEngine = /engine/i.test(latest.target || '');
+
+  var rows = withOpc.slice(-3).reverse().map(function(s) {
+    var x = s.opc;
+    return '<tr><td>' + esc(s.sample_date || '') + '</td>' +
+      '<td>' + (x.opc_gt14_um != null ? x.opc_gt14_um : '—') + '</td>' +
+      '<td>' + (x.opc_gt38_um != null ? x.opc_gt38_um : '—') + '</td>' +
+      '<td>' + (x.opc_gt70_um != null ? x.opc_gt70_um : '—') + '</td>' +
+      '<td>' + esc(x.iso_4406 || '—') + '</td>' +
+      '<td>' + (x.morph_fatigue_n != null ? x.morph_fatigue_n : '—') + '</td>' +
+      '<td>' + (x.morph_cutting_n != null ? x.morph_cutting_n : '—') + '</td>' +
+      '<td>' + (x.morph_sliding_n != null ? x.morph_sliding_n : '—') + '</td>' +
+      '<td>' + (s.fsi != null ? Math.round(s.fsi) : '—') + '</td></tr>';
+  }).join('');
+
+  var badges = '';
+  if (latest.pq_gap) badges += '<span class="cm-opc-badge cm-badge-pq">PQ-GAP</span>';
+  // FSI rising over two consecutive samples is a render-time read of stored
+  // values — the same class of derivation as a trend arrow, not a recompute.
+  if (withOpc.length >= 3) {
+    var a = withOpc[withOpc.length - 3].fsi, b2 = withOpc[withOpc.length - 2].fsi, c2 = latest.fsi;
+    if (a != null && b2 != null && c2 != null && c2 > b2 && b2 > a)
+      badges += '<span class="cm-opc-badge cm-badge-pq">FATIGUE &#x25B2;</span>';
+  }
+  if (o.opc_quality_flag && o.opc_quality_flag !== 'OK')
+    badges += '<span class="cm-opc-badge cm-badge-qual">' + esc(o.opc_quality_flag.replace('SUSPECT_', '?')) + '</span>';
+
+  var html = '<div class="cm-clnt-lane">' +
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+      '<strong style="font-size:12.5px">Particle classification (OPC)</strong>' + badges +
+      (latest.orphan_opc ? '<span class="cm-opc-badge cm-badge-qual" title="No matching oil sample imported for this OPC report">UNPAIRED</span>' : '') +
+    '</div>';
+
+  if (isEngine) {
+    html += '<div class="cm-clnt-note">Screening only — engine-oil particle classification is unreliable: soot opacity defeats the optical counter. Captured for completeness, not for alerting.</div>';
+  }
+  html += '<div style="overflow-x:auto"><table class="cm-opc-tbl">' +
+    '<thead><tr><th>Date</th><th>&gt;14µm</th><th>&gt;38µm</th><th>&gt;70µm</th><th>ISO 4406</th>' +
+    '<th>Fatigue</th><th>Cutting</th><th>Sliding</th><th>FSI</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+
+  if (latest.pq_gap) {
+    html += '<div class="cm-clnt-note" style="color:#F87171"><strong>PQ-gap.</strong> Large-particle activity with no wear metal flagged on the same sample. Spectrometry is blind above roughly 8–10µm, so normal wear-metal readings are not reassurance here — this is the signature of a wear mode shedding debris above the spectrometer ceiling. Escalate one band and request ferrography or a PQ index on the next sample.</div>';
+  }
+  var mean = [];
+  if (o.morph_fatigue_um != null) mean.push('fatigue ' + o.morph_fatigue_um + 'µm');
+  if (o.morph_cutting_um != null) mean.push('cutting ' + o.morph_cutting_um + 'µm');
+  if (o.morph_sliding_um != null) mean.push('sliding ' + o.morph_sliding_um + 'µm');
+  if (mean.length) html += '<div class="cm-clnt-note">Mean particle size — ' + esc(mean.join(' · ')) + '. Fatigue debris means the component is consuming its life; cutting means dirt is getting in; sliding means the lubrication regime is failing.</div>';
+  return html + '</div>';
 }
 
 function openConMonHistory(unit_id, groupKey, allSamples) {
@@ -2669,7 +2909,11 @@ function openConMonHistory(unit_id, groupKey, allSamples) {
     entries.push(entryHtml);
   });
   // v4.3 B3: reverse so latest (last in graph order) renders at TOP of list.
-  var listHtml = '<div class="cmh-timeline">' + entries.slice().reverse().join('') + '</div>';
+  // v4.9 LENS-3/4/5 — the coolant lane and OPC block sit ABOVE the sample list,
+  // both built from the newest sample in the group. Every value shown is read
+  // straight from the JSON; Lens derives nothing here.
+  var listHtml = _renderCoolantLane(sorted) + _renderOpcBlock(sorted)
+    + '<div class="cmh-timeline">' + entries.slice().reverse().join('') + '</div>';
 
   // v4.1 — Single-sample edge case: hide graph column, list takes full width.
   // (Per operator spec — a graph with one point is meaningless.)
@@ -4952,6 +5196,84 @@ function getAllComponents() {
   return comps;
 }
 
+// ══ v4.9 LENS-6 — ConMon attention list on Pulse ════════════════════════
+// Renders into a container created on demand, directly above the High Risk
+// list, so no Pulse markup had to change. Empty state renders nothing at all —
+// an always-present "0 items" panel is clutter that trains people to skip it.
+function _renderPulseConMon(filteredComps) {
+  var host = document.getElementById('pulse-risk-list');
+  if (!host || !host.parentNode) return;
+  var box = document.getElementById('pulse-conmon-list');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'pulse-conmon-list';
+    box.style.cssText = 'margin-bottom:14px';
+    host.parentNode.insertBefore(box, host);
+  }
+  if (!CAPS || !CAPS.hasConMon) { box.innerHTML = ''; return; }
+
+  // Units currently in view, so the list respects the fleet filter.
+  var unitsInView = {};
+  (filteredComps || []).forEach(function(c) { if (c.unit) unitsInView[String(c.unit).toLowerCase()] = c.unit; });
+
+  var items = [];
+  Object.keys(unitsInView).forEach(function(uKey) {
+    var unit = unitsInView[uKey];
+    var cs = coolantStatus(unit);
+    if (cs.state === 'red') {
+      items.push({ p:0, unit:unit, col:COOLANT_STAGE_COLOUR.red, tag:'COOLANT STAGE 3',
+        txt:'Breach signature in the coolant — oil or combustion gas found. Engine oil reads normal while this develops.',
+        rule:'rule: coolant_stage = 3' });
+    } else if (cs.state === 'amber') {
+      items.push({ p:1, unit:unit, col:COOLANT_STAGE_COLOUR.amber, tag:'COOLANT STAGE 2',
+        txt:'Hard chemistry signal — nitrite or pH out of band, or magnetic precipitate present.',
+        rule:'rule: coolant_stage = 2' });
+    } else if (cs.state === 'grey') {
+      items.push({ p:2, unit:unit, col:COOLANT_STAGE_COLOUR.grey, tag:'COOLANT UNMONITORED',
+        txt:'No current coolant sample. Oil analysis cannot see the breach failure family, so this engine is not actually clear — it is unchecked.',
+        rule:'rule: ' + (cs.reason || 'no coolant coverage') });
+    }
+    (conMonByUnit[uKey] || []).forEach(function(s) {
+      if (s.pq_gap) items.push({ p:3, unit:unit, col:'#F87171', tag:'PQ-GAP',
+        txt:esc(s.target || '') + (s.location ? ' · ' + esc(s.location) : '') + ' — large-particle wear with wear metals reading normal. Spectrometry is under-reading.',
+        rule:'rule: pq_gap on ' + esc(s.sample_date || '') });
+    });
+  });
+  // FSI rising across the last three samples per component group.
+  Object.keys(unitsInView).forEach(function(uKey) {
+    var groups = {};
+    (conMonByUnit[uKey] || []).forEach(function(s) {
+      if (s.fsi == null) return;
+      var gk = (s.target || '') + '|' + (s.location || '');
+      (groups[gk] = groups[gk] || []).push(s);
+    });
+    Object.keys(groups).forEach(function(gk) {
+      var arr = groups[gk];   // newest-first
+      if (arr.length < 3) return;
+      if (arr[0].fsi > arr[1].fsi && arr[1].fsi > arr[2].fsi) {
+        items.push({ p:4, unit:unitsInView[uKey], col:'#FB923C', tag:'FATIGUE RISING',
+          txt:esc(gk.split('|')[0]) + ' — fatigue severity up across three consecutive samples (' +
+              [arr[2].fsi, arr[1].fsi, arr[0].fsi].map(function(v){return Math.round(v);}).join(' → ') + ').',
+          rule:'rule: fsi rising x3' });
+      }
+    });
+  });
+
+  if (!items.length) { box.innerHTML = ''; return; }
+  items.sort(function(a, b) { return a.p - b.p || String(a.unit).localeCompare(String(b.unit)); });
+  box.innerHTML =
+    '<div style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;opacity:.6;margin-bottom:7px">Condition monitoring · ' + items.length + ' item' + (items.length === 1 ? '' : 's') + '</div>' +
+    items.slice(0, 40).map(function(it) {
+      return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 11px;margin-bottom:5px;border-radius:6px;background:rgba(255,255,255,.03);border-left:3px solid ' + it.col + '">' +
+        '<span style="font-weight:700;font-size:11.5px;min-width:64px;color:' + it.col + '">' + esc(it.unit) + '</span>' +
+        '<span style="flex:1;font-size:12px;line-height:1.45">' +
+          '<span style="font-size:9.5px;font-weight:700;letter-spacing:.4px;padding:1px 6px;border-radius:3px;background:' + it.col + '22;color:' + it.col + '">' + it.tag + '</span> ' +
+          it.txt + '<span style="display:block;font-size:10px;opacity:.5;margin-top:3px">' + it.rule + '</span>' +
+        '</span></div>';
+    }).join('') +
+    (items.length > 40 ? '<div style="font-size:11px;opacity:.6">…and ' + (items.length - 40) + ' more</div>' : '');
+}
+
 function renderPulse() {
   if (!FLEET_DATA || !Object.keys(FLEET_DATA).length) {
     var rl = document.getElementById('pulse-risk-list');
@@ -5076,6 +5398,13 @@ function renderPulse() {
       }).join('');
     }
   }
+
+  // ── v4.9 LENS-6 — Condition-monitoring attention list ──
+  // Net-new: Pulse was purely benchmark/life-used driven, so nothing a lab
+  // sample said could ever reach the home panel. Ordered by consequence, and
+  // every item names the rule that raised it — an attention list you cannot
+  // interrogate is one people learn to ignore.
+  _renderPulseConMon(filtered);
 
   // ── High Risk Items table ──
   var rl = document.getElementById('pulse-risk-list');
@@ -5454,7 +5783,16 @@ function renderConMonHeatmap(fleet, model) {
     });
   });
   rowOrder.sort(function(a, b) { return a.localeCompare(b); });
-  if (!rowOrder.length) { showEmpty(); return; }
+  // v4.9 LENS-2b — a synthetic coolant row, ALWAYS present for every unit in
+  // view, sitting at the top. Coolant rows previously fell through the band
+  // switch to a grey "NR" cell indistinguishable from "no sample taken", so a
+  // unit could read green across the board while its coolant side was entirely
+  // unmonitored. Rows come from real records; this one comes from coverage, so
+  // it is built here rather than harvested from the sample keys.
+  var COOLANT_ROW_KEY = '__coolant_coverage__';
+  rowOrder = rowOrder.filter(function(rk) { return rk.indexOf('coolant|') !== 0; });
+  rowOrder.unshift(COOLANT_ROW_KEY);
+  if (rowOrder.length === 1 && !unitMap.length) { showEmpty(); return; }
 
   // Lookup: unit_lower -> rowKey -> most-recent sample (array already newest-first)
   var lookup = {};
@@ -5495,12 +5833,45 @@ function renderConMonHeatmap(fleet, model) {
     var parts  = rk.split('|');
     var target = parts[0];
     var loc    = parts[1] || '';
-    var label  = target + (loc ? ' · ' + loc : '');
+    var isCoolantRow = (rk === COOLANT_ROW_KEY);
+    var label  = isCoolantRow ? 'coolant' : target + (loc ? ' · ' + loc : '');
     var row    = document.createElement('tr');
     var rh     = document.createElement('td');
     rh.className = 'hm-comp-header hm-cm-row-header';
-    rh.textContent = label; rh.title = label;
+    rh.textContent = label;
+    rh.title = isCoolantRow
+      ? 'Coolant coverage per unit. Grey = not sampled or stale — the engine is unmonitored against breach failures that oil analysis cannot see.'
+      : label;
     row.appendChild(rh);
+
+    // v4.9 LENS-2b — coolant coverage row, coloured by the Intake-derived stage.
+    if (isCoolantRow) {
+      unitMap.forEach(function(um) {
+        var td = document.createElement('td');
+        var cs = coolantStatus(um.unit);
+        var col = COOLANT_STAGE_COLOUR[cs.state];
+        td.className = 'hm-cell' + (cs.latest ? ' hm-cm-clickable' : '');
+        td.style.background = col + '33';
+        td.style.color = col;
+        td.style.fontWeight = '700';
+        td.textContent = cs.state === 'grey' ? '—' : cs.state.toUpperCase().slice(0, 3);
+        td.title = um.unit + ' · coolant — ' + (cs.reason || ('stage ' + cs.latest.coolant_stage
+          + (cs.ageDays != null ? ', sampled ' + cs.ageDays + ' days ago' : '')))
+          + (cs.latest ? '  —  click for sample history' : '');
+        if (cs.latest) {
+          (function(unitName, unitKeyLower) {
+            td.addEventListener('click', function() {
+              var all = conMonByUnit[unitKeyLower] || [];
+              var grp = all.filter(function(s) { return s.is_coolant || s.coolant; });
+              if (grp.length) openConMonHistory(unitName, (grp[0].target || 'coolant') + '|' + (grp[0].location || ''), grp);
+            });
+          })(um.unit, um.unit.toLowerCase());
+        }
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
+      return;
+    }
 
     unitMap.forEach(function(um) {
       var td     = document.createElement('td');
