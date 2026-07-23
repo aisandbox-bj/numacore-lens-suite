@@ -732,7 +732,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     <div class="card-sub">Multi-select or drag multiple PDFs. Each PDF is parsed for Unit ID, Component, Sample Date, Sample Rank, and top trends.</div>
     <div class="drop-zone" id="dropZoneConmonPDF" onclick="document.getElementById('fileInputConmonPDF').click()" ondragover="onDragOver(event,'conmonPDF')" ondragleave="onDragLeave(event,'conmonPDF')" ondrop="onDrop(event,'conmonPDF')">
       <div class="drop-icon">🧪</div>
-      <p>Drop FluidLife PDFs here (multi-select OK), or <span>browse for files</span></p>
+      <p>Drop FluidLife PDFs here — single reports or a full bulk export, <span>or browse for files</span></p>
     </div>
     <input type="file" id="fileInputConmonPDF" accept=".pdf" multiple style="display:none" onchange="onFileSelectConmonPDF(event)">
     <div id="conmonParseProgress" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
@@ -865,7 +865,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.9';
+const VERSION = '8.10';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -4465,7 +4465,83 @@ function conmonStitchLines(items) {
     .map(y => rows[y].sort((a,b) => a.x - b.x).map(i => i.str).join(' '));
 }
 
-async function parseFluidLifePdf(file) {
+// ═══════════════════════════════════════════════════════════════
+// v8.10 FEAT-1 — one PDF may hold ONE report or THOUSANDS
+//
+// A FluidLife bulk export is just many reports concatenated. Each report starts
+// on a page carrying "Page 1 of N" — the same marker the Python splitter groups
+// on — so Intake can read a bulk directly and the split-to-files step becomes
+// optional rather than required.
+//
+// parseFluidLifePdf now returns an ARRAY. A single-sample file yields one entry
+// and behaves exactly as before; a bulk yields one entry per report. Nothing
+// calling it needs to know which kind of file it was handed — that IS the
+// auto-detection.
+//
+// Measured on the real 4,445-page bulk: ~9 ms/page, so ~41 s end to end, with a
+// flat heap because pages are released as they are read.
+// ═══════════════════════════════════════════════════════════════
+
+// v8.10 — the sample_id rule, in ONE place. The commit path and the
+// already-in-fleet check must agree exactly: if they drift, the preview reports
+// "new" for records that then merge on commit (or vice versa), which is worse
+// than no check at all. sample_num is the lab's own unique per-report id; the
+// composite fallback includes location so LH/RH final drives stay distinct.
+function conmonSampleId(s) {
+  if (s.sample_num) return s.sample_num;
+  const unit = (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField)
+    ? window.NumaCoreLib.normaliseSortField(s.unit_id)
+    : (s.unit_id || '').toUpperCase();
+  return `${unit}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`;
+}
+
+// Group page indices into reports. Port of group_reports() in the Python
+// splitter — same rule, so both produce identical report boundaries.
+function conmonGroupPages(pageTexts) {
+  const groups = [];
+  let cur = null;
+  pageTexts.forEach((t, i) => {
+    const m = t.match(/Page\s+(\d+)\s+of\s+(\d+)/);
+    const pageNum = m ? parseInt(m[1], 10) : null;
+    if (pageNum === 1) {
+      if (cur) groups.push(cur);
+      cur = [i];
+    } else if (cur) {
+      cur.push(i);
+    } else {
+      // No "Page 1 of N" seen yet — an older report format that omits the
+      // marker. Start a group anyway so pages are never silently dropped.
+      cur = [i];
+    }
+  });
+  if (cur) groups.push(cur);
+  return groups;
+}
+
+// Filename for a report lifted out of a bulk. Mirrors build() in the Python
+// splitter exactly, so source.filename cross-references the parse register and
+// the per-sample PDFs on disk with no translation.
+function conmonSynthFilename(rec) {
+  const norm = s => (s || '').toUpperCase().replace(/[^\w\s-]/g, '').trim()
+                      .replace(/[\s-]+/g, '-').replace(/^-+|-+$/g, '');
+  const unit = norm(rec.unit_id) || 'NOUNIT';
+  const comp = norm(rec.component_name_pdf) || 'NOCOMP';
+  const loc  = norm(rec.location);
+  const fl   = rec.is_coolant ? 'COOLANT' : (rec.is_opc ? 'OPC' : 'OIL');
+  // BOTH the date and the id come from the Sample # field, NOT from
+  // rec.sample_date. They are different dates: Sample # carries the lab's
+  // registration date (2025/06/06-1700) while sample_date is when the sample
+  // was physically drawn (2025-05-24). The Python splitter names files off
+  // Sample #, so using sample_date here produced names that matched neither the
+  // parse register nor the PDFs on disk — caught by the bulk cross-parser gate.
+  const sm = String(rec.sample_num || '').match(/(\d{4})[\/\-](\d{2})[\/\-](\d{2})-(\w+)/);
+  const ds  = sm ? `${sm[1]}-${sm[2]}-${sm[3]}` : 'NODATE';
+  const sid = sm ? sm[4] : 'UNKNOWN';
+  const parts = [unit, comp].concat(loc ? [loc] : []).concat([fl, ds, sid]);
+  return parts.join('_').replace(/[<>:"/\\|?*]/g, '-') + '.pdf';
+}
+
+async function parseFluidLifePdf(file, onProgress) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
   const pageTexts = [];
@@ -4473,10 +4549,31 @@ async function parseFluidLifePdf(file) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     pageTexts.push(conmonStitchLines(content.items).join('\n'));
+    // Release each page as it is read — this is what keeps a 4,000-page bulk
+    // from growing the heap, and costs nothing on a single-report file.
+    if (page.cleanup) page.cleanup();
+    // Yield to the UI thread periodically so the browser stays responsive and
+    // the progress line actually paints during a long parse.
+    if (onProgress && (i % 25 === 0 || i === pdf.numPages)) {
+      onProgress(i, pdf.numPages);
+      await new Promise(r => setTimeout(r, 0));
+    }
   }
-  const full = pageTexts.join('\n');
-  const p1 = pageTexts[0] || '';
-  return extractConmonFields(full, p1, file.name);
+  const groups = conmonGroupPages(pageTexts);
+  const isBulk = groups.length > 1;
+  return groups.map(idxs => {
+    const full = idxs.map(i => pageTexts[i]).join('\n');
+    const p1 = pageTexts[idxs[0]] || '';
+    const rec = extractConmonFields(full, p1, file.name);
+    // Single-report file: keep the operator's own filename, which already
+    // follows the convention. Bulk: synthesise, because otherwise every report
+    // would share the bulk's name and collapse into one another downstream.
+    if (isBulk) {
+      rec.filename = conmonSynthFilename(rec);
+      rec.from_bulk = file.name;
+    }
+    return rec;
+  });
 }
 
 function extractConmonFields(full, p1, filename) {
@@ -5577,16 +5674,29 @@ async function loadConmonPdfs(files) {
   const prog = document.getElementById('conmonParseProgress');
   const parsed = [];
   const errors = [];
+  let bulkFiles = 0;
   for (let i = 0; i < files.length; i++) {
-    prog.textContent = `Parsing ${i+1}/${files.length} — ${files[i].name} ...`;
+    const fname = files[i].name;
+    prog.textContent = `Parsing ${i+1}/${files.length} — ${fname} ...`;
     try {
-      const rec = await parseFluidLifePdf(files[i]);
-      parsed.push(rec);
+      // v8.10 FEAT-1 — parseFluidLifePdf returns an ARRAY: one entry for a
+      // single-sample file, one per report for a bulk export. A bulk takes tens
+      // of seconds, so the page count is reported live rather than leaving the
+      // operator staring at a frozen line.
+      const recs = await parseFluidLifePdf(files[i], (page, total) => {
+        prog.textContent = total > 20
+          ? `Reading ${fname} — page ${page} of ${total}...`
+          : `Parsing ${i+1}/${files.length} — ${fname} ...`;
+      });
+      if (recs.length > 1) bulkFiles++;
+      recs.forEach(r => parsed.push(r));
     } catch (err) {
-      errors.push({ file: files[i].name, error: err.message });
+      errors.push({ file: fname, error: err.message });
     }
   }
-  prog.textContent = `Parsed ${parsed.length}/${files.length}${errors.length ? ' — ' + errors.length + ' failed' : ''}`;
+  prog.textContent = `Parsed ${parsed.length} report${parsed.length===1?'':'s'} from ${files.length} file${files.length===1?'':'s'}`
+    + (bulkFiles ? ` (${bulkFiles} bulk export${bulkFiles===1?'':'s'})` : '')
+    + (errors.length ? ` — ${errors.length} failed` : '');
   // v8.2 Bug B fix: APPEND to existing queue (was REPLACE).
   // De-duplicate by sample_num (FluidLife Sample # — unique per report). Fallback key
   // includes location so LH and RH final drives remain separate records. OIL/OPC files
@@ -5707,8 +5817,21 @@ function renderConmonPreview() {
   const orphans  = samples.filter(s => s.orphan_opc);
   const breaches = samples.filter(s => s.coolant && (s.coolant.narrative_flags || [])
       .some(f => f === 'OIL_CONTAM' || f === 'COMBUSTION_GAS'));
+  // v8.10 FEAT-1 — the already-known check, answered by the fleet JSON itself.
+  // Every committed record carries its sample_id, so the file the operator just
+  // loaded IS the catalogue of what has been processed. Dropping a bulk that is
+  // 99% already-imported now says so BEFORE committing, which is the question
+  // the separate parse register was invented to answer.
+  const fj = state.conmonFleetJSON;
+  const known = new Set(
+    (fj && Array.isArray(fj.conditionMonitoring) ? fj.conditionMonitoring : [])
+      .map(r => r && r.sample_id).filter(Boolean));
+  const alreadyIn = known.size ? samples.filter(s => known.has(conmonSampleId(s))).length : 0;
+  const newToFleet = samples.length - alreadyIn;
   document.getElementById('conmonStats').innerHTML = `
     <div class="stat-pill"><div class="stat-num s-green">${samples.length}</div><div class="stat-lbl">Parsed</div></div>
+    ${known.size ? `<div class="stat-pill"><div class="stat-num" style="color:${newToFleet ? 'var(--gold)' : 'var(--text3)'}">${newToFleet}</div><div class="stat-lbl">New to fleet</div></div>
+    <div class="stat-pill"><div class="stat-num" style="color:var(--text3)">${alreadyIn}</div><div class="stat-lbl">Already imported</div></div>` : ''}
     <div class="stat-pill"><div class="stat-num s-green">${oil}</div><div class="stat-lbl">Oil</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${coolant}</div><div class="stat-lbl">Coolant</div></div>
     <div class="stat-pill"><div class="stat-num" style="color:var(--text)">${withOpc}</div><div class="stat-lbl">OPC data</div></div>
@@ -5738,7 +5861,12 @@ function renderConmonPreview() {
   }
   box.innerHTML = notices.join('');
   const BAND_COLOR = { normal:'var(--green)', elevated:'var(--gold)', high:'#ff7a3d', very_high:'var(--red)', unknown:'var(--text3)' };
-  const rows = samples.map(s => {
+  // v8.10 — a bulk can queue thousands of reports; rendering every row would
+  // build a multi-megabyte table for no benefit. The stats above are the real
+  // decision surface, so the table is a sample of the queue, not all of it.
+  const PREVIEW_CAP = 300;
+  const shown = samples.slice(0, PREVIEW_CAP);
+  const rows = shown.map(s => {
     const bc       = BAND_COLOR[s.band] || 'var(--text3)';
     const rankCell = s.sample_rank !== null
       ? `<span style="color:${bc};font-weight:700">${s.sample_rank}</span><span style="color:var(--text3);font-size:10px;margin-left:4px">${s.band || ''}</span>`
@@ -5779,6 +5907,7 @@ function renderConmonPreview() {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
+    ${samples.length > PREVIEW_CAP ? `<div style="padding:8px 10px;font-size:11.5px;color:var(--text3)">Showing the first ${PREVIEW_CAP} of ${samples.length} queued reports — the counts above cover all of them. All ${samples.length} will be committed.</div>` : ''}
   `;
   document.getElementById('conmonPreviewCard').style.display = 'block';
   if (typeof attachTableSort === 'function') attachTableSort(document.getElementById('conmonPreviewTable'));
@@ -5962,7 +6091,7 @@ function commitConmonSamples(download = true) {
     // NumaCoreLib.normaliseSortField() so the cross-tool helper owns the
     // transformation. Same effect as the v8.1 FIX-1 inline `.toUpperCase()`;
     // local fallback retained for resilience if the lib fails to load.
-    sample_id:    s.sample_num || `${(window.NumaCoreLib && window.NumaCoreLib.normaliseSortField) ? window.NumaCoreLib.normaliseSortField(s.unit_id) : (s.unit_id || '').toUpperCase()}_${s.component_name_pdf}_${s.location || ''}_${s.sample_date}`,
+    sample_id:    conmonSampleId(s),
     unit_id:      (window.NumaCoreLib && window.NumaCoreLib.normaliseSortField) ? window.NumaCoreLib.normaliseSortField(s.unit_id) : (s.unit_id || '').toUpperCase(),
     scope:        s.is_coolant ? 'system' : 'component',
     target:       (s.component_name_pdf || '').toLowerCase(),
@@ -6181,7 +6310,7 @@ function clearConmon() {
   document.getElementById('dropZoneConmonJSON').classList.remove('loaded');
   document.getElementById('dropZoneConmonJSON').innerHTML = '<div class="drop-icon">📄</div><p>Drop fleet.json here, or <span>browse for file</span></p>';
   document.getElementById('dropZoneConmonPDF').classList.remove('loaded');
-  document.getElementById('dropZoneConmonPDF').innerHTML = '<div class="drop-icon">🧪</div><p>Drop FluidLife PDFs here (multi-select OK), or <span>browse for files</span></p>';
+  document.getElementById('dropZoneConmonPDF').innerHTML = '<div class="drop-icon">🧪</div><p>Drop FluidLife PDFs here — single reports or a full bulk export, <span>or browse for files</span></p>';
   document.getElementById('conmonParseProgress').textContent = '';
   document.getElementById('conmonPreviewCard').style.display = 'none';
   document.getElementById('conmonStep2Card').style.opacity = '0.5';
