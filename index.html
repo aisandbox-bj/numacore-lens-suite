@@ -433,6 +433,12 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
   margin:3px 5px 0 0; background:rgba(248,113,113,.18); color:#F87171; border:1px solid rgba(248,113,113,.45); }
 .cm-opc-tbl { width:100%; border-collapse:collapse; font-size:11.5px; margin-top:8px; }
 .cm-opc-tbl th { text-align:left; font-weight:600; opacity:.6; padding:3px 7px; font-size:10px; text-transform:uppercase; }
+/* v4.9 FIX-1 — units must never be case-transformed. CSS text-transform:uppercase
+   maps the micro sign U+00B5 to GREEK CAPITAL MU (U+039C), which is visually a
+   Latin M — so a ">14µm" column header rendered as ">14MM" and appeared to be
+   reporting millimetre-scale particles, a thousandfold overstatement. Any unit
+   inside an uppercased label gets this class. */
+.cm-unit { text-transform:none; }
 .cm-opc-tbl td { padding:3px 7px; font-variant-numeric:tabular-nums; }
 /* Drill modal */
 #comp-drill-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9000; display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
@@ -2732,11 +2738,14 @@ function _ensureConMonHistoryDom() {
 // says so plainly rather than showing colours that would be wrong for OAT.
 var _CLNT_BAND_COL = { green:'#4ADE80', amber:'#FB923C', red:'#F87171' };
 
-function _clntCell(label, val, unit, band) {
+// keepCase: for labels whose capitalisation carries meaning ("pH", not "PH").
+// The cell label is uppercased by CSS, which is fine for words but wrong for
+// scientific terms and units — same defect family as the µm → MM bug (FIX-1).
+function _clntCell(label, val, unit, band, keepCase) {
   if (val == null) return '';
   var col = _CLNT_BAND_COL[band] || '';
   return '<div class="cm-clnt-cell">' +
-    '<div class="cm-clnt-k">' + esc(label) + '</div>' +
+    '<div class="cm-clnt-k' + (keepCase ? ' cm-unit' : '') + '">' + esc(label) + '</div>' +
     '<div class="cm-clnt-v"' + (col ? ' style="color:' + col + '"' : '') + '>' +
       esc(String(val)) + (unit ? '<span style="font-size:10px;opacity:.6"> ' + esc(unit) + '</span>' : '') +
     '</div></div>';
@@ -2762,7 +2771,7 @@ function _renderCoolantLane(sorted) {
 
   html += '<div class="cm-clnt-grid">' +
     _clntCell('Nitrite', c.nitrite_ppm, 'ppm', b.nitrite_ppm) +
-    _clntCell('pH', c.ph, '', b.ph) +
+    _clntCell('pH', c.ph, '', b.ph, true) +
     _clntCell('Glycol', c.glycol_pct, '%', b.glycol_pct) +
     _clntCell('Conductivity', c.conductivity_us_cm, 'µS/cm', b.conductivity_us_cm) +
     _clntCell('Freeze point', c.freeze_point_c, '°C', null) +
@@ -2842,7 +2851,10 @@ function _renderOpcBlock(sorted) {
     html += '<div class="cm-clnt-note">Screening only — engine-oil particle classification is unreliable: soot opacity defeats the optical counter. Captured for completeness, not for alerting.</div>';
   }
   html += '<div style="overflow-x:auto"><table class="cm-opc-tbl">' +
-    '<thead><tr><th>Date</th><th>&gt;14µm</th><th>&gt;38µm</th><th>&gt;70µm</th><th>ISO 4406</th>' +
+    '<thead><tr><th>Date</th>' +
+    '<th>&gt;14<span class="cm-unit">µm</span></th>' +
+    '<th>&gt;38<span class="cm-unit">µm</span></th>' +
+    '<th>&gt;70<span class="cm-unit">µm</span></th><th>ISO 4406</th>' +
     '<th>Fatigue</th><th>Cutting</th><th>Sliding</th><th>FSI</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 
   if (latest.pq_gap) {
