@@ -6455,17 +6455,56 @@ function _renderRiskPrompt(brief, freshness) {
        + ' |\n';
   });
   if (brief.oilSamples.length > 0) {
+    // v4.9 FIX-3 (Rex correction 3) — coolant samples no longer double-listed.
+    // They previously appeared BOTH here (carrying band "unknown", which reads
+    // as a data-quality defect and invites double-counting) AND in the dedicated
+    // Coolant panel below. The panel is now the single home for them.
+    // The 4-column shape is retained deliberately even though "Coolant?" is now
+    // always N: parse_prompts.py keys the oil table on `len(cells) >= 4`, so
+    // dropping the column would make every oil row stop parsing.
+    const _oilOnly = brief.oilSamples.filter(s => !(s.is_coolant || s.coolant));
     md += '\n### Oil sample history (latest first)\n\n';
     md += '| Target / location | Sample date | Band / rank | Coolant? |\n';
     md += '|---|---|---|---|\n';
     // v4.4 FIX-10: row cap removed. Full sample history shown for trend analysis.
-    brief.oilSamples.forEach(s => {
+    _oilOnly.forEach(s => {
       md += '| ' + (s.target || s.location || '—')
          + ' | ' + (s.sample_date || '—')
          + ' | ' + (s.band || s.sample_rank || '—')
-         + ' | ' + (s.is_coolant ? 'Y' : 'N')
-         + ' |\n';
+         + ' | N |\n';
     });
+    const _nCool = brief.oilSamples.length - _oilOnly.length;
+    if (_nCool > 0) {
+      md += '\nCoolant samples (' + _nCool + ') are listed separately — see the Coolant panel below.\n';
+    }
+
+    // v4.9 FIX-3 (Rex correction 4) — sampling-gap callout.
+    // A long hole in the record is invisible in an undated bag of rows; the
+    // assessor reads a table of facts and never notices the years that are
+    // missing. Computed here rather than left to the model (compute-don't-
+    // eyeball). Deliberately computed at render time rather than stored by
+    // Intake: this is arithmetic over the sample series being displayed, the
+    // same class as the trend arrow, not a derived VALUE that belongs in the
+    // JSON — and doing it here means it works on existing files without a
+    // re-import. Flagged to the Rex workstream as a deviation from their
+    // "Intake-side" request; say the word and it moves.
+    const _GAP_MONTHS = 6;
+    const _dates = _oilOnly.map(s => Date.parse(s.sample_date)).filter(t => !isNaN(t)).sort((a, b) => a - b);
+    let _widest = null;
+    for (let i = 1; i < _dates.length; i++) {
+      const days = (_dates[i] - _dates[i - 1]) / 86400000;
+      if (days > _GAP_MONTHS * 30.44 && (!_widest || days > _widest.days)) {
+        _widest = { days: days, from: _dates[i - 1], to: _dates[i] };
+      }
+    }
+    if (_widest) {
+      const _iso = ms => new Date(ms).toISOString().substring(0, 10);
+      const _yrs = _widest.days / 365.25;
+      const _span = _yrs >= 1 ? _yrs.toFixed(1) + ' years' : Math.round(_widest.days / 30.44) + ' months';
+      md += '\n⚠ **Sampling gap:** no oil samples on any compartment between '
+         + _iso(_widest.from) + ' and ' + _iso(_widest.to) + ' (' + _span + '). '
+         + 'Treat pre-gap samples as historical context, not as a continuous trend.\n';
+    }
     // v4.6 — Oil sample parameter enrichment. For samples with rank > 8,
     // surface the top 5 flagged trend parameters (Fe, viscosity, water, etc.)
     // so Rex can apply his v0.2 protocol section 2(f) contaminant-signature
@@ -6492,6 +6531,21 @@ function _renderRiskPrompt(brief, freshness) {
         md += '- **' + loc + ' ' + dt + '** (rank ' + rk + '): ' + trendStrs.join(', ') + '\n';
       });
       md += '\n*Use the contaminant signatures per your v0.2 protocol section 2(f): water + viscosity drop → ingress / cooler leak. Soot + fuel dilution → injectors / over-fueling / idle. High Cu → bronze / bushing / cooler tube. High Si → dirt ingress / air filter / seal breach. High Fe → ferrous wear (gears / bearings / liner). State the failure mode the signatures point to, not just the parameter values.*\n';
+    } else {
+      // v4.9 FIX-3 (Rex correction 1) — the header is now ALWAYS emitted.
+      //
+      // Omitting the block when nothing exceeds rank 8 was the exact conditional
+      // that broke parse_prompts.py: with no "Flagged parameters" line to reset
+      // the state machine, the parser stayed in_oil across the new ConMon
+      // sections. The Rex workstream's verification found the blast radius was
+      // worse than first understood — corruption hit ONLY prompts lacking this
+      // block, i.e. units with no sample above rank 8, so garbage rows landed
+      // precisely in the machines that look healthy.
+      //
+      // It also removes a genuine ambiguity: "nothing flagged" and "section not
+      // generated" previously looked identical. Same honest-blank principle
+      // already applied to coolant coverage.
+      md += '\n**Flagged parameters on rank > 8 samples:** none — no sample above rank 8 in this window.\n';
     }
   } else {
     md += '\n### Oil sample history\n\n*(no oil sample data for this unit in the current fleet JSON)*\n';
@@ -6527,6 +6581,16 @@ function _renderRiskPrompt(brief, freshness) {
     } else {
       md += 'Coolant type resolved as `' + _type + '` — chemistry bands active.\n\n';
     }
+    // v4.9 FIX-3 (Rex correction 2) — Stage legend. The assessor grades from
+    // this column, so it cannot be an unexplained 0–3. Wording mirrors Intake's
+    // actual derivation (computeConmonDerived), not a paraphrase: escalation is
+    // strictly ordered, so a later condition overrides an earlier one.
+    md += 'Stage is computed by Intake at commit, escalating in this order — later conditions override earlier:\n';
+    md += '- **0 clean** — none of the conditions below.\n';
+    md += '- **1 watch** — clarity hazy or cloudy · conductivity ≥20% above the unit baseline · nitrite in the amber band.\n';
+    md += '- **2 actionable** — magnetic precipitate present · nitrite in the red band · pH in the red band.\n';
+    md += '- **3 breach-class** — oil-contamination or combustion-gas flag in the lab narrative, or an OIL precipitate.\n';
+    md += '\n*Chemistry-driven steps (1 and 2) only fire when the coolant product is confirmed nitrited; appearance and breach signatures apply regardless.*\n\n';
     md += '| Sample date | Nitrite ppm | pH | Glycol % | Cond. µS/cm | Clarity | Precip. | Magnetic | Stage | Flags |\n';
     md += '|---|---|---|---|---|---|---|---|---|---|\n';
     _coolS.slice(0, 4).forEach(s => {
