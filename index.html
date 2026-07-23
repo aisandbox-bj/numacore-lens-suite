@@ -439,6 +439,14 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
    reporting millimetre-scale particles, a thousandfold overstatement. Any unit
    inside an uppercased label gets this class. */
 .cm-unit { text-transform:none; }
+/* v4.9 TWEAK-1 — OPC block collapsed by default. The native disclosure triangle
+   is kept as the affordance rather than replaced with a custom caret; summary
+   stays list-item (not flex) because flex removes that marker in Chrome. */
+.cm-opc-details > summary { cursor:pointer; padding:1px 0; outline:none; }
+.cm-opc-details > summary:hover { filter:brightness(1.15); }
+.cm-opc-details > summary:focus-visible { outline:1px solid #3dc9a0; outline-offset:2px; }
+.cm-opc-details[open] > summary { margin-bottom:8px; }
+.cm-opc-count { font-size:10px; opacity:.5; margin-left:8px; white-space:nowrap; }
 .cm-opc-tbl td { padding:3px 7px; font-variant-numeric:tabular-nums; }
 /* Drill modal */
 #comp-drill-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9000; display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
@@ -2165,6 +2173,32 @@ function _coolantCadenceDays() {
   return (!isNaN(d) && d > 0) ? d : 90;
 }
 
+// v4.9 FIX-2 — ONE record → ONE state, in one place.
+//
+// As first shipped, the chip called coolantStatus() (which applies the stale
+// rule) while the tile ROW read coolant_stage directly, so a 183-day-old
+// stage-0 sample rendered as a grey "CLNT —" chip above a green "COOLANT OK"
+// row with STALE appended — the tile contradicting itself. Every surface now
+// derives from this function, so they cannot drift apart again.
+function _coolantStateFor(rec) {
+  var cadence = _coolantCadenceDays();
+  if (!rec) return { state: 'grey', ageDays: null, cadence: cadence,
+                     reason: 'no coolant sample on record' };
+  var ageDays = null;
+  var t = Date.parse(rec.sample_date);
+  if (!isNaN(t)) ageDays = Math.floor((Date.now() - t) / 86400000);
+  if (ageDays != null && ageDays > cadence * 2) {
+    return { state: 'grey', ageDays: ageDays, cadence: cadence,
+             reason: 'last coolant sample ' + ageDays + ' days ago (cadence ' + cadence + 'd)' };
+  }
+  var stage = rec.coolant_stage;
+  var state = (typeof stage === 'number' && _COOLANT_STAGE_BY_NUM[stage])
+    ? _COOLANT_STAGE_BY_NUM[stage]
+    : 'grey';   // pre-v8.9 record: chemistry never extracted, so not assessed
+  return { state: state, ageDays: ageDays, cadence: cadence,
+           reason: state === 'grey' ? 'coolant sample present but not assessed (pre-v8.9 import)' : null };
+}
+
 // Returns {state, latest, ageDays, cadence, reason} for a unit's coolant side.
 function coolantStatus(unit_id) {
   var key = (unit_id || '').toLowerCase();
@@ -2176,24 +2210,9 @@ function coolantStatus(unit_id) {
   for (var i = 0; i < samples.length; i++) {
     if (samples[i].is_coolant || samples[i].coolant) { latest = samples[i]; break; }
   }
-  var cadence = _coolantCadenceDays();
-  if (!latest) {
-    return { state: 'grey', latest: null, ageDays: null, cadence: cadence,
-             reason: 'no coolant sample on record' };
-  }
-  var ageDays = null;
-  var t = Date.parse(latest.sample_date);
-  if (!isNaN(t)) ageDays = Math.floor((Date.now() - t) / 86400000);
-  if (ageDays != null && ageDays > cadence * 2) {
-    return { state: 'grey', latest: latest, ageDays: ageDays, cadence: cadence,
-             reason: 'last coolant sample ' + ageDays + ' days ago (cadence ' + cadence + 'd)' };
-  }
-  var stage = latest.coolant_stage;
-  var state = (typeof stage === 'number' && _COOLANT_STAGE_BY_NUM[stage])
-    ? _COOLANT_STAGE_BY_NUM[stage]
-    : 'grey';   // pre-v8.9 record: chemistry never extracted, so not assessed
-  return { state: state, latest: latest, ageDays: ageDays, cadence: cadence,
-           reason: state === 'grey' ? 'coolant sample present but not assessed (pre-v8.9 import)' : null };
+  var st = _coolantStateFor(latest);
+  st.latest = latest;
+  return st;
 }
 
 function isSampleStale(sample) {
@@ -2350,6 +2369,40 @@ function _lookupUnitMeta(unitDisplay) {
 // shapes; if/when operator wants the Deploy-specific 'activated' flag instead, we
 // can swap to workingData.deployData.projects[id] + fleetProjects[].linkedIds in a
 // FIX. READ-ONLY against foreign slices — slice-ownership rule preserved.
+// v4.9 FIX-2 — next UPCOMING project, from the Cadence-owned project slice.
+//
+// The hero tile previously derived "Next PCR" from the soonest component
+// pred_changeout — a PREDICTION, not a scheduled event — and applied no future
+// filter, so an overdue forecast surfaced as "next" with a past date ("May 4,
+// 2026 · 80d ago"). Two different things were being conflated: when a component
+// is forecast to need replacing, versus when work is actually booked.
+//
+// This reads the same Cadence slice the Active Projects tile already uses, so
+// no new coupling. In-progress projects are deliberately excluded — they are
+// already represented by the Active Projects count beside it, and "next" means
+// the one still to come. Returns null when nothing is scheduled; callers render
+// "None scheduled" rather than reaching backwards for a stale prediction.
+// READ-ONLY against a foreign slice — slice-ownership rule preserved.
+function _nextUpcomingProject(unitDisplay) {
+  if (!lensRawData) return null;
+  var projects = (lensRawData.workingData && lensRawData.workingData.projects)
+              || (lensRawData.working    && lensRawData.working.projects)
+              || [];
+  if (!Array.isArray(projects) || !projects.length) return null;
+  var unitUp = String(unitDisplay || '').toUpperCase();
+  var now = Date.now();
+  var best = null;
+  projects.forEach(function(p) {
+    if (!p) return;
+    if (String(p.unit || p.unit_id || '').toUpperCase() !== unitUp) return;
+    if (String(p.status || '').toLowerCase() === 'complete') return;
+    var t = Date.parse(p.start);
+    if (isNaN(t) || t < now) return;          // upcoming only
+    if (!best || t < best.ms) best = { name: (p.name || p.project || 'Project'), start: p.start, ms: t };
+  });
+  return best;
+}
+
 function _countActiveProjectsForUnit(unitDisplay) {
   if (!lensRawData) return 0;
   var projects = (lensRawData.workingData && lensRawData.workingData.projects)
@@ -2415,23 +2468,25 @@ function renderCanvasHero(fleet, model, unit) {
   var worstColor = worst ? getColor(worst.pct) : 'green';
   var worstPct   = worst ? (worst.pct * 100).toFixed(1) + '%' : '\u2014';
 
-  // Next PCR (soonest pred_changeout)
-  var soonest = null;
-  visible.forEach(function(c) {
-    if (!c.pred_changeout) return;
-    var t = new Date(c.pred_changeout).getTime();
-    if (isNaN(t)) return;
-    if (!soonest || t < soonest.t) soonest = { t: t, c: c };
-  });
-  var nextPCRDate = soonest
-    ? new Date(soonest.t).toLocaleDateString('en-CA', { year:'numeric', month:'short', day:'numeric' })
-    : '\u2014';
-  var nextPCRDays = soonest ? Math.round((soonest.t - Date.now()) / 86400000) : null;
-  var nextPCRSub  = soonest
-    ? (soonest.c.component + (nextPCRDays !== null
-        ? ' \u00b7 ' + (nextPCRDays >= 0 ? 'in ' + nextPCRDays + 'd' : Math.abs(nextPCRDays) + 'd ago')
-        : ''))
-    : '';
+  // v4.9 FIX-2 \u2014 Next PCR now reads the SCHEDULED project from Cadence, not the
+  // soonest component pred_changeout. See _nextUpcomingProject() for the why.
+  var _nextProj = _nextUpcomingProject(unit);
+  var nextPCRDate = 'None scheduled';
+  var nextPCRSub = '';
+  if (_nextProj) {
+    // Render from the date PARTS, not from Date.parse(). A bare 'YYYY-MM-DD' is
+    // parsed as UTC midnight, so in any timezone behind UTC the tile showed the
+    // day BEFORE the scheduled date \u2014 "Sep 5" for a 2026-09-06 project, which
+    // then disagreed with the risk-report prompt printing the raw string.
+    var _p = String(_nextProj.start).substring(0, 10).split('-');
+    var _local = new Date(+_p[0], (+_p[1]) - 1, +_p[2]);
+    nextPCRDate = isNaN(_local.getTime())
+      ? String(_nextProj.start).substring(0, 10)
+      : _local.toLocaleDateString('en-CA', { year:'numeric', month:'short', day:'numeric' });
+    var _today = new Date(); _today.setHours(0,0,0,0);
+    var _d = Math.round((_local.getTime() - _today.getTime()) / 86400000);
+    nextPCRSub = _nextProj.name + ' \u00b7 ' + (_d <= 0 ? 'today' : 'in ' + _d + 'd');
+  }
 
   // SMU (max last_smu across all visible comps)
   var smu = 0, hasSMU = false;
@@ -2661,10 +2716,12 @@ function renderConMonTile(unit_id) {
     // whose particle data warrants opening the panel.
     var bandLbl = (latest.band || 'unknown').replace('_', ' ').toUpperCase();
     if (coolant) {
-      var st = (typeof latest.coolant_stage === 'number')
-        ? _COOLANT_STAGE_BY_NUM[latest.coolant_stage] : null;
-      colour  = st ? COOLANT_STAGE_COLOUR[st] : COOLANT_STAGE_COLOUR.grey;
-      bandLbl = st ? COOLANT_STAGE_LABEL[st].replace('CLNT ', 'COOLANT ') : 'COOLANT —';
+      // v4.9 FIX-2 — same rule as the chip: a stale sample greys out, it does
+      // not keep its stage colour. Previously this read coolant_stage directly
+      // and contradicted the chip above it.
+      var st = _coolantStateFor(latest);
+      colour  = COOLANT_STAGE_COLOUR[st.state];
+      bandLbl = COOLANT_STAGE_LABEL[st.state].replace('CLNT ', 'COOLANT ');
     }
     var badges = '';
     if (latest.pq_gap) badges += '<span class="cm-opc-badge cm-badge-pq" title="Large-particle wear with no wear metal flagged — spectrometry is under-reading. Escalate and request ferrography.">PQ-GAP</span>';
@@ -2841,11 +2898,17 @@ function _renderOpcBlock(sorted) {
   if (o.opc_quality_flag && o.opc_quality_flag !== 'OK')
     badges += '<span class="cm-opc-badge cm-badge-qual">' + esc(o.opc_quality_flag.replace('SUSPECT_', '?')) + '</span>';
 
-  var html = '<div class="cm-clnt-lane">' +
-    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+  // v4.9 TWEAK-1 — collapsed by default. The particle table is reference detail
+  // that matters on the samples where something is wrong, not on every open, so
+  // it is folded away. The badges stay in the summary: PQ-GAP / FATIGUE / a
+  // quality caveat is exactly the signal that tells the reader to expand, and
+  // hiding those would defeat the point of having them.
+  var html = '<details class="cm-clnt-lane cm-opc-details">' +
+    '<summary class="cm-opc-summary">' +
       '<strong style="font-size:12.5px">Particle classification (OPC)</strong>' + badges +
       (latest.orphan_opc ? '<span class="cm-opc-badge cm-badge-qual" title="No matching oil sample imported for this OPC report">UNPAIRED</span>' : '') +
-    '</div>';
+      '<span class="cm-opc-count">' + withOpc.length + ' sample' + (withOpc.length === 1 ? '' : 's') + '</span>' +
+    '</summary>';
 
   if (isEngine) {
     html += '<div class="cm-clnt-note">Screening only — engine-oil particle classification is unreliable: soot opacity defeats the optical counter. Captured for completeness, not for alerting.</div>';
@@ -2865,7 +2928,8 @@ function _renderOpcBlock(sorted) {
   if (o.morph_cutting_um != null) mean.push('cutting ' + o.morph_cutting_um + 'µm');
   if (o.morph_sliding_um != null) mean.push('sliding ' + o.morph_sliding_um + 'µm');
   if (mean.length) html += '<div class="cm-clnt-note">Mean particle size — ' + esc(mean.join(' · ')) + '. Fatigue debris means the component is consuming its life; cutting means dirt is getting in; sliding means the lubrication regime is failing.</div>';
-  return html + '</div>';
+  // v4.9 TWEAK-1 — the container element is a disclosure block, not a div.
+  return html + '</details>';
 }
 
 function openConMonHistory(unit_id, groupKey, allSamples) {
@@ -6360,15 +6424,12 @@ function _renderRiskPrompt(brief, freshness) {
   md += '- **Idle % (life):** ' + fmtPct(um.idleLife) + '  (operating % = 100 − idle % if needed)\n';
   md += '- **Idle % (3-month):** ' + fmtPct(um.idle3Mo) + '\n';
   md += '- **Active projects:** ' + brief.projects.length + '\n';
-  // Next scheduled PCR — earliest project start
-  let nextPcr = null;
-  brief.projects.forEach(p => {
-    if (!p.start) return;
-    const t = Date.parse(p.start);
-    if (isNaN(t)) return;
-    if (!nextPcr || t < nextPcr.ms) nextPcr = { name: p.name, start: p.start, ms: t };
-  });
-  md += '- **Next scheduled PCR:** ' + (nextPcr ? (nextPcr.name + ' on ' + String(nextPcr.start).substring(0, 10)) : 'none') + '\n';
+  // v4.9 FIX-2 — same rule as the hero tile (_nextUpcomingProject): UPCOMING
+  // starts only. This previously took the earliest project start with no future
+  // filter, so a completed or in-progress project could be reported to the
+  // assessor as the "next scheduled PCR" with a date already past.
+  const _np = _nextUpcomingProject(brief.unit);
+  md += '- **Next scheduled PCR:** ' + (_np ? (_np.name + ' on ' + String(_np.start).substring(0, 10)) : 'None scheduled') + '\n';
   if (freshness && freshness.asOf) {
     md += '- **IW39 last loaded:** ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + ' days ago)\n';
   }
@@ -6435,6 +6496,102 @@ function _renderRiskPrompt(brief, freshness) {
   } else {
     md += '\n### Oil sample history\n\n*(no oil sample data for this unit in the current fleet JSON)*\n';
   }
+
+  // ══ v4.9 LENS-7 — coolant panel + OPC morphology for the RA ══════════
+  // Both sit under oil sampling because they are the same lab report: the
+  // coolant page and the OPC page the pipeline used to discard. Coverage is
+  // stated even when there is nothing to report — the assessor has to see
+  // absence as a finding, not as a blank.
+  const _coolS = brief.oilSamples.filter(s => s.is_coolant || s.coolant);
+  const _cadD  = (lensMeta && lensMeta.coolant_config && lensMeta.coolant_config.cadence_days) || 90;
+  md += '\n### Coolant panel\n\n';
+  if (!_coolS.length) {
+    md += '**Coolant coverage: NO SAMPLE ON RECORD for this unit.**\n\n';
+    md += 'Treat this as a finding, not a blank. Oil analysis is structurally blind to combustion-to-coolant breaches — head gasket, cracked head, liner seal, oil or EGR cooler. Those push combustion gas *into* the coolant while engine-oil chemistry stays essentially normal until very late, so a clean oil result does **not** clear the engine. The coolant side is simply unmonitored. Raise a coolant sample as an investigation request.\n';
+  } else {
+    const _cNew = _coolS[0];
+    let _ageTxt = 'age unknown';
+    const _ct = Date.parse(_cNew.sample_date);
+    if (!isNaN(_ct)) {
+      const _ad = Math.floor((Date.now() - _ct) / 86400000);
+      _ageTxt = _ad + ' days ago' + (_ad > _cadD * 2 ? ' — **STALE** (older than 2x the ' + _cadD + '-day cadence)' : '');
+    }
+    md += 'Coolant coverage: **' + _coolS.length + ' sample' + (_coolS.length === 1 ? '' : 's') + '** · last ' + (_cNew.sample_date || '?') + ' · ' + _ageTxt + '\n\n';
+    const _cc = _cNew.coolant || {};
+    const _type = _cc.coolant_type_resolved || 'unknown';
+    if (_cc.bands_suppressed) {
+      md += '> **Chemistry grading is OFF for this fleet — coolant type is `' + _type + '`.**\n';
+      md += '> Nitrite and pH limits differ fundamentally between nitrited/conventional coolant and OAT. Grading one against the other manufactures findings that are not there. **Do not interpret nitrite as an SCA-depletion signal, and do not infer liner-cavitation exposure from it, unless the coolant product is confirmed nitrited.** Grade this coolant from the contamination flags and appearance fields only, and raise "confirm coolant product" as an investigation request.\n';
+      if (_cc.coolant_brand) md += '> Product printed on the lab report: `' + _cc.coolant_brand + '`.\n';
+      md += '\n';
+    } else {
+      md += 'Coolant type resolved as `' + _type + '` — chemistry bands active.\n\n';
+    }
+    md += '| Sample date | Nitrite ppm | pH | Glycol % | Cond. µS/cm | Clarity | Precip. | Magnetic | Stage | Flags |\n';
+    md += '|---|---|---|---|---|---|---|---|---|---|\n';
+    _coolS.slice(0, 4).forEach(s => {
+      const c = s.coolant || {};
+      const fl = (c.narrative_flags || []).join(', ') || '—';
+      md += '| ' + (s.sample_date || '—')
+         + ' | ' + (c.nitrite_ppm != null ? c.nitrite_ppm : '—')
+         + ' | ' + (c.ph != null ? c.ph : '—')
+         + ' | ' + (c.glycol_pct != null ? c.glycol_pct : '—')
+         + ' | ' + (c.conductivity_us_cm != null ? c.conductivity_us_cm : '—')
+         + ' | ' + (c.clarity || '—')
+         + ' | ' + (c.precipitate || '—')
+         + ' | ' + (c.magnetic_precipitate || '—')
+         + ' | ' + (s.coolant_stage != null ? s.coolant_stage : '—')
+         + ' | ' + fl + ' |\n';
+    });
+    if (_cNew.sca_exhaustion_smu != null) {
+      md += '\nSCA depletion forecast: protection reaches the floor at approximately **SMU ' + _cNew.sca_exhaustion_smu + '** (rate ' + _cNew.sca_depletion_rate + ' ppm/h)'
+         + (_cNew.sca_confidence === 'low-2-points' ? ' — *low confidence, only two readings support this*' : '') + '.\n';
+    }
+    const _breach = _coolS.filter(s => (s.coolant && (s.coolant.narrative_flags || []).some(f => f === 'OIL_CONTAM' || f === 'COMBUSTION_GAS')) || (s.coolant && s.coolant.precipitate === 'OIL'));
+    if (_breach.length) {
+      md += '\n**Breach signature present on ' + _breach.length + ' sample(s).** Oil and/or combustion gas found in the coolant. This is the failure family oil analysis cannot see. Verification chain: cooling-system pressure test + combustion-gas (block) test + oil-sample cross-check for sodium/potassium. **A clean block test does NOT clear the flag** — diesels give known false negatives on between-cylinder breaches and at low boost/idle. If confirmed, a planned top-end or in-frame intervention beats an unplanned engine.\n';
+    }
+  }
+
+  const _opcS = brief.oilSamples.filter(s => s.opc);
+  md += '\n### Particle classification (OPC) — wear morphology\n\n';
+  if (!_opcS.length) {
+    md += '*(no OPC particle data for this unit — spectrometric wear metals are the only wear signal available, and they are blind above roughly 8–10µm)*\n';
+  } else {
+    md += '| Component | Date | >14µm | >38µm | >70µm | ISO 4406 | Fatigue | Cutting | Sliding | FSI | Flags |\n';
+    md += '|---|---|---|---|---|---|---|---|---|---|---|\n';
+    _opcS.slice(0, 8).forEach(s => {
+      const o = s.opc || {};
+      const fg = [];
+      if (s.pq_gap) fg.push('PQ-GAP');
+      if (o.opc_quality_flag && o.opc_quality_flag !== 'OK') fg.push(o.opc_quality_flag);
+      if (/engine/i.test(s.target || '')) fg.push('screening-only');
+      md += '| ' + ((s.target || '—') + (s.location ? ' · ' + s.location : ''))
+         + ' | ' + (s.sample_date || '—')
+         + ' | ' + (o.opc_gt14_um != null ? o.opc_gt14_um : '—')
+         + ' | ' + (o.opc_gt38_um != null ? o.opc_gt38_um : '—')
+         + ' | ' + (o.opc_gt70_um != null ? o.opc_gt70_um : '—')
+         + ' | ' + (o.iso_4406 || '—')
+         + ' | ' + (o.morph_fatigue_n != null ? o.morph_fatigue_n : '—')
+         + ' | ' + (o.morph_cutting_n != null ? o.morph_cutting_n : '—')
+         + ' | ' + (o.morph_sliding_n != null ? o.morph_sliding_n : '—')
+         + ' | ' + (s.fsi != null ? Math.round(s.fsi) : '—')
+         + ' | ' + (fg.join(', ') || '—') + ' |\n';
+    });
+    md += '\n*FSI = fatigue count x mean-size factor, so a rising mean size registers as escalation even when the count is flat.*\n';
+    md += '\n**Morphology decision map — the mechanism changes the response, not just the diagnosis:**\n';
+    md += '- **Fatigue** debris (chunky platelets, spheres) = subsurface contact fatigue; the component is consuming its remaining life. No oil change or filter fixes it. This is the class that justifies advancing a changeout.\n';
+    md += '- **Cutting** debris (ribbon/spiral swarf) = abrasive ingress — breathers, seals, dirty top-up, or edge-loading. The root cause is *external*. Raise a contamination-control action; do **not** advance the changeout date on this signature alone. Corroborate with silicon on the same sample.\n';
+    md += '- **Sliding** debris (striated platelets) = adhesive wear / scuffing; the lubrication regime is failing, not yet the component. Check viscosity, oxidation and loading; arrestable if caught.\n';
+    md += '- Never call a trend from a single morphology point.\n';
+    if (_opcS.some(s => s.pq_gap)) {
+      md += '\n**PQ-GAP flagged.** Large-particle activity with no wear metal flagged on the same sample. Spectrometry (RDE-OES) is blind above roughly 8–10µm, so normal wear-metal readings are **not** reassurance here — this is the signature of a wear mode shedding debris above the spectrometer ceiling, and it is the classic false-green in final drives and differentials. Escalate one risk band and request ferrography or a PQ index on the next sample.\n';
+    }
+    if (_opcS.some(s => /engine/i.test(s.target || ''))) {
+      md += '\n*Engine-oil OPC is marked screening-only: soot opacity defeats optical classification, so do not raise morphology findings on engine oil.*\n';
+    }
+  }
+
   if (brief.projects.length > 0) {
     md += '\n### Upcoming PCRs / shutdowns\n\n';
     md += '| Project | Start | End | Status | Components linked | Gates done | Open WOs | WO cost gap |\n';
@@ -6589,6 +6746,10 @@ function _renderRiskPrompt(brief, freshness) {
   md += '\n## Asked of you\n\n';
   md += 'Return your assessment in this exact structure (the report parser expects these headers):\n\n';
   md += '### Table: Component-level risk\n\nMarkdown table with columns: Component | Risk level (Low/Medium/High/Critical) | Reason | Suggested action.\n\n';
+  // v4.9 LENS-7 — fluid-analysis evidence feeds the EXISTING table structure.
+  // The 4-column format is locked (operator decision); this only tells the
+  // assessor how the two new evidence blocks should land inside it.
+  md += 'Fold the coolant and particle-classification evidence into that same table — do not add columns or a separate table. Specifically: a coolant breach signature grades the **engine**, not a "coolant" component; fatigue debris or a PQ-GAP supports advancing exposure on the drivetrain component that produced it; cutting debris plus silicon supports a contamination-control action and does **not** advance the life argument. Where coolant is unsampled or stale, say so in the engine\'s Reason rather than leaving it out — an engine graded on oil alone is unverified on the coolant side, not clear. Put "confirm coolant product" and any coolant-cadence gap in **Investigation Requests**.\n\n';
   md += '### Table: WO Pattern Highlights\n\nMarkdown table with columns: Component | Pattern observed | Risk implication | Evidence (WO #s).\n\nOne row per distinct pattern. If no patterns surface from the WO data, return the table with a single row stating "No recurring patterns identified in this WO window." in the Pattern column and "—" in the other columns. Do not omit the table.\n\n';
   md += '### Table: Shutdown readiness\n\nMarkdown table with columns: Project | Readiness (Ready/At risk/Blocked) | Top risk | Mitigation.\n\n';
   // v4.6 — Investigation Requests output section. Operator-stated: he wants
