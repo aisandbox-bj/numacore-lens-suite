@@ -6807,6 +6807,22 @@ function _renderRiskPrompt(brief, freshness) {
   md += '- **Scope gaps** — high life-used components (>90%) with no visible PM, corrective, or shutdown scope in either the completed or planning WO lists. Where is the team not looking?\n';
   md += '- **WO activity vs actual risk** — cross-reference the WO patterns above against the component-life status + oil sample trends from the source data. Does the WO activity match where the data says the risk sits, or is the team working a different set of components than the data points to? This is the cross-cut where the most useful insight typically sits.\n\n';
   md += 'Return findings in the structured table below. Be concise — one pattern per row. Evidence column should cite the specific WO numbers, not paraphrase. When a pattern is a computed count or ratio (e.g., "YBA2 TECO/REL+CRTD = 3/14 over 4 months"), include the metric in the Evidence column so I can verify it against the source data.\n';
+
+  // v4.9 FIX-4 (Rex correction 5, 2026-07-24) — Chronology.
+  //
+  // Rex's audit found the P0 carried zero chronology language, and their
+  // benchmark showed frontier models sequence events unprompted while everything
+  // below them treats the WO tables as a bag of records. Their harness reinforces
+  // this at both assessment rounds regardless; this is so the P0 travels well on
+  // its OWN — client-side ChatGPT use included, where the harness layer isn't
+  // present. Text is Rex's, used verbatim so the method statement is theirs.
+  //
+  // Placed after Pattern Analysis Request and before Asked of you: both headings
+  // reset parse_prompts.py's state machine, so this section cannot leak into any
+  // table, and "Chronology" collides with none of the parser's section markers.
+  md += '\n## Chronology — a chain of events, not a dump of events\n\n';
+  md += 'Reliability stories develop over time; defects snowball. Treat the WO history as a CHAIN of events, not a bag of records. For any component with multiple events: put the events in date order, note the spacing between recurrences, and state how one event leads to the next — or state plainly that they are unrelated. A repeating symptom at shortening intervals is an escalating story — say so explicitly and cite the dates. Early condition-monitoring warnings that later appear as breakdown WOs are the most valuable chains in the data — trace them start to finish.\n';
+
   md += '\n## Asked of you\n\n';
   md += 'Return your assessment in this exact structure (the report parser expects these headers):\n\n';
   md += '### Table: Component-level risk\n\nMarkdown table with columns: Component | Risk level (Low/Medium/High/Critical) | Reason | Suggested action.\n\n';
