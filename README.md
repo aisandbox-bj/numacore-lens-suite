@@ -25,10 +25,10 @@ Every tool is a **single HTML file**. No build step. No `node_modules`. Open it 
 
 | Tool | File | What it does |
 |---|---|---|
-| 🩺 **Lens** (Pulse · Vitals · Horizon) | [`index.html`](https://aisandbox-bj.github.io/numacore-lens-suite/) | Day-to-day glance. Fleet health summary, component KPIs, condition-monitoring heatmap, unit drill-down, utilisation profiles, capital plan. |
+| 🩺 **Lens** (Pulse · Vitals · Horizon) | [`index.html`](https://aisandbox-bj.github.io/numacore-lens-suite/) | Day-to-day glance. Fleet health summary, component KPIs, condition-monitoring heatmap (oil + coolant), unit drill-down with coolant chemistry and OPC wear-particle detail, utilisation profiles, capital plan. An engine with clean oil but no current coolant sample reads **grey — unmonitored**, never green. |
 | 📅 **Cadence** | [`cadence.html`](https://aisandbox-bj.github.io/numacore-lens-suite/cadence.html) | The PCR scheduling tool. Gantt timeline of every component's planned replacement date, Auto-Build clusters, optimiser, resource loading, project list. The oldest and most vital tool in the suite. |
 | 📦 **Deploy** | [`deploy.html`](https://aisandbox-bj.github.io/numacore-lens-suite/deploy.html) | Project / shutdown / outage execution. Gates, tasks, work orders, bill of materials, project Gantt with anchored TODAY line, Recently-Closed WO bucket. |
-| 📥 **Intake** | [`intake.html`](https://aisandbox-bj.github.io/numacore-lens-suite/intake.html) | Data ingestion. Builds a fleet JSON from XLSX exports (SMU readings, IW39 work-order history, material master). Appends condition-monitoring PDFs. Monthly UPDATE flow preserves the advisor's planning work. |
+| 📥 **Intake** | [`intake.html`](https://aisandbox-bj.github.io/numacore-lens-suite/intake.html) | Data ingestion. Builds a fleet JSON from XLSX exports (SMU readings, IW39 work-order history, material master). Ingests FluidLife lab PDFs — a single report or a full bulk export, auto-detected — extracting oil rank, OPC particle classification and coolant chemistry, and reporting how many reports are new vs already imported. Monthly UPDATE flow preserves the advisor's planning work. |
 | ⚙ **FleetConfig** | [`fleetconfig.html`](https://aisandbox-bj.github.io/numacore-lens-suite/fleetconfig.html) | Fleet-level configuration: util rates, component pockets, parts library. |
 
 Plus three supporting artefacts:
@@ -163,6 +163,8 @@ Pushes to `main` are auto-deployed by GitHub Pages within ~30 seconds.
 ## Status
 
 **Early-adopter use.** One operator-owner, one active client engagement. The suite is not a commercial product — it's the advisor's internal delivery infrastructure. This repo is public so collaborators (and the occasional curious dev friend) can read the code.
+
+Current live versions: **Lens v4.9 · Cadence v18.7 · Deploy v8.18 · Intake v8.10 · numacore_lib v1.5.1**. Most recent build: Condition Monitoring Phase-1 — the suite now reads the OPC particle and coolant chemistry pages of the lab reports it previously discarded, with a coolant risk ladder and wear-particle morphology surfaced in Lens and fed to the reliability-assessment prompt.
 
 If you found your way here and you're a fleet-management or mining-tech person interested in talking about PCR methodology, get in touch via the repo owner.
 

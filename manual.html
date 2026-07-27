@@ -264,10 +264,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
-  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-06-10 — covers <strong>Lens v4.8 · Cadence v18.7 · Deploy v8.18 · Intake v8.8 · numacore_lib v1.5.1</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
-  <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-06-10.</div>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-07-26 — covers <strong>Lens v4.9 · Cadence v18.7 · Deploy v8.18 · Intake v8.10 · numacore_lib v1.5.1</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
+  <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-07-26.</div>
   <div style="max-width:880px;margin:10px auto 0;background:rgba(61,201,160,0.06);border:1px solid rgba(61,201,160,0.25);border-radius:8px;padding:10px 16px;font-size:11.5px;color:var(--text-sec,#b8c4cc);line-height:1.6">
-    <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-06-10):</b> versions referenced inside narrative sections below are historical and left as written. Headline changes since the 2026-05-17 revision: Cadence v18.6 save-integrity (ERP reference dates round-trip untouched) + v18.7 security/vendoring; Deploy v8.14–v8.18 (Cadence-shift continuity · fleet-wide WO persistence · park-vs-clear deactivation · Gantt marker fixes · dual-shape retirement); Lens v4.4–v4.8 (override-aware dates · embed re-sync on file load · escaping sweep · dead-code purge); Intake v8.8 (session JSON chaining across UPDATE/CONMON/IDLING + update-integrity fixes). See the Record of Change for the full ledger.
+    <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-07-26 — Condition Monitoring Phase-1):</b> versions referenced inside narrative sections below are historical and left as written. Headline change since the 2026-06-10 revision is the ConMon build — the suite now reads the two lab-report pages it previously discarded. <b>Intake v8.9</b> extracts OPC particle classification and coolant chemistry, pairs each OPC report onto its oil sample, and computes a coolant risk ladder (stage 0–3), per-field chemistry bands, a fatigue severity index and an SCA-exhaustion forecast at commit; it also fixed a pre-existing bug that had mis-typed every coolant sample as an oil sample. <b>Intake v8.10</b> lets you drop a whole bulk FluidLife PDF straight in — it auto-detects single-report vs bulk, and the loaded fleet JSON reports "N new / M already imported" so nothing is re-processed. <b>Lens v4.9</b> renders it: a coolant status chip on every engine (an engine with clean oil but no current coolant sample now reads GREY "unmonitored", never green), a coolant row on the ConMon heatmap, a coolant detail lane and OPC block in the sample-history modal, and new condition-monitoring rules on Pulse; plus the Risk Report prompt now carries coolant and OPC sections for the reliability assessor. <b>Coolant chemistry grading is gated on coolant type and ships suppressed until the product is confirmed per fleet</b> — nitrite/pH limits differ fundamentally between nitrited and OAT coolant, so grading the wrong one would manufacture a false fleet-wide problem. Also in this window: Lens FIX-1 (particle-size units were rendering as "MM" — a CSS uppercase turning µ into a Greek capital Mu — now µm), FIX-2 ("Next PCR" now reads the scheduled Cadence project rather than an overdue prediction; coolant tile chip and row made consistent). See the Record of Change for the full ledger. <em>Earlier headline changes (2026-06-10 revision): Cadence v18.6/v18.7 save-integrity + vendoring; Deploy v8.14–v8.18; Lens v4.4–v4.8; Intake v8.8 session chaining.</em>
   </div>
 </header>
 
@@ -463,10 +463,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
   <h3>File layout on disk</h3>
 <pre>4 - Build Output/
-├── Lens v4.8.html              ← host app (Mission Control)
+├── Lens v4.9.html              ← host app (Mission Control) — + ConMon coolant/OPC rendering
 ├── Cadence v18.7.html          ← standalone scheduler
 ├── Deploy v8.18.html           ← standalone execution
-├── Intake v8.8.html            ← data ingestion
+├── Intake v8.10.html           ← data ingestion — + OPC/coolant extract, bulk PDF import
 ├── FleetConfig v0.1.html       ← fleet/model/unit editor
 ├── migrate.html                ← V4 Flat → V5 migrator (GATED — see Migrate tab)
 ├── numacore_lib.js             ← shared library (v1.5.1) — esc, parseDate, makeComponentId,
