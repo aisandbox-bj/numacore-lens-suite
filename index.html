@@ -1509,6 +1509,36 @@ body { background: #030f0c; }
 /* v4.6 FIX-1 — v4.5 PDF print styles stripped (paste-back PDF render removed).
    Lens hands off the prompt only; Rex generates the final document in CoWork. */
 
+/* ════════════════════════════════════════════════════════════════════════
+   v4.9 FEAT-1 (2026-07-28) — PCR PROMPT button + overlay.
+   Sibling to the Risk Report button: a per-unit scope summary (component
+   hours vs benchmark + latest oil-sample condition per monitored point),
+   handed off as plain text — no agent-engagement framing, since none was
+   asked for. Structural pattern (overlay/panel/signals/prompt-box/copy)
+   mirrors #rrep-* deliberately; .rrep-section / .rrep-btn / .rrep-signals-
+   summary / .rrep-sig-stat classes are reused as-is (class-scoped, not
+   feature-specific). Only the outer container needs its own ID block
+   because #rrep-overlay etc. are ID-scoped to that one modal.
+   ════════════════════════════════════════════════════════════════════════ */
+.ud-pcr-btn {
+  margin-left:10px; padding:6px 14px; font-size:0.6rem; letter-spacing:2px;
+  text-transform:uppercase; cursor:pointer; transition:all 0.2s;
+  font-family:'Segoe UI',Arial,sans-serif; border-radius:18px;
+  border:1px solid #3dc9a0; background:rgba(61,201,160,0.08);
+  color:#3dc9a0;
+}
+.ud-pcr-btn:hover { background:rgba(61,201,160,0.18); border-color:#5dcaa5; color:#5dcaa5; }
+.ud-pcr-btn:active { transform:translateY(1px); }
+
+#pcrp-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:9500; display:none; overflow:auto; backdrop-filter:blur(4px); }
+#pcrp-overlay.open { display:block; }
+#pcrp-panel { max-width:1200px; margin:24px auto; background:#0a1018; border:1px solid #0f6e56; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.5); padding:20px 28px; color:#e8f4ee; }
+#pcrp-head { display:flex; align-items:center; gap:16px; padding-bottom:12px; margin-bottom:18px; border-bottom:1px solid #0f6e56; }
+#pcrp-head h2 { flex:1; margin:0; font-size:1.3rem; color:#3dc9a0; letter-spacing:2px; text-transform:uppercase; }
+#pcrp-close-btn { padding:6px 14px; font-size:0.6rem; letter-spacing:2px; text-transform:uppercase; cursor:pointer; background:transparent; border:1px solid #0f6e56; color:#5dcaa5; border-radius:18px; font-family:'Segoe UI',Arial,sans-serif; }
+#pcrp-close-btn:hover { border-color:#3dc9a0; color:#3dc9a0; }
+#pcrp-prompt-box { width:100%; min-height:220px; max-height:400px; resize:vertical; padding:12px; font-family:'Consolas','Courier New',monospace; font-size:0.72rem; line-height:1.5; color:#cce8d8; background:#050a12; border:1px solid #0f6e56; border-radius:6px; box-sizing:border-box; }
+
 </style>
 </head>
 <body>
@@ -1694,6 +1724,7 @@ body { background: #030f0c; }
                 <div class="unit-meta" id="ud-meta"></div>
               </div>
               <button id="ud-risk-report-btn" class="ud-risk-btn" onclick="openRiskReport()" title="Generate a Risk Report prompt for the specialist agent (Rex) using this unit's data">&#x1F6E1; Risk Report</button>
+              <button id="ud-pcr-prompt-btn" class="ud-pcr-btn" onclick="openPcrPrompt()" title="Generate a PCR scope summary (component hours vs benchmark + latest oil sample condition per monitored point) for this unit">&#x1F527; PCR Prompt</button>
             </div>
             <div id="blueprint-area">
               <!-- v4.8 — retired v3.5 hero-view + legacy blueprint fallbacks removed
@@ -6104,6 +6135,31 @@ function closeRiskReport() {
   _rrepCurrentBrief = null;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// v4.9 FEAT-1 (2026-07-28) — PCR PROMPT. A per-unit scope summary: component
+// hours vs benchmark + latest oil-sample condition per monitored point,
+// handed off as plain text. Sibling to Risk Report but deliberately smaller
+// — no IW39 freshness gate (doesn't touch WO data), no agent-engagement
+// framing (operator asked for a scope summary, not an assessment prompt).
+// Reuses _buildUnitRiskBrief for components/oilSamples/unitMeta — same data
+// source as Risk Report, so the two never disagree about what's on the unit.
+// ════════════════════════════════════════════════════════════════════════
+function openPcrPrompt() {
+  if (!mmState || mmState.level !== 'unit-detail') return;
+  const fleet = mmState.fleet, model = mmState.model, unit = mmState.unit;
+  const brief = _buildUnitRiskBrief(fleet, model, unit);
+  document.getElementById('pcrp-head-title').textContent = 'PCR PROMPT — ' + unit;
+  _renderPcrSignals(brief);
+  document.getElementById('pcrp-prompt-box').value = _renderPcrPrompt(brief);
+  document.getElementById('pcrp-overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closePcrPrompt() {
+  document.getElementById('pcrp-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
 function _buildUnitRiskBrief(fleet, model, unit) {
   const components = (typeof FLEET_DATA !== 'undefined' && FLEET_DATA && FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit])
     ? FLEET_DATA[fleet][model][unit] : [];
@@ -6860,6 +6916,108 @@ function copyRiskPrompt() {
   window.getSelection().removeAllRanges();
 }
 
+// v4.9 FEAT-1 — PCR Prompt signals row. Deliberately smaller than Risk
+// Report's (no WO/IW39 stats — PCR scope doesn't use them).
+function _renderPcrSignals(brief) {
+  const um = brief.unitMeta || {};
+  const fmtSmu = (um.smu != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : '—';
+  const fmtDate = um.smuDate ? String(um.smuDate).substring(0, 10) : '—';
+  const overBenchmark = brief.components.filter(c => typeof c.pct === 'number' && isFinite(c.pct) && c.pct >= 1).length;
+  const oilOnly = brief.oilSamples.filter(s => !(s.is_coolant || s.coolant));
+  const points = {};
+  oilOnly.forEach(s => { points[(s.target || '—') + '|' + (s.location || '')] = true; });
+  const stats = [
+    { lbl: 'Unit',               val: brief.unit },
+    { lbl: 'SMU',                 val: fmtSmu },
+    { lbl: 'SMU as-of',           val: fmtDate },
+    { lbl: 'Components',          val: brief.components.length },
+    { lbl: 'Over benchmark',      val: overBenchmark },
+    { lbl: 'Oil-monitored points', val: Object.keys(points).length }
+  ];
+  const html = stats.map(s => '<div class="rrep-sig-stat"><div class="lbl">' + s.lbl + '</div><div class="val">' + esc(s.val) + '</div></div>').join('');
+  document.getElementById('pcrp-signals').innerHTML = html;
+}
+
+// v4.9 FEAT-1 — PCR Prompt body. Two sections only, per operator spec:
+// (1) component hours vs benchmark — same table shape as Risk Report's
+// "Component life vs benchmark" section (kept independent rather than
+// refactored into a shared helper, so this addition can't regress the
+// Risk Report's working prompt-building code); (2) latest oil-sample
+// condition per monitored point — NOT full history like Risk Report;
+// brief.oilSamples is newest-first per unit (buildConMonIdx sort), so the
+// first record seen per target|location key is that point's latest sample.
+// Coolant excluded, same convention as Risk Report's oil table (v4.9 FIX-3
+// correction 3) — coolant is a distinct ConMon type, not an "oil sample".
+function _renderPcrPrompt(brief) {
+  const u = brief.unit, fl = brief.fleet, mo = brief.model;
+  const um = brief.unitMeta || {};
+  const fmtNum = (v, suf) => (v == null) ? 'UNVERIFIED' : (Math.round(v).toLocaleString('en-CA') + (suf || ''));
+  let md = '# PCR Scope Summary — Unit ' + u + '\n\n';
+  md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
+  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)') + '\n';
+  md += '- **Generated:** ' + new Date().toISOString().substring(0, 10) + '\n\n';
+
+  md += '## Component hours vs benchmark\n\n';
+  md += '| Component | Position | Est. hours | Benchmark | Life used | Predicted changeout | Strategy |\n';
+  md += '|---|---|---:|---:|---:|---|---|\n';
+  const compsSorted = brief.components.slice().sort((a, b) => (b.pct || 0) - (a.pct || 0));
+  compsSorted.forEach(c => {
+    const lifeUsedStr = (typeof c.pct === 'number' && isFinite(c.pct)) ? (c.pct * 100).toFixed(1) + '%' : '—';
+    md += '| ' + (c.component || '—')
+       + ' | ' + (c.position || '—')
+       + ' | ' + (c.est_hours != null ? c.est_hours : '—')
+       + ' | ' + (c.benchmark != null ? c.benchmark : '—')
+       + ' | ' + lifeUsedStr
+       + ' | ' + (c.pred_changeout || '—')
+       + ' | ' + (c.replacement_strategy || '—')
+       + ' |\n';
+  });
+  if (compsSorted.length === 0) md += '\n*(no components on file for this unit)*\n';
+
+  md += '\n## Oil sample condition (latest per monitored point)\n\n';
+  const oilOnly = brief.oilSamples.filter(s => !(s.is_coolant || s.coolant));
+  if (oilOnly.length === 0) {
+    md += '*(no oil sample data for this unit in the current fleet JSON)*\n';
+  } else {
+    const seen = {};
+    const latestByPoint = [];
+    oilOnly.forEach(s => {
+      const key = (s.target || '—') + '|' + (s.location || '');
+      if (seen[key]) return;
+      seen[key] = true;
+      latestByPoint.push(s);
+    });
+    md += '| Target / location | Last sample date | Band / rank | Status |\n';
+    md += '|---|---|---|---|\n';
+    latestByPoint.forEach(s => {
+      const stale = isSampleStale(s) ? 'STALE' : 'Current';
+      md += '| ' + (s.target || '—')
+         + (s.location ? ' (' + s.location + ')' : '')
+         + ' | ' + (s.sample_date || '—')
+         + ' | ' + (s.band || s.sample_rank || '—')
+         + ' | ' + stale
+         + ' |\n';
+    });
+  }
+  return md;
+}
+
+function copyPcrPrompt() {
+  const box = document.getElementById('pcrp-prompt-box');
+  if (!box) return;
+  box.select();
+  try {
+    document.execCommand('copy');
+    const btn = document.getElementById('pcrp-copy-btn');
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied!';
+      setTimeout(function() { btn.textContent = orig; }, 1500);
+    }
+  } catch (e) { console.warn('Copy failed:', e); }
+  window.getSelection().removeAllRanges();
+}
+
 // v4.6 FIX-1 (2026-05-25) — paste-back UI + Round 1 Word draft +
 // Round 2 prompt builder + Final PDF render all stripped per operator
 // direction. Lens hands off the prompt only; Rex (in CoWork) generates
@@ -7091,6 +7249,35 @@ function copyRiskPrompt() {
 <!-- v4.6 FIX-1 — #rrep-pdf-view div removed (paste-back PDF render stripped). -->
 <!-- Lens hands off the prompt only; Rex generates the final document in CoWork. -->
 
+<!-- ══ v4.9 FEAT-1 (2026-07-28) PCR PROMPT OVERLAY ══ -->
+<div id="pcrp-overlay">
+  <div id="pcrp-panel">
+    <div id="pcrp-head">
+      <h2 id="pcrp-head-title">PCR PROMPT</h2>
+      <button id="pcrp-close-btn" onclick="closePcrPrompt()">&#x2715; CLOSE</button>
+    </div>
+
+    <div class="rrep-section">
+      <div class="rrep-section-head">
+        <span class="rrep-section-num">1</span>
+        <span>Source signals (from this fleet JSON)</span>
+        <span class="rrep-section-hint">read-only summary</span>
+      </div>
+      <div id="pcrp-signals" class="rrep-signals-summary"></div>
+    </div>
+
+    <div class="rrep-section">
+      <div class="rrep-section-head">
+        <span class="rrep-section-num">2</span>
+        <span>PCR scope summary &mdash; copy for planning / hand-off</span>
+      </div>
+      <textarea id="pcrp-prompt-box" readonly></textarea>
+      <div class="rrep-btn-row">
+        <button class="rrep-btn rrep-btn-primary" id="pcrp-copy-btn" onclick="copyPcrPrompt()">&#x1F4CB; Copy scope summary</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
