@@ -9608,6 +9608,10 @@ function _bmBuildWorkbook(res, opts){
   const icRows=[['Fleet','Model','Unit','Component','Total interventions', ...bandLabels]];
   sorted.forEach(r=>{ const cb=_buildBudgetBands(r.monthlyCounts||{},opts).map(b=>b.total); icRows.push([r.fleet,r.model,r.unit,r.component,r.periodCalls, ...cb]); });
 
+  // ── Component Cost — component x period COST (max-detail cost version of Intervention Count; with BAF, in-period)
+  const ccRows=[['Fleet','Model','Unit','Component','Total cost', ...bandLabels]];
+  sorted.forEach(r=>{ const cb=_buildBudgetBands(r.monthlyCost||{},opts).map(b=>Math.round(b.total)); const tot=cb.reduce((s,v)=>s+v,0); ccRows.push([r.fleet,r.model,r.unit,r.component,tot, ...cb]); });
+
   // ── Overdue backlog (its own tab; NOT duplicated under Risk)
   const odRows=[['Fleet','Model','Unit','Component','Cost','Original Date','Effective Date']];
   res.overdue.rows.forEach(o=>{const r=o.r; odRows.push([r.fleet,r.model,String(r.unit),r.component,d0(o.cost),r.original_date||'',r.changeout_date||'']);});
@@ -9645,6 +9649,7 @@ function _bmBuildWorkbook(res, opts){
   add(fsRows,'Fleet Summary');
   add(msRows,'Model Summary');
   add(usRows,'Unit Summary');
+  add(ccRows,'Component Cost');
   add(odRows,'Overdue');
   add(zcRows,'Zero-Cost Items');
   add(rsRows,'Risk Summary');
