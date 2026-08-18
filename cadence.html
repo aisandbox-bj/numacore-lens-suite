@@ -81,6 +81,8 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .smu-warn-badge{color:#f59e0b;font-size:10px;margin-left:4px;cursor:default}
 .bench-warn-badge{color:#f97316;font-size:10px;margin-left:4px;cursor:default}
 .util-warn-badge{color:#60a5fa;font-size:10px;margin-left:4px;cursor:default}
+.overdue-warn-badge{color:#f85149;font-size:10px;margin-left:4px;cursor:default}
+.undated-warn-badge{color:#8b949e;font-size:10px;margin-left:4px;cursor:default}
 #detailToggleBtn{padding:3px 7px;font-size:10px;background:#21262d;border:1px solid #30363d;color:#8b949e;cursor:pointer;border-radius:4px;transition:all .1s;white-space:nowrap}
 #detailToggleBtn:hover{background:#30363d;color:#c9d1d9}
 #detailToggleBtn.active{background:#1f4b8c;color:#7dd3fc;border-color:#388bfd}
@@ -2442,6 +2444,15 @@ function renderTree() {
     // an explicit util_rate via Data Editor for precision.
     if (row.type === 'component' && rec && rec._util_rate_inferred) {
       labelInner += ` <span class="util-warn-badge" title="util_rate inferred from peer components on this unit \u2014 set an explicit util_rate (hrs/day) in the Data Editor for a precise prediction.">\u24d8</span>`;
+    }
+    // v18.9 \u2014 budget risk badges: UNDATED (no changeout date \u2192 Unscheduled bucket) and OVERDUE (past-due, not rescheduled \u2192 Overdue/Backlog).
+    if (row.type === 'component' && rec) {
+      const _tds = new Date().toISOString().split('T')[0];
+      if (!rec.changeout_date) {
+        labelInner += ` <span class="undated-warn-badge" title="UNDATED \u2014 no changeout date; lands in the budget's Unscheduled bucket. Set benchmark + util_rate (or a date) at source.">\u25c7</span>`;
+      } else if (rec.original_date && rec.original_date < _tds && rec.changeout_date <= _tds) {
+        labelInner += ` <span class="overdue-warn-badge" title="OVERDUE \u2014 original predicted date is in the past and not rescheduled forward; budgeted as Overdue/Backlog.">\u25c6</span>`;
+      }
     }
     if (row.type === 'unit') {
       const unitRecs = state.data.filter(d => d.unit === row.unit);
@@ -9103,6 +9114,16 @@ function _computeBudget(userOpts) {
 .baf-prompt-box h3{margin:0 0 8px;font-size:14px;color:#e6edf3;font-weight:700}
 .baf-prompt-box p{font-size:12px;color:#8b949e;line-height:1.6;margin:0 0 16px}
 .baf-prompt-btns{display:flex;gap:10px;justify-content:flex-end}
+#bmRiskModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9400;align-items:center;justify-content:center}
+#bmRiskModal.show{display:flex}
+.bmrisk-box{background:#161b22;border:1px solid #30363d;border-radius:10px;width:660px;max-width:95vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px #000a}
+.bmrisk-scroll{padding:14px 18px;overflow:auto;flex:1}
+.bmrisk-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.bmrisk-tbl th{position:sticky;top:0;background:#0d1117;color:#8b949e;text-align:center;padding:5px 8px;border-bottom:1px solid #30363d;font-weight:600;white-space:nowrap}
+.bmrisk-tbl th:first-child{text-align:left}
+.bmrisk-tbl td{padding:4px 8px;border-bottom:1px solid #21262d;color:#c9d1d9;text-align:center}
+.bmrisk-tbl .bmrisk-lbl{color:#e6edf3;text-align:left}
+.bmrisk-tbl .bmrisk-tot{font-weight:700;color:#e3a72c}
 </style>
 
 <div id="budgetModal" role="dialog" aria-modal="true">
@@ -9246,6 +9267,18 @@ function _computeBudget(userOpts) {
     <div class="baf-prompt-btns">
       <button class="bm-btn-ghost" onclick="_bmZeroBafReview()">Review BAF</button>
       <button class="bm-btn-go" onclick="_bmGenerateProceed()">Continue to generate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Risk Report (two-level): on-screen category x fleet summary + download detail -->
+<div id="bmRiskModal" role="dialog" aria-modal="true">
+  <div class="bmrisk-box">
+    <div class="be-head"><h3>&#9888; Risk Report</h3><button class="bm-x" onclick="_bmCloseRisk()" title="Close">&#10005;</button></div>
+    <div class="bmrisk-scroll"><div id="bmRiskBody"></div></div>
+    <div class="be-foot">
+      <button class="bm-btn-ghost" onclick="_bmCloseRisk()">Close</button>
+      <button class="bm-btn-go" onclick="_bmRiskDownload()">&#11015; Download detail report</button>
     </div>
   </div>
 </div>
@@ -9457,6 +9490,7 @@ function _bmGenerateProceed(){
       '<div><span class="bm-r-k">In periods</span><span class="bm-r-v">'+_bmFmt(rc.bandsTotal)+'</span></div>'+
       '<div><span class="bm-r-k">Overdue / backlog</span><span class="bm-r-v">'+_bmFmt(rc.overdueTotal)+'</span></div>'+
       '<div><span class="bm-r-k">Unscheduled</span><span class="bm-r-v">'+_bmFmt(rc.unscheduledTotal)+'</span></div>'+
+      (rc.baseGrand>0 ? '<div><span class="bm-r-k">Blended BAF</span><span class="bm-r-v" style="color:#e3a72c">'+(Math.round((rc.grandTotal/rc.baseGrand-1)*1000)/10)+'%</span></div>' : '')+
     '</div>'+
     '<div class="bm-r-risk">Risks: '+rk.unscheduled+' unscheduled &middot; '+rk.overdue+' overdue &middot; '+rk.inferredUtil+' inferred-util &middot; '+rk.conditionModelled+' modelled &middot; '+rk.missingBenchmark+' no-benchmark &middot; '+rk.cost+' cost &middot; '+rk.capped+' capped</div>'+
     '<div class="bm-r-risk" id="bmExportNote">Building Excel workbook&hellip;</div>';
@@ -9466,12 +9500,34 @@ function _bmGenerateProceed(){
 }
 function _bmOpenRisk(){
   const res = window._bmLastResult;
-  if (!res){ alert('Click Generate Budget first to compute risks, then open the Risk Report.'); return; }
-  const rk = res.risk.count;
-  alert('Risk summary (detailed two-level report is the next build stage):\n\n'+
-    'Unscheduled: '+rk.unscheduled+'\nOverdue/backlog: '+rk.overdue+'\nInferred util_rate: '+rk.inferredUtil+
-    '\nCondition-based (modelled): '+rk.conditionModelled+'\nMissing benchmark: '+rk.missingBenchmark+
-    '\nCost missing/unparseable: '+rk.cost+'\nCycle-capped: '+rk.capped);
+  const body = document.getElementById('bmRiskBody');
+  if (!res){ body.innerHTML = '<p style="color:#8b949e;font-size:12px;margin:0">Click <b style="color:#e3a72c">Generate Budget</b> first to compute risks, then reopen this report.</p>'; document.getElementById('bmRiskModal').classList.add('show'); return; }
+  // Level 1: risk class x fleet count matrix, from res.risk.rows[].issues (comma-joined flags).
+  const CLASSES = [['unscheduled','Unscheduled (undated)'],['overdue','Overdue / backlog'],['inferred-util','Inferred util_rate'],['condition-modelled','Condition-based (modelled)'],['missing-benchmark','Missing benchmark'],['missing-cost','Missing cost'],['unparseable-cost','Unparseable cost'],['cycle-capped','Cycle-capped']];
+  const fleets = [...new Set(res.risk.rows.map(r=>r.fleet))].sort();
+  const m = {}; CLASSES.forEach(([k])=>m[k]={});
+  res.risk.rows.forEach(r=>{ (r.issues||'').split(',').map(s=>s.trim()).forEach(fl=>{ if(m[fl]) m[fl][r.fleet]=(m[fl][r.fleet]||0)+1; }); });
+  const present = CLASSES.filter(([k])=>Object.keys(m[k]).length);
+  if (!present.length){ body.innerHTML='<p style="color:#3fb950;font-size:12px;margin:0">No risks flagged in the current budget. &#10003;</p>'; }
+  else {
+    let h='<table class="bmrisk-tbl"><thead><tr><th>Risk</th>'+fleets.map(f=>'<th>'+_beEsc(f)+'</th>').join('')+'<th>Total</th></tr></thead><tbody>';
+    present.forEach(([k,label])=>{ let tot=0; h+='<tr><td class="bmrisk-lbl">'+label+'</td>'+fleets.map(f=>{const c=m[k][f]||0;tot+=c;return '<td>'+(c||'')+'</td>';}).join('')+'<td class="bmrisk-tot">'+tot+'</td></tr>'; });
+    h+='</tbody></table><p style="color:#6e7681;font-size:10px;margin:10px 0 0">Download the detail report for the machine + component list and the field to fix at source.</p>';
+    body.innerHTML=h;
+  }
+  document.getElementById('bmRiskModal').classList.add('show');
+}
+function _bmCloseRisk(){ document.getElementById('bmRiskModal').classList.remove('show'); }
+function _bmRiskDownload(){
+  const res = window._bmLastResult; if(!res) return;
+  const XL=window.XLSX; if(!XL){ alert('Excel library not available.'); return; }
+  const rl={unscheduled:'Unscheduled (undated)',overdue:'Overdue / backlog',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
+  const rsRows=[['Risk class','Count','$ exposure']]; Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],Math.round((res.risk.cost[k]||0)*100)/100]));
+  const rdRows=[['Unit','Component','Fleet','Model','Issues','Field to fix','Current value']]; res.risk.rows.forEach(x=>rdRows.push([String(x.unit),x.component,x.fleet,x.model,x.issues,x.field,x.value]));
+  const wb=XL.utils.book_new();
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rsRows), 'Risk Summary');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rdRows), 'Risk Detail');
+  try{ XL.writeFile(wb, 'Cadence Risk Report '+(new Date().toISOString().split('T')[0])+'.xlsx'); }catch(e){ alert('Download failed: '+e.message); }
 }
 
 // ── Excel export — chart-ready tables (SheetJS; no native charts) ──────────
