@@ -9601,8 +9601,9 @@ function _bmBuildWorkbook(res, opts){
 
   // ── Inputs — flat, data-only (no subtotals), one row per component per machine
   const sorted=[...res.detailRows].sort((a,b)=>(a.fleet+'|'+a.model+'|'+a.unit+'|'+a.component).localeCompare(b.fleet+'|'+b.model+'|'+b.unit+'|'+b.component));
-  const inRows=[['Fleet','Model','Unit','Component','Tier','Next Due','Period Calls','Base Cost','BAF %','Adj Cost','Total','Overdue','Unscheduled','In Periods','Flags']];
-  sorted.forEach(r=>inRows.push([r.fleet,r.model,r.unit,r.component,r.tier,r.nextDue,r.periodCalls,d0(r.baseCost),p1(r.bafPct),d0(r.adjCost),d0(r.total),d0(r.overdue),d0(r.unscheduled),d0(r.inPeriods),r.flags]));
+  // component-level cost is the BAF-INCLUSIVE figure; no separate base / BAF% / adjusted breakout (never strippable)
+  const inRows=[['Fleet','Model','Unit','Component','Tier','Next Due','Period Calls','Cost','Total','Overdue','Unscheduled','In Periods','Flags']];
+  sorted.forEach(r=>inRows.push([r.fleet,r.model,r.unit,r.component,r.tier,r.nextDue,r.periodCalls,d0(r.adjCost),d0(r.total),d0(r.overdue),d0(r.unscheduled),d0(r.inPeriods),r.flags]));
 
   // ── Intervention Count — component x period COUNT (detail only, no summaries)
   const icRows=[['Fleet','Model','Unit','Component','Total interventions', ...bandLabels]];
@@ -9636,9 +9637,9 @@ function _bmBuildWorkbook(res, opts){
     ['Short-term bucket', opts.bucketSize],['Fiscal year start (month)', opts.fiscalStartMonth],
     ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],['Equipment', eqNote],
     ['Basis',"Today's money (no inflation)"],[],
-    ['GRAND TOTAL (with BAF)', d0(rc.grandTotal)],
+    ['GRAND TOTAL', d0(rc.grandTotal)],
     ['In periods', d0(rc.bandsTotal)],['Overdue / backlog', d0(rc.overdueTotal)],['Unscheduled', d0(rc.unscheduledTotal)],[],
-    ['Base (before BAF)', d0(rc.baseGrand)],['Blended BAF %', p1(blend(rc.grandTotal, rc.baseGrand))],[],
+    ['Blended BAF %', p1(blend(rc.grandTotal, rc.baseGrand))],[],
     ['Note','The Inputs sheet is the flat, pivot-ready component source. Insert > PivotTable off it to build custom summaries.']];
 
   const wb=XL.utils.book_new();
@@ -9657,95 +9658,375 @@ function _bmBuildWorkbook(res, opts){
   return wb;
 }
 
-// ── Interactive HTML pivot companion — group by Fleet/Model/Unit/Component, cost|count, export view to Excel ──
+// ── Interactive HTML Budget Report — tabs (Parameters / Risk / Budget), drill-down, heat-map, charts ──
 function _bmBuildPivotHtml(res, opts){
-  const bandLabels = res.bands.map(b=>b.label);
+  const bandMeta = res.bands.map(b=>({label:b.label, from:b.from, to:b.to, kind:b.kind}));
   const rows = [...res.detailRows]
     .sort((a,b)=>(a.fleet+'|'+a.model+'|'+a.unit+'|'+a.component).localeCompare(b.fleet+'|'+b.model+'|'+b.unit+'|'+b.component))
-    .map(r=>({ f:r.fleet, m:r.model, u:r.unit, c:r.component,
+    .map(r=>({ f:r.fleet||'', m:r.model||'', u:String(r.unit||''), c:r.component||'',
       cost:_buildBudgetBands(r.monthlyCost||{},opts).map(b=>Math.round(b.total)),
       cnt:_buildBudgetBands(r.monthlyCounts||{},opts).map(b=>b.total),
-      od:Math.round(r.overdue||0), un:Math.round(r.unscheduled||0), tot:Math.round(r.total||0), calls:r.periodCalls||0 }));
-  const payload = { gen:new Date().toISOString().split('T')[0], range:opts.fromDate+' to '+opts.toDate, bands:bandLabels, rows:rows };
-  const json = JSON.stringify(payload).replace(/</g,'\\u003c');
-  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-+'<title>Cadence Budget - Pivot</title>'
-+'<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>'
-+'<style>'
-+'*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#c9d1d9;font-family:system-ui,Segoe UI,Roboto,sans-serif;font-size:13px}'
-+'header{padding:14px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:14px;flex-wrap:wrap}'
-+'header h1{margin:0;font-size:15px;color:#e6edf3;font-weight:700}header .meta{color:#8b949e;font-size:11px}'
-+'.bar{display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid #21262d;background:#161b22}'
-+'.grp{display:flex;flex-direction:column;gap:5px}.grp .lab{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e;font-weight:600}'
-+'.dims{display:flex;gap:6px}.dims button{background:#0d1117;border:1px solid #30363d;color:#8b949e;padding:5px 11px;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit}'
-+'.dims button.on{background:#bb8009;border-color:#e3a72c;color:#fff;font-weight:600}'
-+'select,.bar input{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:5px 9px;border-radius:5px;font-size:12px;font-family:inherit}'
-+'.chk{display:flex;align-items:center;gap:6px;cursor:pointer;color:#c9d1d9}.chk input{accent-color:#e3a72c}'
-+'.dl{margin-left:auto;background:#238636;border:1px solid #2ea043;color:#fff;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700}'
-+'.dl:hover{background:#2ea043}'
-+'.wrap{padding:0 20px 40px}.scroll{overflow:auto;max-height:calc(100vh - 150px);border:1px solid #21262d;border-radius:8px;margin-top:14px}'
-+'table{border-collapse:collapse;width:100%;font-size:12px}'
-+'th,td{padding:6px 10px;border-bottom:1px solid #21262d;white-space:nowrap}'
-+'thead th{position:sticky;top:0;background:#1c2129;color:#e6edf3;text-align:right;font-weight:600;z-index:1}'
-+'thead th.dim,tbody td.dim{text-align:left}'
-+'td{text-align:right;font-variant-numeric:tabular-nums}'
-+'tbody tr:hover{background:#161b22}'
-+'tr.total td{border-top:2px solid #30363d;font-weight:700;color:#e6edf3;background:#161b22}'
-+'.empty{padding:30px;color:#8b949e;text-align:center}'
-+'</style></head><body>'
-+'<header><h1>&#128202; Cadence Budget &mdash; Pivot</h1><span class="meta" id="meta"></span></header>'
-+'<div class="bar">'
-+'<div class="grp"><span class="lab">Group by</span><div class="dims" id="dims">'
-+'<button data-d="f" class="on">Fleet</button><button data-d="m">Model</button><button data-d="u">Unit</button><button data-d="c">Component</button>'
-+'</div></div>'
-+'<div class="grp"><span class="lab">Measure</span><select id="measure"><option value="cost">Cost ($)</option><option value="count">Intervention count</option></select></div>'
-+'<div class="grp"><span class="lab">Periods</span><label class="chk"><input type="checkbox" id="periods"> Show period columns</label></div>'
-+'<div class="grp"><span class="lab">Fleet filter</span><select id="fleetf"></select></div>'
-+'<button class="dl" id="dl">&#11015; Download view to Excel</button>'
-+'</div>'
-+'<div class="wrap"><div class="scroll" id="out"></div></div>'
-+'<script>'
-+'var P='+json+';'
-+'var ORDER=["f","m","u","c"],LBL={f:"Fleet",m:"Model",u:"Unit",c:"Component"};'
-+'var state={dims:{f:true,m:false,u:false,c:false},measure:"cost",periods:false,fleet:"__all"};'
-+'function fmt(n){return (Math.round(n)||0).toLocaleString();}'
-+'function fleetList(){var s={};P.rows.forEach(function(r){s[r.f]=1;});return Object.keys(s).sort();}'
-+'function view(){var dims=ORDER.filter(function(d){return state.dims[d];});var map={},order=[];'
-+'P.rows.forEach(function(r){if(state.fleet!=="__all"&&r.f!==state.fleet)return;'
-+'var key=dims.length?dims.map(function(d){return r[d];}).join(" \\u203a "):"__all";var g=map[key];'
-+'if(!g){g=map[key]={dv:dims.length?dims.map(function(d){return r[d];}):["ALL"],cost:P.bands.map(function(){return 0;}),cnt:P.bands.map(function(){return 0;}),od:0,un:0,tot:0,calls:0};order.push(key);}'
-+'r.cost.forEach(function(v,i){g.cost[i]+=v;});r.cnt.forEach(function(v,i){g.cnt[i]+=v;});g.od+=r.od;g.un+=r.un;g.tot+=r.tot;g.calls+=r.calls;});'
-+'var groups=order.map(function(k){return map[k];}).sort(function(a,b){return a.dv.join("|").localeCompare(b.dv.join("|"));});return{dims:dims,groups:groups};}'
-+'function buildAOA(){var v=view(),dims=v.dims,isCost=state.measure==="cost",showP=state.periods;'
-+'var dh=dims.length?dims.map(function(d){return LBL[d];}):["Scope"];var hdr=dh.slice();'
-+'if(isCost)hdr=hdr.concat(["Total","Overdue","Unscheduled"]);else hdr=hdr.concat(["Total interventions"]);'
-+'if(showP)hdr=hdr.concat(P.bands);var aoa=[hdr];'
-+'var T={cost:P.bands.map(function(){return 0;}),cnt:P.bands.map(function(){return 0;}),od:0,un:0,tot:0,calls:0};'
-+'v.groups.forEach(function(g){var row=g.dv.slice();'
-+'if(isCost){row.push(g.tot,g.od,g.un);if(showP)row=row.concat(g.cost);}else{row.push(g.calls);if(showP)row=row.concat(g.cnt);}'
-+'aoa.push(row);g.cost.forEach(function(x,i){T.cost[i]+=x;});g.cnt.forEach(function(x,i){T.cnt[i]+=x;});T.od+=g.od;T.un+=g.un;T.tot+=g.tot;T.calls+=g.calls;});'
-+'if(v.groups.length>1){var gr=dh.map(function(_,i){return i===0?"TOTAL":"";});'
-+'if(isCost){gr.push(T.tot,T.od,T.un);if(showP)gr=gr.concat(T.cost);}else{gr.push(T.calls);if(showP)gr=gr.concat(T.cnt);}aoa.push(gr);}'
-+'return{aoa:aoa,dimCount:dh.length};}'
-+'function render(){document.getElementById("meta").textContent=P.range+"  ·  generated "+P.gen+"  ·  "+P.rows.length+" components";'
-+'var b=buildAOA(),aoa=b.aoa,dc=b.dimCount,out=document.getElementById("out");'
-+'if(aoa.length<=1){out.innerHTML="<div class=\\"empty\\">No data for this selection.</div>";return;}'
-+'var h="<table><thead><tr>";aoa[0].forEach(function(c,i){h+="<th class=\\""+(i<dc?"dim":"")+"\\">"+c+"</th>";});h+="</tr></thead><tbody>";'
-+'for(var r=1;r<aoa.length;r++){var isTot=(aoa[r][0]==="TOTAL");h+="<tr class=\\""+(isTot?"total":"")+"\\">";'
-+'aoa[r].forEach(function(c,i){var isNum=(i>=dc)&&typeof c==="number";h+="<td class=\\""+(i<dc?"dim":"")+"\\">"+(isNum?fmt(c):(c===undefined?"":c))+"</td>";});h+="</tr>";}'
-+'h+="</tbody></table>";out.innerHTML=h;}'
-+'function toXlsx(){if(!window.XLSX){alert("Excel library still loading - try again in a moment.");return;}'
-+'var b=buildAOA(),ws=XLSX.utils.aoa_to_sheet(b.aoa),rng=XLSX.utils.decode_range(ws["!ref"]);'
-+'for(var c=b.dimCount;c<=rng.e.c;c++){for(var r=1;r<=rng.e.r;r++){var cell=ws[XLSX.utils.encode_cell({r:r,c:c})];if(cell&&cell.t==="n")cell.z="#,##0";}}'
-+'ws["!autofilter"]={ref:ws["!ref"]};var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Pivot");'
-+'XLSX.writeFile(wb,"Cadence Pivot "+P.gen+".xlsx");}'
-+'(function init(){var ff=document.getElementById("fleetf");ff.innerHTML="<option value=\\"__all\\">All fleets</option>"+fleetList().map(function(f){return "<option>"+f+"</option>";}).join("");'
-+'document.getElementById("dims").addEventListener("click",function(e){var btn=e.target.closest("button");if(!btn)return;var d=btn.getAttribute("data-d");state.dims[d]=!state.dims[d];btn.classList.toggle("on");render();});'
-+'document.getElementById("measure").addEventListener("change",function(e){state.measure=e.target.value;render();});'
-+'document.getElementById("periods").addEventListener("change",function(e){state.periods=e.target.checked;render();});'
-+'ff.addEventListener("change",function(e){state.fleet=e.target.value;render();});'
-+'document.getElementById("dl").addEventListener("click",toXlsx);render();})();'
-+'<\/script></body></html>';
+      od:Math.round(r.overdue||0), un:Math.round(r.unscheduled||0), tot:Math.round(r.total||0),
+      calls:r.periodCalls||0, baf:r.bafPct||0, tier:r.tier||'', nextDue:r.nextDue||'' }));
+  const rc=res.reconciliation;
+  const params=[
+    ['Range', opts.fromDate+' to '+opts.toDate],
+    ['Projection start', opts.projectionStart==='nextFY'?'Next fiscal year':'This month'],
+    ['Short-term bucket', String(opts.bucketSize)],
+    ['Fiscal year start (month)', String(opts.fiscalStartMonth)],
+    ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],
+    ['Equipment', (opts.units instanceof Set)?(opts.units.size+' unit(s) selected'):'All equipment'],
+    ['Basis',"Today's money (inflation not applied)"] ];
+  const rlab={unscheduled:'Unscheduled (undated)',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
+  const risk={
+    summary:Object.keys(rlab).map(k=>[rlab[k], res.risk.count[k]||0, Math.round(res.risk.cost[k]||0)]),
+    detail:res.risk.rows.map(x=>{const iss=(x.issues||'').split(',').map(s=>s.trim()).filter(s=>s&&s!=='overdue');return iss.length?[String(x.unit),x.component,x.fleet,x.model,iss.join(', '),x.field,String(x.value)]:null;}).filter(Boolean),
+    zero:(res.zeroCostRows||[]).map(z=>[z.fleet,z.model,String(z.unit),z.component,z.tier,z.nextDue,z.periodCalls,z.reason]),
+    overdue:res.overdue.rows.map(o=>{const r=o.r;return [r.fleet,r.model,String(r.unit),r.component,Math.round(o.cost),r.original_date||'',r.changeout_date||''];}) };
+  const recon={grand:Math.round(rc.grandTotal),inperiod:Math.round(rc.bandsTotal),overdue:Math.round(rc.overdueTotal),unscheduled:Math.round(rc.unscheduledTotal),base:Math.round(rc.baseGrand),blended:rc.baseGrand>0?Math.round((rc.grandTotal/rc.baseGrand-1)*1000)/10:0};
+  const payload={gen:new Date().toISOString().split('T')[0], range:opts.fromDate+' to '+opts.toDate, fsm:opts.fiscalStartMonth, bands:bandMeta, rows:rows, params:params, risk:risk, recon:recon};
+  const json=JSON.stringify(payload).replace(/</g,'\\u003c');
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cadence Budget Report</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2129;--line:#21262d;--line2:#30363d;--txt:#c9d1d9;--txt2:#8b949e;--head:#e6edf3;--amber:#e3a72c;--amber2:#bb8009;--red:#f85149;--green:#2ea043}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:13px}
+header{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:linear-gradient(90deg,#12161d,#0d1117)}
+header h1{margin:0;font-size:16px;color:var(--head);font-weight:700;letter-spacing:.3px}
+header .meta{color:var(--txt2);font-size:11px}
+.tabs{display:flex;gap:2px;padding:0 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+.tab{padding:11px 18px;cursor:pointer;color:var(--txt2);font-weight:600;font-size:13px;border-bottom:2px solid transparent;user-select:none}
+.tab:hover{color:var(--txt)}.tab.on{color:var(--amber);border-bottom-color:var(--amber)}
+.wrap{padding:18px 22px 60px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:13px;color:var(--head);text-transform:uppercase;letter-spacing:.6px}
+.recon{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:130px}
+.kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--txt2)}
+.kpi .v{font-size:19px;font-weight:700;color:var(--head);font-variant-numeric:tabular-nums;margin-top:3px}
+.kpi.amber .v{color:var(--amber)}
+.ctl{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.seg{display:flex;border:1px solid var(--line2);border-radius:6px;overflow:hidden}
+.seg button{background:var(--bg);border:0;color:var(--txt2);padding:6px 13px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:600}
+.seg button.on{background:var(--amber2);color:#fff}
+.lbl{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--txt2);margin-right:2px}
+.btn{background:var(--bg);border:1px solid var(--line2);color:var(--txt);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:600}
+.btn:hover{border-color:var(--amber)}
+select{background:var(--bg);border:1px solid var(--line2);color:var(--txt);padding:6px 9px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer}
+.btn.g{background:var(--green);border-color:#3fb950;color:#fff;margin-left:auto}
+.charts{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:900px){.charts{grid-template-columns:1fr}}
+.charts .card{height:410px;overflow:hidden;display:flex;flex-direction:column}
+.charts .card>h2{flex:0 0 auto}
+.charts .card>*:last-child{flex:1 1 auto;min-height:0;overflow:auto}
+.scroll{overflow:auto;max-height:calc(100vh - 190px);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+thead th{position:sticky;top:0;background:var(--panel2);color:var(--head);text-align:center;font-weight:600;z-index:2}
+thead th.yr{cursor:pointer;text-align:center;background:#232a33;border-left:1px solid var(--line2)}
+thead th.yr:hover{color:var(--amber)}
+th.name,td.name{text-align:left;position:sticky;left:0;background:var(--panel);z-index:1}
+thead th.name{z-index:3;background:var(--panel2)}
+td{text-align:center;font-variant-numeric:tabular-nums}
+tbody tr:hover td{background:#12161d}tbody tr:hover td.name{background:#12161d}
+.tw{cursor:pointer;user-select:none;color:var(--amber)}
+.lvl0{font-weight:700;color:var(--head)}.lvl1{font-weight:600}.lvl2{color:var(--txt)}.lvl3{color:var(--txt2)}
+tr.tot td{border-top:2px solid var(--line2);font-weight:700;color:var(--head);background:#12161d}
+td.zc{color:var(--red);font-weight:700}
+table.cntmode td:not(.name),table.cntmode thead th:not(.name){text-align:center}
+.badge{display:inline-block;font-size:9px;padding:1px 5px;border-radius:4px;background:#30250c;color:var(--amber);margin-left:6px;vertical-align:middle}
+.pill{display:inline-block;font-size:10px;padding:1px 7px;border-radius:10px;font-variant-numeric:tabular-nums}
+.crumb{font-size:11px;color:var(--txt2);margin-bottom:8px;min-height:16px}
+.crumb a{color:var(--amber);cursor:pointer;text-decoration:none}.crumb a:hover{text-decoration:underline}
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:10px;font-size:11px}
+.legend span{display:inline-flex;align-items:center;gap:5px;color:var(--txt2)}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.pieslice{cursor:pointer;transition:opacity .1s}.pieslice:hover{opacity:.82}
+.barseg,.bkthit{cursor:pointer}
+.pieback{cursor:pointer}.pieback:hover path{opacity:.55}.pieback:hover text{fill:var(--amber)}
+#pieWrap svg{transform-origin:center center}
+#pieWrap svg.in{animation:pieIn .32s cubic-bezier(.2,.7,.3,1)}
+#pieWrap svg.out{animation:pieOut .34s cubic-bezier(.2,.7,.3,1)}
+@keyframes pieIn{from{opacity:.12;transform:scale(.76) rotate(-6deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+@keyframes pieOut{from{opacity:.12;transform:scale(1.16) rotate(4deg)}to{opacity:1;transform:scale(1) rotate(0)}}
+.empty{padding:30px;color:var(--txt2);text-align:center}
+.note{font-size:11px;color:var(--txt2);margin-top:8px}
+tr.drill{cursor:pointer}tr.drill:hover td{background:#1c2129;color:var(--amber)}
+.hint{cursor:help;border-bottom:1px dotted var(--txt2)}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:100;align-items:flex-start;justify-content:center;padding:44px 16px;overflow:auto}
+.modal.show{display:flex}
+.mbox{background:var(--panel);border:1px solid var(--line2);border-radius:12px;max-width:920px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.55);animation:mIn .18s ease-out}
+@keyframes mIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.mhead{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);color:var(--head);font-weight:700}
+#mclose{cursor:pointer;color:var(--txt2);font-size:22px;line-height:1;padding:0 4px}#mclose:hover{color:var(--red)}
+#mbody{padding:4px 6px 14px;max-height:72vh;overflow:auto}
+</style></head><body>
+<header><h1>&#128202; Cadence &mdash; Life-of-Fleet Budget Report</h1><span class="meta" id="meta"></span></header>
+<div class="tabs"><div class="tab" id="tab-parameters" data-tab="parameters">Parameters</div><div class="tab" id="tab-risk" data-tab="risk">Risk items</div><div class="tab" id="tab-budget" data-tab="budget">Budget graphs</div><div class="tab" id="tab-data" data-tab="data">Data table</div></div>
+<div class="wrap">
+<div id="panel-parameters" style="display:none"></div>
+<div id="panel-risk" style="display:none"></div>
+<div id="panel-budget" style="display:none">
+  <div class="recon" id="reconStrip"></div>
+  <div class="ctl">
+    <span class="lbl">Measure</span><div class="seg" id="segMeasure"><button data-v="cost" class="on">Cost ($)</button><button data-v="count">Intervention count</button></div>
+    <span class="lbl">Stack by</span><div class="seg" id="segStack"><button data-v="fleet" class="on">Fleet</button><button data-v="model">Model</button></div>
+    <span class="lbl">Time</span><div class="seg" id="segGran"><button data-v="month" class="on">Month</button><button data-v="quarter">Quarter</button><button data-v="year">Year</button></div>
+  </div>
+  <div class="charts">
+    <div class="card"><h2>Cost share (click to drill)</h2><div class="crumb" id="pieCrumb"></div><div id="pieWrap"></div></div>
+    <div class="card"><h2 id="barTitle">Cost over time</h2><div style="overflow-x:auto"><div id="barWrap"></div></div></div>
+  </div>
+  <div id="barDetail"></div>
+</div>
+<div id="panel-data" style="display:none">
+  <div class="ctl">
+    <span class="lbl">Measure</span><div class="seg" id="segMeasure2"><button data-v="cost" class="on">Cost ($)</button><button data-v="count">Intervention count</button></div>
+    <span class="lbl">Heat-map</span><div class="seg" id="segHeat"><button data-v="off" class="on">Off</button><button data-v="on">On</button></div>
+    <span class="lbl">Roll up to</span><select id="lvlSel"><option value="0">Fleet</option><option value="1">Model</option><option value="2">Unit</option><option value="3">Component</option></select>
+    <span class="lbl">Columns</span><select id="colGran"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select>
+    <button class="btn g" id="btnXlsx">&#11015; Export view to Excel</button>
+  </div>
+  <div class="scroll" id="tableWrap" style="max-height:calc(100vh - 168px)"></div>
+  <div class="note">Blank = no intervention in that period. <span style="color:var(--red);font-weight:700">Red</span> = a scheduled intervention with $0 cost (fix the cost at source). Click a row name to drill Fleet &rarr; Model &rarr; Unit &rarr; Component; click a year header to fold that year. Totals are in-period; overdue &amp; unscheduled are on the Risk tab.</div>
+</div>
+</div>
+<div id="rmodal" class="modal"><div class="mbox"><div class="mhead"><span id="mtitle"></span><span id="mclose">&times;</span></div><div id="mbody"></div></div></div>
+<script>
+var P=${json};
+var PAL=['#e3a72c','#5FA8E0','#1D9E75','#E24B4A','#9B97E8','#5DCAA5','#378ADD','#d98c34','#8b949e','#BA7517','#c96fd0','#6ee7b7','#f0883e','#79c0ff','#ffab70','#a5d6ff'];
+var S={tab:'budget',measure:'cost',heat:false,stackBy:'fleet',barGran:'month',tableGran:'month',level:'0',barSel:null,colYears:{},openRows:{},pie:[]};
+var SEP='\\u0001';
+function el(id){return document.getElementById(id);}
+var BAFTIP='Budget Adjustment Factor: a % uplift on component cost for associated parts/labour not in the base cost. The blended % shown is cost-weighted (dollar-weighted), not a simple average \\u2014 so 5% on a large item outweighs 50% on a small one.';
+var RTIP={'Unscheduled (undated)':'Components with no changeout date \\u2014 the cost is on the books but cannot be placed in a period. Add a date at source to schedule it.','Inferred util_rate':'Utilisation rate was not supplied and was inferred from the unit\\u2019s peers (median). Set or measure the real rate for accuracy.','Condition-based (modelled)':'Component is condition-based, not fixed-interval; its replacement cycle is modelled from benchmark \\u00f7 util_rate.','Missing benchmark':'No benchmark life supplied \\u2014 only the next-due replacement is costed, not future cycles. Add the benchmark to project the full horizon.','Cost missing/unparseable':'Cost was blank or could not be read as a number. Treated as $0 \\u2014 fix at source or the budget understates spend.','Cycle-capped (suspect data)':'The projected cycle count hit the safety cap (very short life vs the horizon) \\u2014 usually suspect benchmark/util data. Check the inputs.'};
+function card(t,inner){return '<div class="card"><h2>'+t+'</h2>'+inner+'</div>';}
+function attr(s){return String(s==null?'':s).replace(/"/g,'&quot;');}
+function fmt(n){return (Math.round(n)||0).toLocaleString();}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function measVals(n){return S.measure==='cost'?n.cost:n.cnt;}
+function nodeTotal(n){var a=measVals(n),t=0;for(var i=0;i<a.length;i++)t+=a[i];return t;}
+function zeros(){return P.bands.map(function(){return 0;});}
+function fyOf(f){var y=+f.slice(0,4),m=+f.slice(5,7);return (m>=P.fsm)?y:y-1;}
+function fyLabel(fy){return P.fsm===1?String(fy):('FY'+fy);}
+function yearGroups(){var gs=[],by={};P.bands.forEach(function(b,i){var fy=fyOf(b.from);if(by[fy]===undefined){by[fy]=gs.length;gs.push({fy:fy,label:fyLabel(fy),idx:[]});}gs[by[fy]].idx.push(i);});return gs;}
+function monthsBetween(a,b){return (+b.slice(0,4)-+a.slice(0,4))*12+(+b.slice(5,7)-+a.slice(5,7))+1;}
+function bandDur(i){var b=P.bands[i];return monthsBetween(b.from,b.to||b.from);}
+function tableCols(){var cols=[];yearGroups().forEach(function(g){
+  if(S.colYears[g.fy]){cols.push({label:g.label,short:'\\u03a3',idx:g.idx,fy:g.fy,folded:true,type:'year'});return;}
+  var map={},loc=[];g.idx.forEach(function(i){var info=bucketOf(i,S.tableGran);if(map[info.key]===undefined){map[info.key]=loc.length;loc.push({label:info.label,short:info.short,idx:[i],fy:g.fy,type:info.type});}else loc[map[info.key]].idx.push(i);});
+  loc.forEach(function(c){cols.push(c);});});return cols;}
+function colSum(node,col,which){var a=which==='cnt'?node.cnt:(which==='cost'?node.cost:measVals(node));var t=0;col.idx.forEach(function(i){t+=a[i];});return t;}
+// ----- tree -----
+var TREE=null;
+function agg(n,r){for(var i=0;i<r.cost.length;i++){n.cost[i]+=r.cost[i];n.cnt[i]+=r.cnt[i];}n.od+=r.od;n.un+=r.un;n.calls+=r.calls;n.tot+=r.tot;}
+function buildTree(){var root={key:'ALL',label:'TOTAL',level:-1,children:{},order:[],cost:zeros(),cnt:zeros(),od:0,un:0,calls:0,tot:0};
+  P.rows.forEach(function(r){agg(root,r);var path=[r.f,r.m,r.u,r.c],node=root,acc='';
+    for(var i=0;i<4;i++){acc+=SEP+path[i];if(!node.children[acc]){node.children[acc]={key:acc,label:path[i],level:i,children:{},order:[],cost:zeros(),cnt:zeros(),od:0,un:0,calls:0,tot:0,leaf:(i===3),row:(i===3?r:null)};node.order.push(acc);}node=node.children[acc];agg(node,r);}});
+  return root;}
+function sortedKids(n){return n.order.map(function(k){return n.children[k];}).sort(function(a,b){return a.label.localeCompare(b.label);});}
+function childByLabel(n,l){for(var i=0;i<n.order.length;i++){var c=n.children[n.order[i]];if(c.label===l)return c;}return null;}
+// ----- heat -----
+function heatRange(rowsN,cols){var mn=Infinity,mx=-Infinity;rowsN.forEach(function(n){cols.forEach(function(c){var v=colSum(n,c);if(v>0){if(v<mn)mn=v;if(v>mx)mx=v;}});});return {mn:mn,mx:mx};}
+function heatColor(v,rg){if(!(v>0)||rg.mx<=0)return '';var t=rg.mx>rg.mn?(v-rg.mn)/(rg.mx-rg.mn):1;t=Math.max(0,Math.min(1,t));var stops=[[33,80,120],[227,167,44],[248,81,73]];var seg=t<=0.5?0:1,tt=t<=0.5?t/0.5:(t-0.5)/0.5;var a=stops[seg],b=stops[seg+1];var r=Math.round(a[0]+(b[0]-a[0])*tt),g=Math.round(a[1]+(b[1]-a[1])*tt),bl=Math.round(a[2]+(b[2]-a[2])*tt);return 'background:rgba('+r+','+g+','+bl+',.82);color:#0b0e14;font-weight:700';}
+// ----- render dispatch -----
+function render(){el('meta').textContent=P.range+'  \\u00b7  generated '+P.gen+'  \\u00b7  '+P.rows.length+' components';
+  ['parameters','risk','budget','data'].forEach(function(t){el('tab-'+t).className='tab'+(S.tab===t?' on':'');el('panel-'+t).style.display=(S.tab===t?'block':'none');});
+  if(S.tab==='parameters')renderParams();else if(S.tab==='risk')renderRisk();else if(S.tab==='data')renderData();else renderBudget();}
+function renderData(){setSeg('segMeasure2',S.measure);setSeg('segHeat',S.heat?'on':'off');el('lvlSel').value=S.level;el('colGran').value=S.tableGran;renderTable();}
+function expandToLevel(L){S.openRows={};(function w(n){sortedKids(n).forEach(function(k){if(!k.leaf&&k.level<L){S.openRows[k.key]=1;w(k);}});})(TREE);}
+// ----- parameters tab -----
+function renderParams(){var R=P.recon;var h='<div class="recon">'+kpi('Grand total',fmt(R.grand),'amber')+kpi('In-period',fmt(R.inperiod))+kpi('Overdue / backlog',fmt(R.overdue))+kpi('Unscheduled',fmt(R.unscheduled))+kpi('Base (pre-BAF)',fmt(R.base))+kpi('Blended BAF',R.blended+'%','amber')+'</div>';
+  h+='<div class="card"><h2>Run parameters</h2><table><tbody>';
+  P.params.forEach(function(p){h+='<tr><td class="name" style="color:var(--txt2)">'+esc(p[0])+'</td><td style="text-align:left">'+esc(p[1])+'</td></tr>';});
+  h+='</tbody></table></div>';el('panel-parameters').innerHTML=h;}
+function kpi(k,v,c){var b=/BAF/i.test(k);return '<div class="kpi'+(c?' '+c:'')+'"'+(b?' style="cursor:help" title="'+attr(BAFTIP)+'"':'')+'><div class="k">'+esc(k)+(b?' \\u24d8':'')+'</div><div class="v">'+v+'</div></div>';}
+// ----- risk tab -----
+function renderRisk(){var h='';
+  var sum='<table><thead><tr><th class="name">Risk class</th><th>Count</th><th>$ exposure</th></tr></thead><tbody>';
+  P.risk.summary.forEach(function(r){var tip=RTIP[r[0]]||'';sum+='<tr><td class="name">'+(tip?'<span class="hint" title="'+attr(tip)+'">'+esc(r[0])+'</span>':esc(r[0]))+'</td><td>'+r[1]+'</td><td>'+fmt(r[2])+'</td></tr>';});
+  sum+='</tbody></table>';
+  h+=card('Risk summary',sum);
+  h+=riskPanel('zero','Zero-cost interventions',P.risk.zero,0,null);
+  h+=riskPanel('overdue','Overdue / backlog',P.risk.overdue,0,4);
+  h+=riskPanel('dq','Data-quality detail',P.risk.detail,2,null);
+  el('panel-risk').innerHTML=h;}
+function riskPanel(key,title,rows,fi,ci){
+  if(!rows.length)return card(title+' <span class="badge">0</span>','<div class="empty">None.</div>');
+  var by={},order=[];rows.forEach(function(r){var f=r[fi]||'(none)';if(!by[f]){by[f]={n:0,c:0};order.push(f);}by[f].n++;if(ci!=null)by[f].c+=(+r[ci]||0);});
+  order.sort();
+  var b='<table><thead><tr><th class="name">Fleet</th><th>Items</th>'+(ci!=null?'<th>$ exposure</th>':'')+'<th></th></tr></thead><tbody>';
+  order.forEach(function(f){b+='<tr class="drill" data-panel="'+attr(key)+'" data-fleet="'+attr(f)+'"><td class="name">'+esc(f)+'</td><td>'+by[f].n+'</td>'+(ci!=null?'<td>'+fmt(by[f].c)+'</td>':'')+'<td style="color:var(--amber)">drill \\u203a</td></tr>';});
+  var tn=rows.length,tc=0;if(ci!=null)rows.forEach(function(r){tc+=(+r[ci]||0);});
+  b+='<tr class="tot"><td class="name">All fleets</td><td>'+tn+'</td>'+(ci!=null?'<td>'+fmt(tc)+'</td>':'')+'<td></td></tr>';
+  b+='</tbody></table>';
+  return card(title+' <span class="badge">'+rows.length+'</span>',b+'<div class="note">Click a fleet to drill into the detail.</div>');}
+function openRiskModal(panel,fleet){var rows,hdr,align;
+  if(panel==='zero'){rows=P.risk.zero.filter(function(r){return (r[0]||'(none)')===fleet;}).map(function(r){return [r[2],r[3],r[4],r[5],r[6],r[7]];});hdr=['Unit','Component','Tier','Next due','Calls','Reason'];align=[0,0,0,0,1,0];}
+  else if(panel==='overdue'){rows=P.risk.overdue.filter(function(r){return (r[0]||'(none)')===fleet;}).map(function(r){return [r[2],r[3],fmt(r[4]),r[5],r[6]];});hdr=['Unit','Component','Cost','Original date','Effective date'];align=[0,0,1,0,0];}
+  else{rows=P.risk.detail.filter(function(r){return (r[2]||'(none)')===fleet;}).map(function(r){return [r[0],r[1],r[4],r[5],r[6]];});hdr=['Unit','Component','Issues','Field to fix','Current value'];align=[0,0,0,0,0];}
+  el('mtitle').textContent=fleet+' \\u2014 '+rows.length+' item(s)';
+  el('mbody').innerHTML=tbl(hdr,rows,align);
+  el('rmodal').classList.add('show');}
+function tbl(hdr,rows,align,redZero){var h='<table><thead><tr>';hdr.forEach(function(c,i){h+='<th class="'+(align&&align[i]?'':'name')+'">'+c+'</th>';});h+='</tr></thead><tbody>';
+  rows.forEach(function(r){h+='<tr>';r.forEach(function(c,i){var right=align&&align[i];h+='<td class="'+(right?'':'name')+'">'+esc(c)+'</td>';});h+='</tr>';});
+  h+='</tbody></table>';return h;}
+// ----- budget tab -----
+function renderBudget(){
+  var R=P.recon;el('reconStrip').innerHTML=kpi('Grand total',fmt(R.grand),'amber')+kpi('In-period',fmt(R.inperiod))+kpi('Overdue',fmt(R.overdue))+kpi('Unscheduled',fmt(R.unscheduled))+kpi('Blended BAF',R.blended+'%','amber');
+  setSeg('segMeasure',S.measure);setSeg('segStack',S.stackBy);setSeg('segGran',S.barGran);
+  el('barTitle').textContent=(S.measure==='cost'?'Cost':'Interventions')+' over time \\u2014 stacked by '+S.stackBy;
+  drawPie(null);drawBar();renderBarDetail();}
+function setSeg(id,v){var segs=el(id).querySelectorAll('button');segs.forEach(function(b){b.className=(b.getAttribute('data-v')===v?'on':'');});}
+function flatRows(){var out=[];(function walk(n){sortedKids(n).forEach(function(k){out.push(k);if(!k.leaf&&S.openRows[k.key])walk(k);});})(TREE);return out;}
+function renderTable(){var cols=tableCols(),rowsN=flatRows(),groups=yearGroups();
+  var rg=null,heatLevel=-1,heatType=null,totRg=null;
+  if(S.heat){var ord={month:0,quarter:1,year:2};
+    heatLevel=rowsN.reduce(function(m,n){return Math.max(m,n.level);},-1);
+    heatType=cols.reduce(function(best,c){var t=c.type||'year';return (best===null||ord[t]<ord[best])?t:best;},null);
+    var lowRows=rowsN.filter(function(n){return n.level===heatLevel;});
+    rg=heatRange(lowRows,cols.filter(function(c){return (c.type||'year')===heatType;}));
+    var totals=lowRows.map(function(n){var t=0;cols.forEach(function(c){t+=colSum(n,c);});return t;}).filter(function(v){return v>0;});
+    if(totals.length){var tmn=Math.min.apply(null,totals),tmx=Math.max.apply(null,totals);totRg={mn:tmn+0.25*(tmx-tmn),mx:tmx};}}
+  var cntByFy={};cols.forEach(function(c){cntByFy[c.fy]=(cntByFy[c.fy]||0)+1;});
+  var h='<table class="'+(S.measure==='count'?'cntmode':'')+'"><thead><tr><th class="name" rowspan="2">Equipment</th>';
+  groups.forEach(function(g){var open=!S.colYears[g.fy];h+='<th class="yr" colspan="'+(cntByFy[g.fy]||1)+'" data-fy="'+g.fy+'">'+(open?'\\u25be ':'\\u25b8 ')+g.label+'</th>';});
+  h+='<th rowspan="2">Total</th></tr><tr>';
+  cols.forEach(function(c){h+='<th>'+esc(c.short||c.label)+'</th>';});
+  h+='</tr></thead><tbody>';
+  rowsN.forEach(function(n){h+=rowHtml(n,cols,rg,heatLevel,heatType,totRg);});
+  // grand total
+  h+='<tr class="tot"><td class="name">TOTAL</td>';var gtot=0;
+  cols.forEach(function(c){var v=colSum(TREE,c);gtot+=v;h+='<td>'+(v?fmt(v):'')+'</td>';});
+  h+='<td>'+fmt(gtot)+'</td></tr>';
+  h+='</tbody></table>';
+  var w=el('tableWrap');w.innerHTML=rowsN.length?h:'<div class="empty">No components.</div>';}
+function rowHtml(n,cols,rg,heatLevel,heatType,totRg){var pad=8+n.level*16;var tw=(!n.leaf)?('<span class="tw">'+(S.openRows[n.key]?'\\u25be':'\\u25b8')+'</span> '):'';
+  var nm='<td class="name lvl'+n.level+'" style="padding-left:'+pad+'px" data-row="'+esc(n.key)+'">'+tw+esc(n.label)+'</td>';
+  var cells='',rowTot=0,canHeat=(rg&&n.level===heatLevel);
+  cols.forEach(function(c){var cost=colSum(n,c,'cost'),cnt=colSum(n,c,'cnt'),v=S.measure==='cost'?cost:cnt;rowTot+=v;
+    var zc=(cnt>0&&cost===0);var txt='',st='';
+    if(v===0&&!zc){txt='';}
+    else if(zc){txt='0';st=' class="zc"';}
+    else{txt=fmt(v);if(canHeat&&(c.type||'year')===heatType){var hc=heatColor(v,rg);if(hc)st=' style="'+hc+'"';}}
+    cells+='<td'+st+'>'+txt+'</td>';});
+  var totSt='';if(canHeat&&totRg&&rowTot>totRg.mn){var thc=heatColor(rowTot,totRg);if(thc)totSt=' style="'+thc+'"';}
+  return '<tr>'+nm+cells+'<td'+totSt+'>'+(rowTot?fmt(rowTot):'')+'</td></tr>';}
+// ----- pie -----
+function pieNode(){var node=TREE;for(var i=0;i<S.pie.length;i++){var c=childByLabel(node,S.pie[i]);if(!c)break;node=c;}return node;}
+function drawPie(dir){var parent=pieNode();var kids=sortedKids(parent).map(function(k){return {label:k.label,val:nodeTotal(k),leaf:k.leaf};}).filter(function(d){return d.val>0;});
+  kids.sort(function(a,b){return b.val-a.val;});
+  var crumb='<a data-i="-1">All</a>';S.pie.forEach(function(l,i){crumb+=' \\u203a <a data-i="'+i+'">'+esc(l)+'</a>';});el('pieCrumb').innerHTML=crumb;
+  var tot=kids.reduce(function(s,d){return s+d.val;},0);
+  if(!tot){el('pieWrap').innerHTML='<div class="empty">Nothing to show.</div>';return;}
+  var cx=110,cy=110,r=100,a=-Math.PI/2,svg='<svg width="230" height="230" viewBox="0 0 230 230" id="pieSvg" class="'+(dir||'')+'">';
+  var leg='<div class="legend">';
+  kids.forEach(function(d,i){var frac=d.val/tot,a2=a+frac*2*Math.PI,col=PAL[i%PAL.length];var sh;
+    if(frac>=0.9999){sh='<circle class="pieslice" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+col+'" stroke="#0d1117" stroke-width="1.5" data-label="'+esc(d.label)+'" data-leaf="'+(d.leaf?1:0)+'"><title>'+esc(d.label)+': '+fmt(d.val)+' (100%)</title></circle>';}
+    else{var x0=cx+r*Math.cos(a),y0=cy+r*Math.sin(a),x1=cx+r*Math.cos(a2),y1=cy+r*Math.sin(a2),lg=(a2-a)>Math.PI?1:0;var pth='M'+cx+' '+cy+' L'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+r+' '+r+' 0 '+lg+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' Z';sh='<path class="pieslice" d="'+pth+'" fill="'+col+'" stroke="#0d1117" stroke-width="1.5" data-label="'+esc(d.label)+'" data-leaf="'+(d.leaf?1:0)+'"><title>'+esc(d.label)+': '+fmt(d.val)+' ('+Math.round(frac*100)+'%)</title></path>';}
+    svg+=sh;leg+='<span><i style="background:'+col+'"></i>'+esc(d.label)+' \\u00b7 '+fmt(d.val)+' ('+Math.round(frac*100)+'%)</span>';a=a2;});
+  if(S.pie.length){var pnode=TREE;for(var pi=0;pi<S.pie.length-1;pi++){pnode=childByLabel(pnode,S.pie[pi]);}
+    var pk=sortedKids(pnode).map(function(k){return {label:k.label,val:nodeTotal(k)};}).filter(function(d){return d.val>0;}).sort(function(x,y){return y.val-x.val;});
+    var pt=pk.reduce(function(s,d){return s+d.val;},0)||1,ga=-Math.PI/2,gr=40;
+    svg+='<g class="pieback" data-back="1"><circle cx="'+cx+'" cy="'+cy+'" r="52" fill="#0d1117"/>';
+    pk.forEach(function(d,i){var fr=d.val/pt,a2=ga+fr*2*Math.PI,col=PAL[i%PAL.length];if(fr>=0.9999){svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+gr+'" fill="'+col+'" opacity="0.26"/>';}else{var x0=cx+gr*Math.cos(ga),y0=cy+gr*Math.sin(ga),x1=cx+gr*Math.cos(a2),y1=cy+gr*Math.sin(a2),lg=(a2-ga)>Math.PI?1:0;svg+='<path d="M'+cx+' '+cy+' L'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+gr+' '+gr+' 0 '+lg+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' Z" fill="'+col+'" opacity="0.26"/>';}ga=a2;});
+    svg+='<circle cx="'+cx+'" cy="'+cy+'" r="21" fill="#0d1117"/>';
+    svg+='<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" fill="#6b7280" font-size="8">\\u2039 back</text>';
+    svg+='<text x="'+cx+'" y="'+(cy+10)+'" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="700">'+fmt(tot)+'</text>';
+    svg+='<title>Back to '+(S.pie.length>1?esc(S.pie[S.pie.length-2]):'All')+'</title></g>';
+  }else{
+    svg+='<circle cx="'+cx+'" cy="'+cy+'" r="52" fill="#0d1117"/><text x="'+cx+'" y="'+(cy-3)+'" text-anchor="middle" fill="#8b949e" font-size="10">ALL</text><text x="'+cx+'" y="'+(cy+12)+'" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="700">'+fmt(tot)+'</text>';
+  }
+  svg+='</svg>';
+  el('pieWrap').innerHTML=svg+leg+'</div>';}
+// ----- stacked bar -----
+function barSeries(){if(S.stackBy==='fleet')return sortedKids(TREE).map(function(f){return {label:f.label,node:f};});
+  // stack by MODEL: label by model name only (models roll up across fleets by name)
+  var mm={},order=[];sortedKids(TREE).forEach(function(f){sortedKids(f).forEach(function(m){if(!mm[m.label]){mm[m.label]={label:m.label,cost:zeros(),cnt:zeros()};order.push(m.label);}for(var i=0;i<m.cost.length;i++){mm[m.label].cost[i]+=m.cost[i];mm[m.label].cnt[i]+=m.cnt[i];}});});
+  return order.sort().map(function(l){return {label:l,node:mm[l]};});}
+function mLabel(m){var MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return MN[+m.slice(5,7)-1]+' '+m.slice(2,4);}
+var LORD={month:0,quarter:1,year:2};
+function bandType(i){var d=bandDur(i);return d<=1?'month':(d<=3?'quarter':'year');}
+function effType(i,gran){var t=bandType(i);return LORD[t]>=LORD[gran]?t:gran;}
+function bucketOf(i,gran){var et=effType(i,gran),from=P.bands[i].from,mo=+from.slice(5,7),MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if(et==='month')return {key:'m'+from.slice(0,7),label:mLabel(from.slice(0,7)),short:MN[mo-1],type:'month'};
+  if(et==='quarter'){var off=((mo-P.fsm)%12+12)%12,fq=Math.floor(off/3)+1,fy=fyOf(from);return {key:'q'+fy+'.'+fq,label:fyLabel(fy)+' Q'+fq,short:'Q'+fq,type:'quarter'};}
+  var y=fyOf(from);return {key:'y'+y,label:fyLabel(y),short:fyLabel(y),type:'year'};}
+function barBuckets(){var s0=barSeries(),buckets=[],bk={};
+  P.bands.forEach(function(b,i){var info=bucketOf(i,S.barGran);if(bk[info.key]===undefined){bk[info.key]=buckets.length;buckets.push({label:info.label,type:info.type,idx:[]});}buckets[bk[info.key]].idx.push(i);});
+  var series=s0.map(function(se){return {label:se.label,vals:buckets.map(function(bu){var s=0;bu.idx.forEach(function(i){s+=(S.measure==='cost'?se.node.cost[i]:se.node.cnt[i]);});return s;})};});
+  return {buckets:buckets,series:series};}
+function groupBy(buckets,xs,keyfn){var groups=[],map={};buckets.forEach(function(bu,i){var k=keyfn(bu);if(k==null)return;if(map[k]===undefined){map[k]=groups.length;groups.push({key:k,minX:xs[i].x,maxX:xs[i].x+xs[i].w,sample:bu});}else{var g=groups[map[k]];g.minX=Math.min(g.minX,xs[i].x);g.maxX=Math.max(g.maxX,xs[i].x+xs[i].w);}});return groups;}
+function drawBar(){var bb=barBuckets(),buckets=bb.buckets,series=bb.series,n=buckets.length;
+  var maxT=0;buckets.forEach(function(bu,ci){var s=0;series.forEach(function(se){s+=se.vals[ci];});if(s>maxT)maxT=s;});
+  if(maxT<=0||!n){el('barWrap').innerHTML='<div class="empty">Nothing to show.</div>';return;}
+  var WU={month:1,quarter:2,year:3},uw=16,gap=5,padL=46,padT=10;
+  var showMonth=(S.barGran==='month'),showQtr=(S.barGran!=='year');
+  var padB=showMonth?58:(showQtr?42:26),h=214+padB,plotH=h-padB-padT;
+  var xs=[],x=padL;buckets.forEach(function(bu,i){var w=WU[bu.type]*uw;var from=P.bands[bu.idx[0]].from,mo=+from.slice(5,7),off=((mo-P.fsm)%12+12)%12;bu._fy=fyOf(from);bu._fq=Math.floor(off/3)+1;xs.push({x:x,w:w});x+=w+gap;});
+  var cw=x+14,yBase=padT+plotH;
+  var svg='<svg width="'+cw+'" height="'+h+'" viewBox="0 0 '+cw+' '+h+'" style="max-width:100%;height:auto;display:block">';
+  for(var gl=0;gl<=4;gl++){var yy=padT+plotH*gl/4;svg+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+cw+'" y2="'+yy.toFixed(1)+'" stroke="#21262d"/><text x="4" y="'+(yy+3).toFixed(1)+'" fill="#8b949e" font-size="8">'+fmt(maxT*(1-gl/4))+'</text>';}
+  buckets.forEach(function(bu,ci){var X=xs[ci].x,W=xs[ci].w;svg+='<rect class="bkthit" x="'+(X-gap/2).toFixed(1)+'" y="'+padT+'" width="'+(W+gap).toFixed(1)+'" height="'+(h-padT)+'" fill="transparent" data-bkt="'+ci+'"/>';});
+  var focus=(S.stackBy==='fleet')?(S.pie[0]||null):(S.pie.length>=2?S.pie[1]:null);
+  buckets.forEach(function(bu,ci){var X=xs[ci].x,W=xs[ci].w,y=yBase,dim=(S.barSel&&S.barSel.bucket!==ci)?0.4:1;
+    series.forEach(function(se,si){var v=se.vals[ci];if(v<=0)return;var hh=v/maxT*plotH;y-=hh;var so=(S.barSel&&S.barSel.bucket===ci&&S.barSel.series&&S.barSel.series!==se.label)?0.4:dim;var col=PAL[si%PAL.length];var outl=(focus&&se.label!==focus);
+      svg+='<rect class="barseg" x="'+X+'" y="'+y.toFixed(1)+'" width="'+W+'" height="'+hh.toFixed(1)+'" '+(outl?'fill="none" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 2"':'fill="'+col+'"')+' opacity="'+so+'" data-bkt="'+ci+'" data-series="'+attr(se.label)+'"><title>'+esc(se.label)+' \\u2014 '+esc(bu.label)+': '+fmt(v)+'</title></rect>';});});
+  if(showMonth){buckets.forEach(function(bu,ci){if(bu.type!=='month')return;var X=xs[ci].x+xs[ci].w/2;svg+='<text x="'+X+'" y="'+(yBase+10)+'" fill="#8b949e" font-size="7.5" text-anchor="end" transform="rotate(-45 '+X+' '+(yBase+10)+')">'+esc(bu.label.split(' ')[0])+'</text>';});}
+  if(showQtr){var qg=groupBy(buckets,xs,function(bu){return bu.type==='year'?null:('q'+bu._fy+'.'+bu._fq);});
+    qg.forEach(function(g,gi){if(gi>0&&showMonth)svg+='<line x1="'+(g.minX-gap/2).toFixed(1)+'" y1="'+padT+'" x2="'+(g.minX-gap/2).toFixed(1)+'" y2="'+yBase+'" stroke="#30363d" stroke-dasharray="2 3"/>';
+      svg+='<text x="'+((g.minX+g.maxX)/2).toFixed(1)+'" y="'+(yBase+(showMonth?28:13))+'" fill="#a9b1bb" font-size="8.5" text-anchor="middle">Q'+g.sample._fq+'</text>';});}
+  var yg=groupBy(buckets,xs,function(bu){return 'y'+bu._fy;});
+  yg.forEach(function(g,gi){if(gi>0)svg+='<line x1="'+(g.minX-gap/2).toFixed(1)+'" y1="'+padT+'" x2="'+(g.minX-gap/2).toFixed(1)+'" y2="'+(yBase+(showMonth?42:showQtr?26:11)).toFixed(1)+'" stroke="#565e68"/>';
+    svg+='<text x="'+((g.minX+g.maxX)/2).toFixed(1)+'" y="'+(yBase+(showMonth?45:showQtr?29:14))+'" fill="#e6edf3" font-size="9.5" font-weight="700" text-anchor="middle">'+esc(fyLabel(g.sample._fy))+'</text>';});
+  svg+='</svg>';
+  var leg='<div class="legend">';series.forEach(function(se,si){if(se.vals.some(function(v){return v>0;}))leg+='<span><i style="background:'+PAL[si%PAL.length]+'"></i>'+esc(se.label)+'</span>';});leg+='</div>';
+  el('barWrap').innerHTML=svg+leg+'<div class="note">Click a bar or period for the detail below. Width = period length (month 1 &middot; qtr 2 &middot; year 3).</div>';}
+function barDetailRows(){if(!S.barSel)return null;var bb=barBuckets(),bu=bb.buckets[S.barSel.bucket];if(!bu)return null;var idx=bu.idx,sel=S.barSel.series,rows=[];
+  (function walk(nd){if(nd.leaf){if(sel){if(S.stackBy==='fleet'&&nd.row.f!==sel)return;if(S.stackBy==='model'&&nd.row.m!==sel)return;}var cost=0,cnt=0;idx.forEach(function(i){cost+=nd.cost[i];cnt+=nd.cnt[i];});if(cost>0||cnt>0)rows.push({f:nd.row.f,m:nd.row.m,u:nd.row.u,c:nd.row.c,cost:cost,cnt:cnt});}else sortedKids(nd).forEach(walk);})(TREE);
+  rows.sort(function(a,b){return b.cost-a.cost;});return {label:bu.label,series:sel,rows:rows};}
+function renderBarDetail(){var d=el('barDetail');if(!S.barSel){d.innerHTML='';return;}var dd=barDetailRows();if(!dd||!dd.rows.length){d.innerHTML='';return;}
+  var isC=S.measure==='cost',tot=0;
+  var h='<div class="card"><h2>'+esc(dd.label)+(dd.series?' \\u2014 '+esc(dd.series):'')+' \\u2014 '+dd.rows.length+' component(s) <span id="barDetClose" style="float:right;cursor:pointer;color:var(--txt2);font-weight:400">&times; clear</span></h2>';
+  h+='<div class="scroll" style="max-height:320px"><table class="'+(isC?'':'cntmode')+'"><thead><tr><th class="name">Fleet</th><th class="name">Model</th><th class="name">Unit</th><th class="name">Component</th><th>'+(isC?'Cost':'Interventions')+'</th></tr></thead><tbody>';
+  dd.rows.forEach(function(r){var v=isC?r.cost:r.cnt;tot+=v;h+='<tr><td class="name">'+esc(r.f)+'</td><td class="name">'+esc(r.m)+'</td><td class="name">'+esc(r.u)+'</td><td class="name">'+esc(r.c)+'</td><td>'+fmt(v)+'</td></tr>';});
+  h+='<tr class="tot"><td class="name" colspan="4">TOTAL</td><td>'+fmt(tot)+'</td></tr></tbody></table></div></div>';
+  d.innerHTML=h;}
+// ----- excel export of current view -----
+function toXlsx(){if(!window.XLSX){alert('Excel library still loading - try again in a moment.');return;}
+  var cols=tableCols(),rowsN=flatRows();
+  var hdr=['Fleet','Model','Unit','Component'].concat(cols.map(function(c){return c.label;})).concat(['Total']);
+  var aoa=[hdr];
+  rowsN.forEach(function(n){var path=n.key.split(SEP).slice(1);var pref=['','','',''];for(var i=0;i<path.length;i++)pref[i]=path[i];
+    var row=pref.slice();var t=0;cols.forEach(function(c){var v=colSum(n,c);t+=v;row.push(v);});row.push(t);aoa.push(row);});
+  var tr=['TOTAL','','',''],gt=0;cols.forEach(function(c){var v=colSum(TREE,c);gt+=v;tr.push(v);});tr.push(gt);aoa.push(tr);
+  var ws=XLSX.utils.aoa_to_sheet(aoa),rng=XLSX.utils.decode_range(ws['!ref']);
+  for(var c=4;c<=rng.e.c;c++)for(var r=1;r<=rng.e.r;r++){var cell=ws[XLSX.utils.encode_cell({r:r,c:c})];if(cell&&cell.t==='n')cell.z='#,##0';}
+  ws['!autofilter']={ref:ws['!ref']};var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,S.measure==='cost'?'Cost':'Count');
+  XLSX.writeFile(wb,'Cadence Budget View '+P.gen+'.xlsx');}
+// ----- wire -----
+(function init(){TREE=buildTree();
+  el('tab-parameters').parentNode.addEventListener('click',function(e){var t=e.target.closest('.tab');if(!t)return;S.tab=t.getAttribute('data-tab');render();});
+  el('segMeasure').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.measure=b.getAttribute('data-v');S.pie=[];S.barSel=null;render();});
+  el('segMeasure2').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.measure=b.getAttribute('data-v');S.pie=[];S.barSel=null;render();});
+  el('segHeat').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.heat=(b.getAttribute('data-v')==='on');render();});
+  el('segStack').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.stackBy=b.getAttribute('data-v');S.barSel=null;render();});
+  el('segGran').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.barGran=b.getAttribute('data-v');S.barSel=null;render();});
+  el('lvlSel').addEventListener('change',function(e){S.level=e.target.value;expandToLevel(+S.level);render();});
+  el('colGran').addEventListener('change',function(e){S.tableGran=e.target.value;render();});
+  el('btnXlsx').addEventListener('click',toXlsx);
+  el('barWrap').addEventListener('click',function(e){var seg=e.target.closest('.barseg');if(seg){S.barSel={bucket:+seg.getAttribute('data-bkt'),series:seg.getAttribute('data-series')};drawBar();renderBarDetail();return;}var hit=e.target.closest('.bkthit');if(hit){S.barSel={bucket:+hit.getAttribute('data-bkt'),series:null};drawBar();renderBarDetail();}});
+  el('barDetail').addEventListener('click',function(e){if(e.target.closest('#barDetClose')){S.barSel=null;drawBar();renderBarDetail();}});
+  el('panel-risk').addEventListener('click',function(e){var tr=e.target.closest('tr.drill');if(!tr)return;openRiskModal(tr.getAttribute('data-panel'),tr.getAttribute('data-fleet'));});
+  el('mclose').addEventListener('click',function(){el('rmodal').classList.remove('show');});
+  el('rmodal').addEventListener('click',function(e){if(e.target===el('rmodal'))el('rmodal').classList.remove('show');});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')el('rmodal').classList.remove('show');});
+  el('tableWrap').addEventListener('click',function(e){var yr=e.target.closest('th.yr');if(yr){var fy=yr.getAttribute('data-fy');S.colYears[fy]=!S.colYears[fy];render();return;}var nm=e.target.closest('td.name[data-row]');if(nm){var k=nm.getAttribute('data-row');S.openRows[k]=!S.openRows[k];render();}});
+  el('pieWrap').addEventListener('click',function(e){var bk=e.target.closest('.pieback');if(bk){if(S.pie.length){S.pie.pop();drawPie('out');drawBar();}return;}var sl=e.target.closest('.pieslice');if(!sl)return;if(sl.getAttribute('data-leaf')==='1')return;if(S.pie.length>=3)return;S.pie.push(sl.getAttribute('data-label'));drawPie('in');drawBar();});
+  el('pieCrumb').addEventListener('click',function(e){var a=e.target.closest('a');if(!a)return;var i=+a.getAttribute('data-i');S.pie=S.pie.slice(0,i+1);drawPie('out');drawBar();});
+  render();})();
+<\/script></body></html>`;
 }
 function _bmDownloadPivot(){
   const res=window._bmLastResult, opts=window._bmLastOpts; if(!res||!opts){ return; }
@@ -9753,10 +10034,10 @@ function _bmDownloadPivot(){
     const html=_bmBuildPivotHtml(res,opts);
     const blob=new Blob([html],{type:'text/html'});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download='Cadence Budget Pivot '+(new Date().toISOString().split('T')[0])+'.html';
+    const a=document.createElement('a'); a.href=url; a.download='Cadence Budget Report '+(new Date().toISOString().split('T')[0])+'.html';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url), 5000);
-  }catch(e){ console.error('pivot export failed', e); alert('Pivot page export failed: '+e.message); }
+  }catch(e){ console.error('report export failed', e); alert('Budget report export failed: '+e.message); }
 }
 function _bmExportExcel(res, opts){
   const note=document.getElementById('bmExportNote');
@@ -9766,7 +10047,7 @@ function _bmExportExcel(res, opts){
   try {
     window.XLSX.writeFile(wb, fname);
     if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' ('+wb.SheetNames.length+' sheets). '+
-      '<a onclick="_bmDownloadPivot()" style="color:#e3a72c;cursor:pointer;text-decoration:underline">&#11015; Interactive pivot page (HTML)</a>';
+      '<a onclick="_bmDownloadPivot()" style="color:#e3a72c;cursor:pointer;text-decoration:underline">&#11015; Interactive budget report (HTML)</a>';
     setTimeout(_bmDownloadPivot, 700);   // ship the interactive pivot companion as part of the export
   }
   catch(e){ if(note) note.textContent='Export failed: '+e.message; console.error(e); }
