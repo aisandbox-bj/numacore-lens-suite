@@ -8761,7 +8761,7 @@ function _showImportResult(title, body) {
 var budgetConfig = {
   fiscalStartMonth: 1,          // 1=Jan … 12=Dec (operator-set, persisted)
   bucketSize: 'month',          // 'month' | 'quarter' — SHORT-TERM band only
-  projectionStart: 'today',     // 'today' | 'nextFY'
+  projectionStart: 'thisMonth', // 'thisMonth' | 'nextFY'
   includeOverdueForward: true,  // budget overdue components' forward cycles?
   horizonYears: 10              // default/max forward horizon
 };
@@ -8867,9 +8867,12 @@ function _budgetComponentEvents(r, ctx) {
 //  stub (today→FY-end, if start=today) + short-term 24mo (bucketSize) + mid (quarterly) + long (annual).
 function _buildBudgetBands(monthly, opts) {
   const fsm = opts.fiscalStartMonth;
-  const today = new Date(opts.fromDate + 'T00:00:00');
+  const startD = new Date(opts.fromDate + 'T00:00:00');
   const rangeEnd = new Date(opts.toDate + 'T00:00:00');
-  const taperAnchor = _fyNextStart(today, fsm);   // next-FY boundary in both modes; the stub (today-mode only) covers the pre-anchor months
+  // In 'nextFY' mode fromDate is ALREADY the next-FY boundary — the taper begins there,
+  // with no stub. In 'thisMonth' mode the taper stays fiscal-anchored: a stub covers
+  // fromDate → the next FY start, then the monthly window begins on that boundary.
+  const taperAnchor = (opts.projectionStart === 'nextFY') ? new Date(startD) : _fyNextStart(startD, fsm);
   const sumMonths = (from, toExcl) => {
     let t = 0; let d = new Date(from);
     while (d < toExcl && d <= rangeEnd) { t += monthly[_monthKey(_ymd(d))] || 0; d = _addMonths(d, 1); }
@@ -8881,21 +8884,19 @@ function _buildBudgetBands(monthly, opts) {
     if (from >= capped) return;
     bands.push({ label, kind, from: _ymd(from), to: _ymd(_addMonths(capped, -1)), total: sumMonths(from, capped) });
   };
-  const quarterLabel = (d) => `FY${_fyStart(d, fsm).getFullYear() + 1} Q${Math.floor((((d.getMonth() - (fsm - 1)) + 12) % 12) / 3) + 1}`;
+  // Fiscal year named by its START calendar year; plain year when fiscal==calendar (fsm=1).
+  const fyName = (d) => { const y = _fyStart(d, fsm).getFullYear(); return (fsm === 1) ? String(y) : ('FY' + y); };
+  const quarterLabel = (d) => fyName(d) + ' Q' + (Math.floor((((d.getMonth() - (fsm - 1)) + 12) % 12) / 3) + 1);
+  const monthLabel = (d) => d.toLocaleDateString('en-CA', { month: 'short', year: '2-digit' });
 
-  // Stub: today → taperAnchor, grouped by bucketSize
+  // Stub: fromDate → taperAnchor (thisMonth mode only), grouped by bucketSize
   if (opts.projectionStart !== 'nextFY') {
-    let d = new Date(today.getFullYear(), today.getMonth(), 1);
+    let d = new Date(startD.getFullYear(), startD.getMonth(), 1);
     while (d < taperAnchor) {
       if (opts.bucketSize === 'quarter') {
-        const q0 = new Date(d);
-        const qEnd = _addMonths(q0, 3);
-        pushBand(quarterLabel(q0), q0, qEnd < taperAnchor ? qEnd : taperAnchor, 'stub');
-        d = qEnd;
-      } else {
-        pushBand(d.toLocaleDateString('en-CA', { month: 'short', year: '2-digit' }), d, _addMonths(d, 1), 'stub');
-        d = _addMonths(d, 1);
-      }
+        const qEnd = _addMonths(d, 3);
+        pushBand(quarterLabel(d), d, qEnd < taperAnchor ? qEnd : taperAnchor, 'stub'); d = qEnd;
+      } else { pushBand(monthLabel(d), d, _addMonths(d, 1), 'stub'); d = _addMonths(d, 1); }
     }
   }
   // Short-term: 24 months from taperAnchor at bucketSize
@@ -8903,14 +8904,14 @@ function _buildBudgetBands(monthly, opts) {
   { let d = new Date(taperAnchor);
     while (d < shortEnd) {
       if (opts.bucketSize === 'quarter') { pushBand(quarterLabel(d), d, _addMonths(d, 3), 'short'); d = _addMonths(d, 3); }
-      else { pushBand(d.toLocaleDateString('en-CA', { month: 'short', year: '2-digit' }), d, _addMonths(d, 1), 'short'); d = _addMonths(d, 1); }
+      else { pushBand(monthLabel(d), d, _addMonths(d, 1), 'short'); d = _addMonths(d, 1); }
     }
   }
   // Mid: months 25–60 → quarterly
   const midEnd = _addMonths(taperAnchor, 60);
   { let d = new Date(shortEnd); while (d < midEnd) { pushBand(quarterLabel(d), d, _addMonths(d, 3), 'mid'); d = _addMonths(d, 3); } }
   // Long: 61+ → annual (fiscal years)
-  { let d = new Date(midEnd); while (d <= rangeEnd) { const e = _addMonths(d, 12); pushBand(`FY${_fyStart(d, fsm).getFullYear() + 1}`, d, e, 'long'); d = e; } }
+  { let d = new Date(midEnd); while (d <= rangeEnd) { const e = _addMonths(d, 12); pushBand(fyName(d), d, e, 'long'); d = e; } }
 
   return bands;
 }
@@ -8928,12 +8929,10 @@ function _computeBudget(userOpts) {
     fleets: null
   }, userOpts || {});
 
-  // Effective window start. 'nextFY' assumes all dated work before the next fiscal
-  // year is completed as planned (committed) — so it is EXCLUDED from this budget.
-  const _refToday = new Date(today + 'T00:00:00');
-  const _effStart = (opts.projectionStart === 'nextFY')
-    ? _fyNextStart(_refToday, opts.fiscalStartMonth)
-    : new Date(opts.fromDate + 'T00:00:00');
+  // Effective window start. fromDate already encodes the projection-start choice
+  // ('nextFY' → next fiscal-year boundary; 'thisMonth' → first of the current month —
+  // both set in _bmReadOpts) so committed pre-start work is naturally excluded.
+  const _effStart = new Date(opts.fromDate + 'T00:00:00');
   const ctx = {
     startMs: _effStart.getTime(),
     endMs: new Date(opts.toDate + 'T00:00:00').getTime(),
@@ -8941,7 +8940,12 @@ function _computeBudget(userOpts) {
     includeOverdueForward: opts.includeOverdueForward
   };
 
-  const rows = (DATA || []).filter(r => !opts.fleets || opts.fleets.has(r.fleet));
+  // Equipment selection: opts.units is a Set of selected unit names (null = all).
+  const _selUnits = (opts.units instanceof Set) ? opts.units : null;
+  const rows = (DATA || []).filter(r =>
+    (!opts.fleets || opts.fleets.has(r.fleet)) &&
+    (!_selUnits || _selUnits.has(String(r.unit || '(no unit)')))
+  );
   const monthly = {};                 // 'YYYY-MM' → cost
   let overdueTotal = 0, unscheduledTotal = 0;
   const overdueRows = [], unscheduledRows = [], riskRows = [];
@@ -8949,7 +8953,8 @@ function _computeBudget(userOpts) {
   const riskCost  = { unscheduled: 0, overdue: 0, inferredUtil: 0, conditionModelled: 0, missingBenchmark: 0, cost: 0, capped: 0 };
   const perFleet = {};   // fleet -> { monthly:{}, overdue, unscheduled }
   const perUnit  = {};   // unit  -> { monthly:{}, overdue, unscheduled, fleet, model }
-  const detailRows = []; // one per component (for the Detail sheet, with subtotals built at export)
+  const detailRows = []; // one per component (flat "Inputs" sheet — no subtotals)
+  const zeroCostRows = []; // components with $0 / missing / unparseable cost (a budget risk)
   let baseGrand = 0;     // sum of pre-BAF contributions (for the total blended %)
 
   rows.forEach(r => {
@@ -8962,7 +8967,8 @@ function _computeBudget(userOpts) {
     const pf = (perFleet[fkey] = perFleet[fkey] || { monthly:{}, overdue:0, unscheduled:0, base:0 });
     const pu = (perUnit[ukey]  = perUnit[ukey]  || { monthly:{}, overdue:0, unscheduled:0, base:0, fleet:fkey, model:r.model||'' });
     let compPeriods = 0;
-    events.forEach(e => { const k = _monthKey(e.date); monthly[k] = (monthly[k] || 0) + e.cost; pf.monthly[k]=(pf.monthly[k]||0)+e.cost; pu.monthly[k]=(pu.monthly[k]||0)+e.cost; compPeriods += e.cost; });
+    const compCounts = {}, compMonthly = {};   // per-component monthly COUNT and COST (Intervention Count sheet + pivot page)
+    events.forEach(e => { const k = _monthKey(e.date); monthly[k] = (monthly[k] || 0) + e.cost; pf.monthly[k]=(pf.monthly[k]||0)+e.cost; pu.monthly[k]=(pu.monthly[k]||0)+e.cost; compPeriods += e.cost; compCounts[k]=(compCounts[k]||0)+1; compMonthly[k]=(compMonthly[k]||0)+e.cost; });
     if (overdueCost)     { overdueTotal += overdueCost;     overdueRows.push({ r, cost: overdueCost }); pf.overdue += overdueCost; pu.overdue += overdueCost; }
     if (unscheduledCost) { unscheduledTotal += unscheduledCost; unscheduledRows.push({ r, cost: unscheduledCost }); pf.unscheduled += unscheduledCost; pu.unscheduled += unscheduledCost; }
     // Base (pre-BAF) contribution — adjusted scales linearly with cost, so divide back out.
@@ -8995,7 +9001,13 @@ function _computeBudget(userOpts) {
            : (flags.includes('inferred-util') || flags.includes('unscheduled')) ? 'util_rate' : '',
       value: (r.cost === undefined ? '' : r.cost)
     });
-    detailRows.push({ fleet:fkey, model:r.model||'', unit:ukey, component:r.component||'', tier:_budgetTier(r), nextDue:r.changeout_date||'', bafPct:bafPct, baseCost:Number(r.cost)||0, adjCost:(Number(r.cost)||0)*_mult, inPeriods:compPeriods, overdue:overdueCost||0, unscheduled:unscheduledCost||0, total:compPeriods+(overdueCost||0)+(unscheduledCost||0), flags:flags.join(', ') });
+    const _baseCost = Number(r.cost)||0;
+    detailRows.push({ fleet:fkey, model:r.model||'', unit:ukey, component:r.component||'', tier:_budgetTier(r), nextDue:r.changeout_date||'', bafPct:bafPct, baseCost:_baseCost, adjCost:_baseCost*_mult, periodCalls:events.length, monthlyCounts:compCounts, monthlyCost:compMonthly, inPeriods:compPeriods, overdue:overdueCost||0, unscheduled:unscheduledCost||0, total:compPeriods+(overdueCost||0)+(unscheduledCost||0), flags:flags.join(', ') });
+    // Zero-cost items — $0/missing/unparseable cost is a budget risk (spend is understated).
+    if (_baseCost === 0) {
+      zeroCostRows.push({ fleet:fkey, model:r.model||'', unit:ukey, component:r.component||'', tier:_budgetTier(r), nextDue:r.changeout_date||'', periodCalls:events.length,
+        reason: risk.costUnparseable ? 'unparseable cost' : (risk.costMissing ? 'missing cost' : 'zero cost') });
+    }
   });
 
   const bands = _buildBudgetBands(monthly, opts);
@@ -9008,7 +9020,7 @@ function _computeBudget(userOpts) {
     unscheduled: { total: unscheduledTotal, rows: unscheduledRows },
     risk: { count: riskCount, cost: riskCost, rows: riskRows },
     reconciliation: { bandsTotal, overdueTotal, unscheduledTotal, grandTotal, baseGrand },
-    perFleet, perUnit, detailRows
+    perFleet, perUnit, detailRows, zeroCostRows
   };
 }
 </script>
@@ -9134,12 +9146,17 @@ function _computeBudget(userOpts) {
     </div>
     <div class="bm-body">
       <div class="bm-row">
-        <span class="bm-lab">Budget start &amp; period</span>
+        <span class="bm-lab">Projection start &amp; period</span>
         <div class="bm-inline">
-          <input type="month" id="bmFrom"><span>for</span>
+          <div class="bm-radios" id="bmStart">
+            <label><input type="radio" name="bmStart" value="thisMonth" checked> This month</label>
+            <label><input type="radio" name="bmStart" value="nextFY"> Next fiscal year</label>
+          </div>
+          <span>for</span>
           <input type="number" id="bmPeriodNum" min="1" max="600" value="10">
           <select id="bmPeriodUnit" style="width:auto"><option value="years">years</option><option value="months">months</option></select>
         </div>
+        <div class="bm-hint" id="bmNextFYNote" style="display:none;color:#d29922;margin-top:6px"></div>
       </div>
       <div class="bm-grid2" style="margin-bottom:14px">
         <div>
@@ -9151,24 +9168,17 @@ function _computeBudget(userOpts) {
           <div class="bm-hint">First 24 months. Beyond that: quarterly (yrs 3&ndash;5) then annual.</div>
         </div>
         <div>
-          <span class="bm-lab">Projection start</span>
-          <div class="bm-radios" id="bmStart">
-            <label><input type="radio" name="bmStart" value="today" checked> Today</label>
-            <label><input type="radio" name="bmStart" value="nextFY"> Next fiscal year</label>
-          </div>
-          <div class="bm-hint" id="bmNextFYNote" style="display:none;color:#d29922;margin-top:6px"></div>
-        </div>
-      </div>
-      <div class="bm-grid2" style="margin-bottom:14px">
-        <div>
           <span class="bm-lab">Fiscal year starts</span>
           <select id="bmFiscal"></select>
           <div class="bm-hint">Saved to the fleet file.</div>
         </div>
+      </div>
+      <div class="bm-grid2" style="margin-bottom:14px">
         <div>
           <span class="bm-lab">Overdue components</span>
           <label class="bm-check"><input type="checkbox" id="bmOverdue" checked> Continue to budget forward per replacement schedule</label>
         </div>
+        <div></div>
       </div>
       <div class="bm-row">
         <span class="bm-lab">Equipment (fleet / model / unit)</span>
@@ -9425,13 +9435,12 @@ function _bmUpdateEquipSummary(){
 
 // ── Budget modal ──────────────────────────────────────────────────────────
 function openBudgetModal(){
-  const now = new Date();
-  document.getElementById('bmFrom').value = _bmMonthStr(now);
   document.getElementById('bmPeriodNum').value = budgetConfig.periodNum || 10;
   document.getElementById('bmPeriodUnit').value = budgetConfig.periodUnit || 'years';
   document.getElementById('bmFiscal').value = String(budgetConfig.fiscalStartMonth||1);
   document.getElementById('bmOverdue').checked = budgetConfig.includeOverdueForward!==false;
-  const bs = budgetConfig.bucketSize||'month', ps = budgetConfig.projectionStart||'today';
+  const bs = budgetConfig.bucketSize||'month';
+  let ps = budgetConfig.projectionStart||'thisMonth'; if (ps==='today') ps='thisMonth';   // legacy value migrated
   const br = document.querySelector('input[name=bmBucket][value="'+bs+'"]'); if (br) br.checked = true;
   const pr = document.querySelector('input[name=bmStart][value="'+ps+'"]'); if (pr) pr.checked = true;
   _bmUpdateEquipSummary();
@@ -9443,20 +9452,25 @@ function openBudgetModal(){
 function closeBudgetModal(){ document.getElementById('budgetModal').classList.remove('show'); }
 
 function _bmReadOpts(){
-  const fromM = document.getElementById('bmFrom').value || _bmMonthStr(new Date());
-  const [fy,fmo] = fromM.split('-').map(Number);
+  const fsm  = parseInt(document.getElementById('bmFiscal').value,10)||1;
+  const proj = _bmRadio('bmStart') || 'thisMonth';
+  const now  = new Date();
+  // Start is derived from the projection-start choice (no separate date picker):
+  //  'thisMonth' → first of the current month; 'nextFY' → the next fiscal-year boundary.
+  const startD = (proj==='nextFY') ? _fyNextStart(now, fsm) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const fromM  = startD.getFullYear()+'-'+String(startD.getMonth()+1).padStart(2,'0');
   const num  = Math.max(1, parseInt(document.getElementById('bmPeriodNum').value,10)||1);
   const unit = document.getElementById('bmPeriodUnit').value;
   const monthsToAdd = (unit==='years') ? num*12 : num;
-  const end = new Date(fy, (fmo-1)+monthsToAdd, 0);   // last day of the final month
+  const end = new Date(startD.getFullYear(), startD.getMonth()+monthsToAdd, 0);   // last day of the final month
   const toDate = end.getFullYear()+'-'+String(end.getMonth()+1).padStart(2,'0')+'-'+String(end.getDate()).padStart(2,'0');
   return {
     fromDate: fromM + '-01',
     toDate: toDate,
     periodNum: num, periodUnit: unit,
     bucketSize: _bmRadio('bmBucket'),
-    projectionStart: _bmRadio('bmStart'),
-    fiscalStartMonth: parseInt(document.getElementById('bmFiscal').value,10),
+    projectionStart: proj,
+    fiscalStartMonth: fsm,
     includeOverdueForward: document.getElementById('bmOverdue').checked,
     fleets: null,
     units: window._bmSelUnits || null,
@@ -9503,7 +9517,7 @@ function _bmOpenRisk(){
   const body = document.getElementById('bmRiskBody');
   if (!res){ body.innerHTML = '<p style="color:#8b949e;font-size:12px;margin:0">Click <b style="color:#e3a72c">Generate Budget</b> first to compute risks, then reopen this report.</p>'; document.getElementById('bmRiskModal').classList.add('show'); return; }
   // Level 1: risk class x fleet count matrix, from res.risk.rows[].issues (comma-joined flags).
-  const CLASSES = [['unscheduled','Unscheduled (undated)'],['overdue','Overdue / backlog'],['inferred-util','Inferred util_rate'],['condition-modelled','Condition-based (modelled)'],['missing-benchmark','Missing benchmark'],['missing-cost','Missing cost'],['unparseable-cost','Unparseable cost'],['cycle-capped','Cycle-capped']];
+  const CLASSES = [['unscheduled','Unscheduled (undated)'],['inferred-util','Inferred util_rate'],['condition-modelled','Condition-based (modelled)'],['missing-benchmark','Missing benchmark'],['missing-cost','Missing cost'],['unparseable-cost','Unparseable cost'],['cycle-capped','Cycle-capped']];
   const fleets = [...new Set(res.risk.rows.map(r=>r.fleet))].sort();
   const m = {}; CLASSES.forEach(([k])=>m[k]={});
   res.risk.rows.forEach(r=>{ (r.issues||'').split(',').map(s=>s.trim()).forEach(fl=>{ if(m[fl]) m[fl][r.fleet]=(m[fl][r.fleet]||0)+1; }); });
@@ -9521,92 +9535,120 @@ function _bmCloseRisk(){ document.getElementById('bmRiskModal').classList.remove
 function _bmRiskDownload(){
   const res = window._bmLastResult; if(!res) return;
   const XL=window.XLSX; if(!XL){ alert('Excel library not available.'); return; }
-  const rl={unscheduled:'Unscheduled (undated)',overdue:'Overdue / backlog',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
-  const rsRows=[['Risk class','Count','$ exposure']]; Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],Math.round((res.risk.cost[k]||0)*100)/100]));
-  const rdRows=[['Unit','Component','Fleet','Model','Issues','Field to fix','Current value']]; res.risk.rows.forEach(x=>rdRows.push([String(x.unit),x.component,x.fleet,x.model,x.issues,x.field,x.value]));
+  const rl={unscheduled:'Unscheduled (undated)',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
+  const rsRows=[['Risk class','Count','$ exposure']]; Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],Math.round(res.risk.cost[k]||0)]));
+  const rdRows=[['Unit','Component','Fleet','Model','Issues','Field to fix','Current value']]; res.risk.rows.forEach(x=>{ const iss=(x.issues||'').split(',').map(s=>s.trim()).filter(s=>s&&s!=='overdue'); if(!iss.length) return; rdRows.push([String(x.unit),x.component,x.fleet,x.model,iss.join(', '),x.field,x.value]); });
   const wb=XL.utils.book_new();
   XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rsRows), 'Risk Summary');
   XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rdRows), 'Risk Detail');
   try{ XL.writeFile(wb, 'Cadence Risk Report '+(new Date().toISOString().split('T')[0])+'.xlsx'); }catch(e){ alert('Download failed: '+e.message); }
 }
 
-// ── Excel export — chart-ready tables (SheetJS; no native charts) ──────────
+// ── Excel export — formatted, auto-filtered ranges (SheetJS; no native tables/charts) ──
 function _bmBuildWorkbook(res, opts){
   const XL = window.XLSX; if (!XL) return null;
-  const f2 = v => Math.round((v||0)*100)/100;
-  const blend = (adj,base)=> base ? Math.round((adj/base-1)*1000)/10 : 0;   // blended BAF % from component-level calc
+  const d0 = v => Math.round(Number(v)||0);                                  // whole dollars / counts
+  const p1 = v => Math.round((Number(v)||0)*10)/10;                          // one-decimal percent
+  const blend = (adj,base)=> base ? Math.round((adj/base-1)*1000)/10 : 0;    // cost-weighted blended BAF %
   const bandLabels = res.bands.map(b=>b.label);
 
-  // 1. Fleet Summary (chart-ready: fleet x band) + blended BAF %
-  const fsRows = [['Fleet', ...bandLabels, 'Overdue/Backlog','Unscheduled','Total','BAF %']];
-  const bandTot = bandLabels.map(()=>0); let tOd=0,tUn=0,tAll=0;
+  // Whole-number formatting (#,##0) on every numeric cell whose header is NOT a % column,
+  // plus an AutoFilter over the used range. Summary (key/value) skips the filter.
+  const fmtSheet = (ws, filter)=>{
+    const ref=ws['!ref']; if(!ref) return ws;
+    const rng=XL.utils.decode_range(ref), hdr=[];
+    for(let c=rng.s.c;c<=rng.e.c;c++){ const h=ws[XL.utils.encode_cell({r:rng.s.r,c})]; hdr[c]=h?String(h.v):''; }
+    for(let c=rng.s.c;c<=rng.e.c;c++){
+      if(/%|BAF/.test(hdr[c]||'')) continue;
+      for(let r=rng.s.r+1;r<=rng.e.r;r++){ const cell=ws[XL.utils.encode_cell({r,c})]; if(cell&&cell.t==='n') cell.z='#,##0'; }
+    }
+    if(filter!==false) ws['!autofilter']={ref:ref};
+    return ws;
+  };
+  const bandCells = (monthlyMap)=> _buildBudgetBands(monthlyMap,opts).map(b=>b.total);
+
+  // Per-model aggregation (rolled up from perUnit) for the Model Summary sheet.
+  const perModel={};
+  Object.keys(res.perUnit).forEach(u=>{ const pu=res.perUnit[u]; const k=pu.fleet+'||'+pu.model;
+    const pm=(perModel[k]=perModel[k]||{fleet:pu.fleet,model:pu.model,monthly:{},overdue:0,unscheduled:0,base:0});
+    Object.keys(pu.monthly).forEach(mk=>pm.monthly[mk]=(pm.monthly[mk]||0)+pu.monthly[mk]);
+    pm.overdue+=pu.overdue; pm.unscheduled+=pu.unscheduled; pm.base+=pu.base; });
+
+  // ── Fleet / Model / Unit summaries — order: Total, Overdue, Unscheduled, BAF %, then periods
+  const fsRows=[['Fleet','Total','Overdue/Backlog','Unscheduled','BAF %', ...bandLabels]];
+  const bandTot=bandLabels.map(()=>0); let tOd=0,tUn=0,tAll=0;
   Object.keys(res.perFleet).sort().forEach(fk=>{
-    const pf=res.perFleet[fk], fb=_buildBudgetBands(pf.monthly,opts);
-    const cells=fb.map(b=>f2(b.total));
-    const rt=f2(cells.reduce((a,b)=>a+b,0)+pf.overdue+pf.unscheduled);
-    fb.forEach((b,i)=>bandTot[i]+=b.total); tOd+=pf.overdue; tUn+=pf.unscheduled; tAll+=rt;
-    fsRows.push([fk, ...cells, f2(pf.overdue), f2(pf.unscheduled), rt, blend(rt, pf.base)]);
+    const pf=res.perFleet[fk], cells=bandCells(pf.monthly);
+    const rt=cells.reduce((a,b)=>a+b,0)+pf.overdue+pf.unscheduled;
+    cells.forEach((v,i)=>bandTot[i]+=v); tOd+=pf.overdue; tUn+=pf.unscheduled; tAll+=rt;
+    fsRows.push([fk, d0(rt), d0(pf.overdue), d0(pf.unscheduled), p1(blend(rt,pf.base)), ...cells.map(d0)]);
   });
-  fsRows.push(['TOTAL', ...bandTot.map(f2), f2(tOd), f2(tUn), f2(tAll), blend(tAll, res.reconciliation.baseGrand)]);
+  fsRows.push(['TOTAL', d0(tAll), d0(tOd), d0(tUn), p1(blend(tAll,res.reconciliation.baseGrand)), ...bandTot.map(d0)]);
 
-  // 2. Unit Summary + blended BAF %
-  const usRows = [['Fleet','Model','Unit', ...bandLabels, 'Overdue/Backlog','Unscheduled','Total','BAF %']];
+  const msRows=[['Fleet','Model','Total','Overdue/Backlog','Unscheduled','BAF %', ...bandLabels]];
+  Object.keys(perModel).sort((a,b)=>a.localeCompare(b)).forEach(k=>{
+    const pm=perModel[k], cells=bandCells(pm.monthly);
+    const rt=cells.reduce((a,b)=>a+b,0)+pm.overdue+pm.unscheduled;
+    msRows.push([pm.fleet,pm.model, d0(rt), d0(pm.overdue), d0(pm.unscheduled), p1(blend(rt,pm.base)), ...cells.map(d0)]);
+  });
+
+  const usRows=[['Fleet','Model','Unit','Total','Overdue/Backlog','Unscheduled','BAF %', ...bandLabels]];
   Object.keys(res.perUnit).sort((a,b)=>{const pa=res.perUnit[a],pb=res.perUnit[b];return (pa.fleet+'|'+pa.model+'|'+a).localeCompare(pb.fleet+'|'+pb.model+'|'+b);}).forEach(u=>{
-    const pu=res.perUnit[u], ub=_buildBudgetBands(pu.monthly,opts);
-    const cells=ub.map(b=>f2(b.total));
-    const rt=f2(cells.reduce((a,b)=>a+b,0)+pu.overdue+pu.unscheduled);
-    usRows.push([pu.fleet,pu.model,u, ...cells, f2(pu.overdue), f2(pu.unscheduled), rt, blend(rt, pu.base)]);
+    const pu=res.perUnit[u], cells=bandCells(pu.monthly);
+    const rt=cells.reduce((a,b)=>a+b,0)+pu.overdue+pu.unscheduled;
+    usRows.push([pu.fleet,pu.model,u, d0(rt), d0(pu.overdue), d0(pu.unscheduled), p1(blend(rt,pu.base)), ...cells.map(d0)]);
   });
 
-  // 3. Detail (component rows + subtotals per unit/model/fleet) — base cost, effective BAF %, adjusted
-  const D=['Fleet','Model','Unit','Component','Tier','Next Due','Base Cost','BAF %','Adj Cost','In Periods','Overdue','Unscheduled','Total','Flags'];
-  const dRows=[D.slice()];
-  const subRow=(labelIdx,label,total)=>{ const a=new Array(D.length).fill(''); a[labelIdx]=label; a[12]=f2(total); return a; };
+  // ── Inputs — flat, data-only (no subtotals), one row per component per machine
   const sorted=[...res.detailRows].sort((a,b)=>(a.fleet+'|'+a.model+'|'+a.unit+'|'+a.component).localeCompare(b.fleet+'|'+b.model+'|'+b.unit+'|'+b.component));
-  let cF=null,cM=null,cU=null,uS=0,mS=0,fS=0;
-  const flU=()=>{ if(cU!==null) dRows.push(subRow(3,cU+' — unit total',uS)); uS=0; };
-  const flM=()=>{ if(cM!==null) dRows.push(subRow(2,cM+' — model total',mS)); mS=0; };
-  const flF=()=>{ if(cF!==null) dRows.push(subRow(1,cF+' — fleet total',fS)); fS=0; };
-  sorted.forEach(r=>{
-    if(cF!==null && r.fleet!==cF){ flU(); flM(); flF(); }
-    else if(cM!==null && r.model!==cM){ flU(); flM(); }
-    else if(cU!==null && r.unit!==cU){ flU(); }
-    cF=r.fleet;cM=r.model;cU=r.unit;
-    dRows.push([r.fleet,r.model,r.unit,r.component,r.tier,r.nextDue,f2(r.baseCost),r.bafPct,f2(r.adjCost),f2(r.inPeriods),f2(r.overdue),f2(r.unscheduled),f2(r.total),r.flags]);
-    uS+=r.total;mS+=r.total;fS+=r.total;
-  });
-  flU();flM();flF();
+  const inRows=[['Fleet','Model','Unit','Component','Tier','Next Due','Period Calls','Base Cost','BAF %','Adj Cost','Total','Overdue','Unscheduled','In Periods','Flags']];
+  sorted.forEach(r=>inRows.push([r.fleet,r.model,r.unit,r.component,r.tier,r.nextDue,r.periodCalls,d0(r.baseCost),p1(r.bafPct),d0(r.adjCost),d0(r.total),d0(r.overdue),d0(r.unscheduled),d0(r.inPeriods),r.flags]));
 
-  // 4. Overdue backlog
+  // ── Intervention Count — component x period COUNT (detail only, no summaries)
+  const icRows=[['Fleet','Model','Unit','Component','Total interventions', ...bandLabels]];
+  sorted.forEach(r=>{ const cb=_buildBudgetBands(r.monthlyCounts||{},opts).map(b=>b.total); icRows.push([r.fleet,r.model,r.unit,r.component,r.periodCalls, ...cb]); });
+
+  // ── Overdue backlog (its own tab; NOT duplicated under Risk)
   const odRows=[['Fleet','Model','Unit','Component','Cost','Original Date','Effective Date']];
-  res.overdue.rows.forEach(o=>{const r=o.r; odRows.push([r.fleet,r.model,String(r.unit),r.component,f2(o.cost),r.original_date||'',r.changeout_date||'']);});
+  res.overdue.rows.forEach(o=>{const r=o.r; odRows.push([r.fleet,r.model,String(r.unit),r.component,d0(o.cost),r.original_date||'',r.changeout_date||'']);});
 
-  // 5. Risk Summary
-  const rl={unscheduled:'Unscheduled (undated)',overdue:'Overdue / backlog',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
+  // ── Zero-Cost Items — $0 / missing / unparseable cost (a budget risk)
+  const zcRows=[['Fleet','Model','Unit','Component','Tier','Next Due','Period Calls','Reason']];
+  (res.zeroCostRows||[]).forEach(z=>zcRows.push([z.fleet,z.model,z.unit,z.component,z.tier,z.nextDue,z.periodCalls,z.reason]));
+
+  // ── Risk — data-quality issues ONLY (overdue lives on its own tab, not here)
+  const rl={unscheduled:'Unscheduled (undated)',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
   const rsRows=[['Risk class','Count','$ exposure']];
-  Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],f2(res.risk.cost[k])]));
-
-  // 6. Risk Detail (fix-at-source)
+  Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],d0(res.risk.cost[k])]));
   const rdRows=[['Unit','Component','Fleet','Model','Issues','Field to fix','Current value']];
-  res.risk.rows.forEach(x=>rdRows.push([String(x.unit),x.component,x.fleet,x.model,x.issues,x.field,x.value]));
+  res.risk.rows.forEach(x=>{ const iss=(x.issues||'').split(',').map(s=>s.trim()).filter(s=>s&&s!=='overdue'); if(!iss.length) return; rdRows.push([String(x.unit),x.component,x.fleet,x.model,iss.join(', '),x.field,x.value]); });
 
-  // 0. Summary / reconciliation
+  // ── Summary / reconciliation (ASCII; pivot-source note)
   const rc=res.reconciliation;
-  const cov=[['Cadence — Life-of-Fleet Budget'],[],
-    ['Range', opts.fromDate+' to '+opts.toDate],['Short-term bucket', opts.bucketSize],
-    ['Projection start', opts.projectionStart],['Fiscal year start (month)', opts.fiscalStartMonth],
-    ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],['Basis',"Today's money (no inflation)"],[],
-    ['In periods', f2(rc.bandsTotal)],['Overdue / backlog', f2(rc.overdueTotal)],['Unscheduled', f2(rc.unscheduledTotal)],[],
-    ['Base (before BAF)', f2(rc.baseGrand)],['Blended BAF %', blend(rc.grandTotal, rc.baseGrand)],['GRAND TOTAL (with BAF)', f2(rc.grandTotal)]];
+  const eqNote = (opts.units instanceof Set) ? (opts.units.size+' unit(s) selected') : 'All equipment';
+  const cov=[['Cadence - Life-of-Fleet Budget'],[],
+    ['Range', opts.fromDate+' to '+opts.toDate],
+    ['Projection start', opts.projectionStart==='nextFY'?'Next fiscal year':'This month'],
+    ['Short-term bucket', opts.bucketSize],['Fiscal year start (month)', opts.fiscalStartMonth],
+    ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],['Equipment', eqNote],
+    ['Basis',"Today's money (no inflation)"],[],
+    ['GRAND TOTAL (with BAF)', d0(rc.grandTotal)],
+    ['In periods', d0(rc.bandsTotal)],['Overdue / backlog', d0(rc.overdueTotal)],['Unscheduled', d0(rc.unscheduledTotal)],[],
+    ['Base (before BAF)', d0(rc.baseGrand)],['Blended BAF %', p1(blend(rc.grandTotal, rc.baseGrand))],[],
+    ['Note','The Inputs sheet is the flat, pivot-ready component source. Insert > PivotTable off it to build custom summaries.']];
 
   const wb=XL.utils.book_new();
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(cov),    'Summary');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(fsRows), 'Fleet Summary');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(usRows), 'Unit Summary');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(dRows),  'Detail');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(odRows), 'Overdue');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rsRows), 'Risk Summary');
-  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rdRows), 'Risk Detail');
+  const add=(rows,name,filter)=>XL.utils.book_append_sheet(wb, fmtSheet(XL.utils.aoa_to_sheet(rows),filter), name);
+  add(cov,'Summary',false);
+  add(inRows,'Inputs');
+  add(icRows,'Intervention Count');
+  add(fsRows,'Fleet Summary');
+  add(msRows,'Model Summary');
+  add(usRows,'Unit Summary');
+  add(odRows,'Overdue');
+  add(zcRows,'Zero-Cost Items');
+  add(rsRows,'Risk Summary');
+  add(rdRows,'Risk Detail');
   return wb;
 }
 function _bmExportExcel(res, opts){
@@ -9614,7 +9656,7 @@ function _bmExportExcel(res, opts){
   const wb=_bmBuildWorkbook(res,opts);
   if(!wb){ if(note) note.textContent='Excel library not available.'; return; }
   const fname='Cadence Budget '+(new Date().toISOString().split('T')[0])+'.xlsx';
-  try { window.XLSX.writeFile(wb, fname); if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' (7 sheets).'; }
+  try { window.XLSX.writeFile(wb, fname); if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' ('+wb.SheetNames.length+' sheets).'; }
   catch(e){ if(note) note.textContent='Export failed: '+e.message; console.error(e); }
 }
 
