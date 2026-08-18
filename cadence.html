@@ -9509,7 +9509,7 @@ function _bmGenerateProceed(){
     '<div class="bm-r-risk">Risks: '+rk.unscheduled+' unscheduled &middot; '+rk.overdue+' overdue &middot; '+rk.inferredUtil+' inferred-util &middot; '+rk.conditionModelled+' modelled &middot; '+rk.missingBenchmark+' no-benchmark &middot; '+rk.cost+' cost &middot; '+rk.capped+' capped</div>'+
     '<div class="bm-r-risk" id="bmExportNote">Building Excel workbook&hellip;</div>';
   el.classList.add('show');
-  window._bmLastResult = res;
+  window._bmLastResult = res; window._bmLastOpts = opts;
   _bmExportExcel(res, opts);
 }
 function _bmOpenRisk(){
@@ -9651,12 +9651,119 @@ function _bmBuildWorkbook(res, opts){
   add(rdRows,'Risk Detail');
   return wb;
 }
+
+// ── Interactive HTML pivot companion — group by Fleet/Model/Unit/Component, cost|count, export view to Excel ──
+function _bmBuildPivotHtml(res, opts){
+  const bandLabels = res.bands.map(b=>b.label);
+  const rows = [...res.detailRows]
+    .sort((a,b)=>(a.fleet+'|'+a.model+'|'+a.unit+'|'+a.component).localeCompare(b.fleet+'|'+b.model+'|'+b.unit+'|'+b.component))
+    .map(r=>({ f:r.fleet, m:r.model, u:r.unit, c:r.component,
+      cost:_buildBudgetBands(r.monthlyCost||{},opts).map(b=>Math.round(b.total)),
+      cnt:_buildBudgetBands(r.monthlyCounts||{},opts).map(b=>b.total),
+      od:Math.round(r.overdue||0), un:Math.round(r.unscheduled||0), tot:Math.round(r.total||0), calls:r.periodCalls||0 }));
+  const payload = { gen:new Date().toISOString().split('T')[0], range:opts.fromDate+' to '+opts.toDate, bands:bandLabels, rows:rows };
+  const json = JSON.stringify(payload).replace(/</g,'\\u003c');
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
++'<title>Cadence Budget - Pivot</title>'
++'<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"><\/script>'
++'<style>'
++'*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#c9d1d9;font-family:system-ui,Segoe UI,Roboto,sans-serif;font-size:13px}'
++'header{padding:14px 20px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:14px;flex-wrap:wrap}'
++'header h1{margin:0;font-size:15px;color:#e6edf3;font-weight:700}header .meta{color:#8b949e;font-size:11px}'
++'.bar{display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap;padding:12px 20px;border-bottom:1px solid #21262d;background:#161b22}'
++'.grp{display:flex;flex-direction:column;gap:5px}.grp .lab{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e;font-weight:600}'
++'.dims{display:flex;gap:6px}.dims button{background:#0d1117;border:1px solid #30363d;color:#8b949e;padding:5px 11px;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit}'
++'.dims button.on{background:#bb8009;border-color:#e3a72c;color:#fff;font-weight:600}'
++'select,.bar input{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:5px 9px;border-radius:5px;font-size:12px;font-family:inherit}'
++'.chk{display:flex;align-items:center;gap:6px;cursor:pointer;color:#c9d1d9}.chk input{accent-color:#e3a72c}'
++'.dl{margin-left:auto;background:#238636;border:1px solid #2ea043;color:#fff;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700}'
++'.dl:hover{background:#2ea043}'
++'.wrap{padding:0 20px 40px}.scroll{overflow:auto;max-height:calc(100vh - 150px);border:1px solid #21262d;border-radius:8px;margin-top:14px}'
++'table{border-collapse:collapse;width:100%;font-size:12px}'
++'th,td{padding:6px 10px;border-bottom:1px solid #21262d;white-space:nowrap}'
++'thead th{position:sticky;top:0;background:#1c2129;color:#e6edf3;text-align:right;font-weight:600;z-index:1}'
++'thead th.dim,tbody td.dim{text-align:left}'
++'td{text-align:right;font-variant-numeric:tabular-nums}'
++'tbody tr:hover{background:#161b22}'
++'tr.total td{border-top:2px solid #30363d;font-weight:700;color:#e6edf3;background:#161b22}'
++'.empty{padding:30px;color:#8b949e;text-align:center}'
++'</style></head><body>'
++'<header><h1>&#128202; Cadence Budget &mdash; Pivot</h1><span class="meta" id="meta"></span></header>'
++'<div class="bar">'
++'<div class="grp"><span class="lab">Group by</span><div class="dims" id="dims">'
++'<button data-d="f" class="on">Fleet</button><button data-d="m">Model</button><button data-d="u">Unit</button><button data-d="c">Component</button>'
++'</div></div>'
++'<div class="grp"><span class="lab">Measure</span><select id="measure"><option value="cost">Cost ($)</option><option value="count">Intervention count</option></select></div>'
++'<div class="grp"><span class="lab">Periods</span><label class="chk"><input type="checkbox" id="periods"> Show period columns</label></div>'
++'<div class="grp"><span class="lab">Fleet filter</span><select id="fleetf"></select></div>'
++'<button class="dl" id="dl">&#11015; Download view to Excel</button>'
++'</div>'
++'<div class="wrap"><div class="scroll" id="out"></div></div>'
++'<script>'
++'var P='+json+';'
++'var ORDER=["f","m","u","c"],LBL={f:"Fleet",m:"Model",u:"Unit",c:"Component"};'
++'var state={dims:{f:true,m:false,u:false,c:false},measure:"cost",periods:false,fleet:"__all"};'
++'function fmt(n){return (Math.round(n)||0).toLocaleString();}'
++'function fleetList(){var s={};P.rows.forEach(function(r){s[r.f]=1;});return Object.keys(s).sort();}'
++'function view(){var dims=ORDER.filter(function(d){return state.dims[d];});var map={},order=[];'
++'P.rows.forEach(function(r){if(state.fleet!=="__all"&&r.f!==state.fleet)return;'
++'var key=dims.length?dims.map(function(d){return r[d];}).join(" \\u203a "):"__all";var g=map[key];'
++'if(!g){g=map[key]={dv:dims.length?dims.map(function(d){return r[d];}):["ALL"],cost:P.bands.map(function(){return 0;}),cnt:P.bands.map(function(){return 0;}),od:0,un:0,tot:0,calls:0};order.push(key);}'
++'r.cost.forEach(function(v,i){g.cost[i]+=v;});r.cnt.forEach(function(v,i){g.cnt[i]+=v;});g.od+=r.od;g.un+=r.un;g.tot+=r.tot;g.calls+=r.calls;});'
++'var groups=order.map(function(k){return map[k];}).sort(function(a,b){return a.dv.join("|").localeCompare(b.dv.join("|"));});return{dims:dims,groups:groups};}'
++'function buildAOA(){var v=view(),dims=v.dims,isCost=state.measure==="cost",showP=state.periods;'
++'var dh=dims.length?dims.map(function(d){return LBL[d];}):["Scope"];var hdr=dh.slice();'
++'if(isCost)hdr=hdr.concat(["Total","Overdue","Unscheduled"]);else hdr=hdr.concat(["Total interventions"]);'
++'if(showP)hdr=hdr.concat(P.bands);var aoa=[hdr];'
++'var T={cost:P.bands.map(function(){return 0;}),cnt:P.bands.map(function(){return 0;}),od:0,un:0,tot:0,calls:0};'
++'v.groups.forEach(function(g){var row=g.dv.slice();'
++'if(isCost){row.push(g.tot,g.od,g.un);if(showP)row=row.concat(g.cost);}else{row.push(g.calls);if(showP)row=row.concat(g.cnt);}'
++'aoa.push(row);g.cost.forEach(function(x,i){T.cost[i]+=x;});g.cnt.forEach(function(x,i){T.cnt[i]+=x;});T.od+=g.od;T.un+=g.un;T.tot+=g.tot;T.calls+=g.calls;});'
++'if(v.groups.length>1){var gr=dh.map(function(_,i){return i===0?"TOTAL":"";});'
++'if(isCost){gr.push(T.tot,T.od,T.un);if(showP)gr=gr.concat(T.cost);}else{gr.push(T.calls);if(showP)gr=gr.concat(T.cnt);}aoa.push(gr);}'
++'return{aoa:aoa,dimCount:dh.length};}'
++'function render(){document.getElementById("meta").textContent=P.range+"  ·  generated "+P.gen+"  ·  "+P.rows.length+" components";'
++'var b=buildAOA(),aoa=b.aoa,dc=b.dimCount,out=document.getElementById("out");'
++'if(aoa.length<=1){out.innerHTML="<div class=\\"empty\\">No data for this selection.</div>";return;}'
++'var h="<table><thead><tr>";aoa[0].forEach(function(c,i){h+="<th class=\\""+(i<dc?"dim":"")+"\\">"+c+"</th>";});h+="</tr></thead><tbody>";'
++'for(var r=1;r<aoa.length;r++){var isTot=(aoa[r][0]==="TOTAL");h+="<tr class=\\""+(isTot?"total":"")+"\\">";'
++'aoa[r].forEach(function(c,i){var isNum=(i>=dc)&&typeof c==="number";h+="<td class=\\""+(i<dc?"dim":"")+"\\">"+(isNum?fmt(c):(c===undefined?"":c))+"</td>";});h+="</tr>";}'
++'h+="</tbody></table>";out.innerHTML=h;}'
++'function toXlsx(){if(!window.XLSX){alert("Excel library still loading - try again in a moment.");return;}'
++'var b=buildAOA(),ws=XLSX.utils.aoa_to_sheet(b.aoa),rng=XLSX.utils.decode_range(ws["!ref"]);'
++'for(var c=b.dimCount;c<=rng.e.c;c++){for(var r=1;r<=rng.e.r;r++){var cell=ws[XLSX.utils.encode_cell({r:r,c:c})];if(cell&&cell.t==="n")cell.z="#,##0";}}'
++'ws["!autofilter"]={ref:ws["!ref"]};var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Pivot");'
++'XLSX.writeFile(wb,"Cadence Pivot "+P.gen+".xlsx");}'
++'(function init(){var ff=document.getElementById("fleetf");ff.innerHTML="<option value=\\"__all\\">All fleets</option>"+fleetList().map(function(f){return "<option>"+f+"</option>";}).join("");'
++'document.getElementById("dims").addEventListener("click",function(e){var btn=e.target.closest("button");if(!btn)return;var d=btn.getAttribute("data-d");state.dims[d]=!state.dims[d];btn.classList.toggle("on");render();});'
++'document.getElementById("measure").addEventListener("change",function(e){state.measure=e.target.value;render();});'
++'document.getElementById("periods").addEventListener("change",function(e){state.periods=e.target.checked;render();});'
++'ff.addEventListener("change",function(e){state.fleet=e.target.value;render();});'
++'document.getElementById("dl").addEventListener("click",toXlsx);render();})();'
++'<\/script></body></html>';
+}
+function _bmDownloadPivot(){
+  const res=window._bmLastResult, opts=window._bmLastOpts; if(!res||!opts){ return; }
+  try{
+    const html=_bmBuildPivotHtml(res,opts);
+    const blob=new Blob([html],{type:'text/html'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='Cadence Budget Pivot '+(new Date().toISOString().split('T')[0])+'.html';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  }catch(e){ console.error('pivot export failed', e); alert('Pivot page export failed: '+e.message); }
+}
 function _bmExportExcel(res, opts){
   const note=document.getElementById('bmExportNote');
   const wb=_bmBuildWorkbook(res,opts);
   if(!wb){ if(note) note.textContent='Excel library not available.'; return; }
   const fname='Cadence Budget '+(new Date().toISOString().split('T')[0])+'.xlsx';
-  try { window.XLSX.writeFile(wb, fname); if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' ('+wb.SheetNames.length+' sheets).'; }
+  try {
+    window.XLSX.writeFile(wb, fname);
+    if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' ('+wb.SheetNames.length+' sheets). '+
+      '<a onclick="_bmDownloadPivot()" style="color:#e3a72c;cursor:pointer;text-decoration:underline">&#11015; Interactive pivot page (HTML)</a>';
+    setTimeout(_bmDownloadPivot, 700);   // ship the interactive pivot companion as part of the export
+  }
   catch(e){ if(note) note.textContent='Export failed: '+e.message; console.error(e); }
 }
 
