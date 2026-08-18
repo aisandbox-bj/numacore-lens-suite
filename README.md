@@ -49,7 +49,7 @@ Every tool is one `.html` file with inline CSS, inline JS, and CDN-hosted librar
 
 No webpack. No rollup. No package.json. No bundler. No transpiler. No SSR. No PaaS. No SaaS. No cloud anything.
 
-This is a deliberate constraint. It buys: reproducible behaviour across machines, trivial archival (the file IS the deployment), zero dependency rot, no supply-chain attack surface, and freedom from the framework treadmill. It costs: per-file growth (Cadence is ~7,500 lines), no module imports, no off-the-shelf component libraries. Those costs are acceptable for a tool of this complexity at this scale.
+This is a deliberate constraint. It buys: reproducible behaviour across machines, trivial archival (the file IS the deployment), zero dependency rot, no supply-chain attack surface, and freedom from the framework treadmill. It costs: per-file growth (Cadence is ~9,700 lines), no module imports, no off-the-shelf component libraries. Those costs are acceptable for a tool of this complexity at this scale.
 
 ### Two-file approach
 
@@ -164,7 +164,7 @@ Pushes to `main` are auto-deployed by GitHub Pages within ~30 seconds.
 
 **Early-adopter use.** One operator-owner, one active client engagement. The suite is not a commercial product — it's the advisor's internal delivery infrastructure. This repo is public so collaborators (and the occasional curious dev friend) can read the code.
 
-Current live versions: **Lens v4.9 · Cadence v18.7 · Deploy v8.18 · Intake v8.10 · numacore_lib v1.5.1**. Most recent build: Condition Monitoring Phase-1 — the suite now reads the OPC particle and coolant chemistry pages of the lab reports it previously discarded, with a coolant risk ladder and wear-particle morphology surfaced in Lens and fed to the reliability-assessment prompt.
+Current live versions: **Lens v4.9 · Cadence v18.8 · Deploy v8.18 · Intake v8.10 · numacore_lib v1.5.1**. Most recent build: **Cadence v18.8 — the life-of-fleet Budget system**: Generate Budget costs *every* replacement cycle over the horizon (not just next-due) via `benchmark ÷ util_rate`, with a fiscal-anchored monthly→quarterly→annual taper, a Budget Adjustment Factor (Fleet→Model→Unit→Component % tree with inherit-with-override and a cost-weighted blended %), and a 7-sheet Excel workbook.
 
 If you found your way here and you're a fleet-management or mining-tech person interested in talking about PCR methodology, get in touch via the repo owner.
 
