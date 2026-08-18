@@ -1420,7 +1420,8 @@ function _doSave() {
       visibleMonths: state.visibleMonths,
       granularity:   state.granularity,
       abScopeState:  Object.assign({}, _ab.scopeState),
-      showProjections: state.showProjections   // v18.1
+      showProjections: state.showProjections,   // v18.1
+      budgetConfig: (typeof budgetConfig !== 'undefined' ? budgetConfig : undefined)   // v18.8
     };
     localStorage.setItem(getSaveKey(), JSON.stringify(snap));
     _setSaveIndicator('saved', snap.savedAt);
@@ -1484,6 +1485,7 @@ function _restoreState() {
     if (snap.granularity)   state.granularity   = snap.granularity;
     if (snap.abScopeState)  Object.assign(_ab.scopeState, snap.abScopeState);
     if (typeof snap.showProjections === 'boolean') state.showProjections = snap.showProjections;   // v18.1
+    if (snap.budgetConfig && typeof budgetConfig !== 'undefined') Object.assign(budgetConfig, snap.budgetConfig);   // v18.8
     return snap.savedAt;
   } catch(e) {
     console.warn('State restore failed:', e);
@@ -7129,6 +7131,26 @@ function _initFromJSON(json) {
   // Fleet colour (for project bars and swimlane headers) is accessed via FLEET_COLORS[r.fleet] directly.
   DATA.forEach(r => { r.color = COLORS[r.category] || '#94A3B8'; });
 
+  // ── v18.8 FIX-4 — coerce cost to a number at load ─────────────────────────
+  // Budget/resource rollups do `total += r.cost`. Master inputs are hand-edited,
+  // so cost can arrive as a string ("12,000", "$12,000", " ", ""). JS `+` then
+  // concatenates instead of adding and silently corrupts every total. Parse once
+  // here; flag missing/unparseable values so the Budget Risk report can surface
+  // them for fix-at-source (never fabricate a value).
+  DATA.forEach(r => {
+    const raw = r.cost;
+    if (typeof raw === 'number') {
+      if (isFinite(raw)) { r.cost = raw; }
+      else { r.cost = 0; r._cost_unparseable = true; }
+    } else if (raw == null || String(raw).trim() === '') {
+      r.cost = 0; r._cost_missing = true;
+    } else {
+      const n = Number(String(raw).replace(/[$,\s]/g, ''));
+      if (isFinite(n)) { r.cost = n; }
+      else { r.cost = 0; r._cost_unparseable = true; }
+    }
+  });
+
   // FIX-1 (2026-05-07, post-cutover-troubleshoot) — hybrid envelope read-path resilience.
   // The previous read used `const w = json.workingData || json.working || {}` which
   // short-circuited on a truthy-but-empty workingData stub (e.g. {deployData: {}}
@@ -7168,6 +7190,7 @@ function _initFromJSON(json) {
   const _abScopeState  = (wd.abScopeState && typeof wd.abScopeState === 'object') ? wd.abScopeState : (wf.abScopeState || null);
   const _loadedDeColOrder = Array.isArray(wd.deColOrder) ? wd.deColOrder
                           : (Array.isArray(wf.deColOrder) ? wf.deColOrder : null);
+  const _budgetConfig  = (wd.budgetConfig && typeof wd.budgetConfig === 'object') ? wd.budgetConfig : (wf.budgetConfig || null);   // v18.8
 
   {
     // v18.6 ITEM-B — unconditional reset (was `if (_projects)`: a file WITHOUT a
@@ -7220,6 +7243,7 @@ function _initFromJSON(json) {
   if (_visibleMonths != null)  state.visibleMonths = _visibleMonths;
   if (_granularity)            state.granularity   = _granularity;
   if (_abScopeState)           Object.assign(_ab.scopeState, _abScopeState);
+  if (_budgetConfig && typeof budgetConfig !== 'undefined') Object.assign(budgetConfig, _budgetConfig);   // v18.8 budget settings + BAF
   if (_loadedDeColOrder) {
     _deColOrder = _loadedDeColOrder.slice();
     // Ensure any columns added in future versions appear at the end
@@ -7435,7 +7459,8 @@ function buildJSONSnapshot() {
     visibleMonths: state.visibleMonths,
     granularity:   state.granularity,
     abScopeState:  Object.assign({}, _ab.scopeState),
-    deColOrder:    _deColOrder.slice()
+    deColOrder:    _deColOrder.slice(),
+    budgetConfig:  (typeof budgetConfig !== 'undefined' ? budgetConfig : undefined)   // v18.8 — budget settings + BAF
   };
 
   if (_isV5) {
@@ -7608,7 +7633,8 @@ function _ownedSliceForShell() {
     visibleMonths: state.visibleMonths,
     granularity:   state.granularity,
     abScopeState:  Object.assign({}, _ab.scopeState),
-    deColOrder:    _deColOrder.slice()
+    deColOrder:    _deColOrder.slice(),
+    budgetConfig:  (typeof budgetConfig !== 'undefined' ? budgetConfig : undefined)   // v18.8 — budget settings + BAF
   };
   const isV5 = !!(_originalJSON && _originalJSON.masterData && typeof _originalJSON.masterData === 'object');
   return isV5
@@ -8712,8 +8738,1003 @@ function _showImportResult(title, body) {
   document.getElementById('deImportModalBody').textContent  = body;
   modal.classList.add('show');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v18.8 — LIFE-OF-FLEET BUDGET ENGINE  (FEAT-1)
+// Costs the multi-cycle replacement schedule the timeline already draws.
+// Pure computation (no DOM). See "Cadence Budget Model - Spec of Record".
+// Scope access: DATA, state (same <script> block).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Persisted budget config — merged into the fleet JSON working envelope on save.
+var budgetConfig = {
+  fiscalStartMonth: 1,          // 1=Jan … 12=Dec (operator-set, persisted)
+  bucketSize: 'month',          // 'month' | 'quarter' — SHORT-TERM band only
+  projectionStart: 'today',     // 'today' | 'nextFY'
+  includeOverdueForward: true,  // budget overdue components' forward cycles?
+  horizonYears: 10              // default/max forward horizon
+};
+
+var _BUDGET_MAX_CYCLES = 60;    // sanity cap per component; excees get flagged
+
+function _budgetTodayDs() { return new Date().toISOString().split('T')[0]; }
+function _ymd(d) { return d.toISOString().split('T')[0]; }
+function _monthKey(dateStr) { return dateStr.slice(0, 7); }            // 'YYYY-MM'
+function _addMonths(d, n) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
+
+// Start-of-fiscal-year Date for the FY that CONTAINS ref (fsm = 1-based start month).
+function _fyStart(ref, fsm) {
+  const startThisCal = new Date(ref.getFullYear(), fsm - 1, 1);
+  return (ref >= startThisCal) ? startThisCal : new Date(ref.getFullYear() - 1, fsm - 1, 1);
+}
+function _fyNextStart(ref, fsm) {
+  const s = _fyStart(ref, fsm);
+  return new Date(s.getFullYear() + 1, s.getMonth(), 1);
+}
+
+// Datability tier: 'full' (date+benchmark+util → cycles) | 'single' (date only) | 'unscheduled'.
+function _budgetTier(r) {
+  if (!r.changeout_date) return 'unscheduled';
+  if (Number(r.benchmark) > 0 && Number(r.util_rate) > 0) return 'full';
+  return 'single';
+}
+
+// Overdue backlog: original predicted date is past AND not rescheduled forward.
+function _budgetIsOverdue(r, todayDs) {
+  return !!r.original_date && r.original_date < todayDs && (r.changeout_date || '') <= todayDs;
+}
+
+// Budget Adjustment Factor keys (stable across reloads — name-based, not id-based).
+function _bafCompKey(r){ return String(r.unit||'(no unit)') + '||' + (r.component||''); }
+function _bafModelKey(r){ return (r.fleet||'(no fleet)') + '||' + (r.model||'(no model)'); }
+// Effective BAF % for a component: component ?? unit ?? model ?? fleet ?? total ?? 0.
+function _bafFactor(baf, r){
+  if (!baf) return 0;
+  const pick = x => { if (x===undefined||x===null||x==='') return undefined; const n=Number(x); return isFinite(n)?n:undefined; };
+  let v;
+  if (baf.component){ v=pick(baf.component[_bafCompKey(r)]); if(v!==undefined) return v; }
+  if (baf.unit){ v=pick(baf.unit[String(r.unit||'(no unit)')]); if(v!==undefined) return v; }
+  if (baf.model){ v=pick(baf.model[_bafModelKey(r)]); if(v!==undefined) return v; }
+  if (baf.fleet){ v=pick(baf.fleet[r.fleet||'(no fleet)']); if(v!==undefined) return v; }
+  v=pick(baf.total); if(v!==undefined) return v;
+  return 0;
+}
+
+// Per-component costed events + risk flags within [startMs, endMs].
+// Returns { events:[{date,cost,kind}], risk:{...}, overdueCost, unscheduledCost }.
+function _budgetComponentEvents(r, ctx) {
+  const { startMs, endMs, todayDs, includeOverdueForward } = ctx;
+  const cost = Number(r.cost) || 0;
+  const tier = _budgetTier(r);
+  const events = [];
+  const risk = {
+    unscheduled: false, overdue: false, inferredUtil: false, conditionModelled: false,
+    missingBenchmark: false, costMissing: !!r._cost_missing, costUnparseable: !!r._cost_unparseable,
+    capped: false
+  };
+
+  if (tier === 'unscheduled') {
+    risk.unscheduled = true;
+    return { events, risk, unscheduledCost: cost, overdueCost: 0 };
+  }
+
+  const overdue = _budgetIsOverdue(r, todayDs);
+  if (overdue) risk.overdue = true;
+
+  const dueMs = new Date(r.changeout_date + 'T00:00:00').getTime();
+  // Forward-cycle anchor: overdue → brought to today; else the (future) changeout date.
+  const anchorMs = overdue ? new Date(todayDs + 'T00:00:00').getTime() : dueMs;
+
+  if (tier === 'full') {
+    if (r._util_rate_inferred) risk.inferredUtil = true;
+    if (r.replacement_strategy === 'condition_based') risk.conditionModelled = true;
+    const cycleDays = Number(r.benchmark) / Number(r.util_rate);
+    if (cycleDays > 0 && isFinite(cycleDays)) {
+      const doForward = !overdue || includeOverdueForward;
+      if (doForward) {
+        for (let n = 1; ; n++) {
+          if (n > _BUDGET_MAX_CYCLES) { risk.capped = true; break; }
+          const ms = anchorMs + n * cycleDays * 86400000;
+          if (ms > endMs) break;
+          if (ms >= startMs) events.push({ date: _ymd(new Date(ms)), cost, kind: 'cycle' });
+        }
+      }
+    }
+  } else if (!(Number(r.benchmark) > 0)) {
+    risk.missingBenchmark = true;
+  }
+
+  // The next-due instance itself
+  if (overdue) {
+    return { events, risk, overdueCost: cost, unscheduledCost: 0 };
+  }
+  if (dueMs >= startMs && dueMs <= endMs) events.push({ date: r.changeout_date, cost, kind: 'due' });
+  return { events, risk, overdueCost: 0, unscheduledCost: 0 };
+}
+
+// Roll the monthly map into fiscal-anchored report bands (spec §4).
+//  stub (today→FY-end, if start=today) + short-term 24mo (bucketSize) + mid (quarterly) + long (annual).
+function _buildBudgetBands(monthly, opts) {
+  const fsm = opts.fiscalStartMonth;
+  const today = new Date(opts.fromDate + 'T00:00:00');
+  const rangeEnd = new Date(opts.toDate + 'T00:00:00');
+  const taperAnchor = _fyNextStart(today, fsm);   // next-FY boundary in both modes; the stub (today-mode only) covers the pre-anchor months
+  const sumMonths = (from, toExcl) => {
+    let t = 0; let d = new Date(from);
+    while (d < toExcl && d <= rangeEnd) { t += monthly[_monthKey(_ymd(d))] || 0; d = _addMonths(d, 1); }
+    return t;
+  };
+  const bands = [];
+  const pushBand = (label, from, toExcl, kind) => {
+    const capped = new Date(Math.min(toExcl.getTime(), _addMonths(rangeEnd, 1).getTime()));
+    if (from >= capped) return;
+    bands.push({ label, kind, from: _ymd(from), to: _ymd(_addMonths(capped, -1)), total: sumMonths(from, capped) });
+  };
+  const quarterLabel = (d) => `FY${_fyStart(d, fsm).getFullYear() + 1} Q${Math.floor((((d.getMonth() - (fsm - 1)) + 12) % 12) / 3) + 1}`;
+
+  // Stub: today → taperAnchor, grouped by bucketSize
+  if (opts.projectionStart !== 'nextFY') {
+    let d = new Date(today.getFullYear(), today.getMonth(), 1);
+    while (d < taperAnchor) {
+      if (opts.bucketSize === 'quarter') {
+        const q0 = new Date(d);
+        const qEnd = _addMonths(q0, 3);
+        pushBand(quarterLabel(q0), q0, qEnd < taperAnchor ? qEnd : taperAnchor, 'stub');
+        d = qEnd;
+      } else {
+        pushBand(d.toLocaleDateString('en-CA', { month: 'short', year: '2-digit' }), d, _addMonths(d, 1), 'stub');
+        d = _addMonths(d, 1);
+      }
+    }
+  }
+  // Short-term: 24 months from taperAnchor at bucketSize
+  const shortEnd = _addMonths(taperAnchor, 24);
+  { let d = new Date(taperAnchor);
+    while (d < shortEnd) {
+      if (opts.bucketSize === 'quarter') { pushBand(quarterLabel(d), d, _addMonths(d, 3), 'short'); d = _addMonths(d, 3); }
+      else { pushBand(d.toLocaleDateString('en-CA', { month: 'short', year: '2-digit' }), d, _addMonths(d, 1), 'short'); d = _addMonths(d, 1); }
+    }
+  }
+  // Mid: months 25–60 → quarterly
+  const midEnd = _addMonths(taperAnchor, 60);
+  { let d = new Date(shortEnd); while (d < midEnd) { pushBand(quarterLabel(d), d, _addMonths(d, 3), 'mid'); d = _addMonths(d, 3); } }
+  // Long: 61+ → annual (fiscal years)
+  { let d = new Date(midEnd); while (d <= rangeEnd) { const e = _addMonths(d, 12); pushBand(`FY${_fyStart(d, fsm).getFullYear() + 1}`, d, e, 'long'); d = e; } }
+
+  return bands;
+}
+
+// Orchestrator. opts: {fromDate,toDate,bucketSize,projectionStart,fiscalStartMonth,includeOverdueForward,fleets(Set|null)}
+function _computeBudget(userOpts) {
+  const today = _budgetTodayDs();
+  const opts = Object.assign({
+    fromDate: today,
+    toDate: _ymd(_addMonths(new Date(today + 'T00:00:00'), budgetConfig.horizonYears * 12)),
+    bucketSize: budgetConfig.bucketSize,
+    projectionStart: budgetConfig.projectionStart,
+    fiscalStartMonth: budgetConfig.fiscalStartMonth,
+    includeOverdueForward: budgetConfig.includeOverdueForward,
+    fleets: null
+  }, userOpts || {});
+
+  // Effective window start. 'nextFY' assumes all dated work before the next fiscal
+  // year is completed as planned (committed) — so it is EXCLUDED from this budget.
+  const _refToday = new Date(today + 'T00:00:00');
+  const _effStart = (opts.projectionStart === 'nextFY')
+    ? _fyNextStart(_refToday, opts.fiscalStartMonth)
+    : new Date(opts.fromDate + 'T00:00:00');
+  const ctx = {
+    startMs: _effStart.getTime(),
+    endMs: new Date(opts.toDate + 'T00:00:00').getTime(),
+    todayDs: today,
+    includeOverdueForward: opts.includeOverdueForward
+  };
+
+  const rows = (DATA || []).filter(r => !opts.fleets || opts.fleets.has(r.fleet));
+  const monthly = {};                 // 'YYYY-MM' → cost
+  let overdueTotal = 0, unscheduledTotal = 0;
+  const overdueRows = [], unscheduledRows = [], riskRows = [];
+  const riskCount = { unscheduled: 0, overdue: 0, inferredUtil: 0, conditionModelled: 0, missingBenchmark: 0, cost: 0, capped: 0 };
+  const riskCost  = { unscheduled: 0, overdue: 0, inferredUtil: 0, conditionModelled: 0, missingBenchmark: 0, cost: 0, capped: 0 };
+  const perFleet = {};   // fleet -> { monthly:{}, overdue, unscheduled }
+  const perUnit  = {};   // unit  -> { monthly:{}, overdue, unscheduled, fleet, model }
+  const detailRows = []; // one per component (for the Detail sheet, with subtotals built at export)
+  let baseGrand = 0;     // sum of pre-BAF contributions (for the total blended %)
+
+  rows.forEach(r => {
+    // Budget Adjustment Factor — uplift the component cost before generating events.
+    const bafPct = _bafFactor(opts.baf, r);
+    const _mult  = 1 + bafPct/100;
+    const _rAdj  = (bafPct !== 0) ? Object.assign({}, r, { cost: (Number(r.cost)||0) * _mult }) : r;
+    const { events, risk, overdueCost, unscheduledCost } = _budgetComponentEvents(_rAdj, ctx);
+    const fkey = r.fleet || '(no fleet)', ukey = String(r.unit || '(no unit)');
+    const pf = (perFleet[fkey] = perFleet[fkey] || { monthly:{}, overdue:0, unscheduled:0, base:0 });
+    const pu = (perUnit[ukey]  = perUnit[ukey]  || { monthly:{}, overdue:0, unscheduled:0, base:0, fleet:fkey, model:r.model||'' });
+    let compPeriods = 0;
+    events.forEach(e => { const k = _monthKey(e.date); monthly[k] = (monthly[k] || 0) + e.cost; pf.monthly[k]=(pf.monthly[k]||0)+e.cost; pu.monthly[k]=(pu.monthly[k]||0)+e.cost; compPeriods += e.cost; });
+    if (overdueCost)     { overdueTotal += overdueCost;     overdueRows.push({ r, cost: overdueCost }); pf.overdue += overdueCost; pu.overdue += overdueCost; }
+    if (unscheduledCost) { unscheduledTotal += unscheduledCost; unscheduledRows.push({ r, cost: unscheduledCost }); pf.unscheduled += unscheduledCost; pu.unscheduled += unscheduledCost; }
+    // Base (pre-BAF) contribution — adjusted scales linearly with cost, so divide back out.
+    const _adjContribution  = compPeriods + (overdueCost||0) + (unscheduledCost||0);
+    const _baseContribution = _mult ? _adjContribution/_mult : _adjContribution;
+    pf.base += _baseContribution; pu.base += _baseContribution; baseGrand += _baseContribution;
+    // risk tallies (one component can carry several)
+    const tag = (key, on, cst) => { if (on) { riskCount[key]++; riskCost[key] += (cst || 0); } };
+    tag('unscheduled', risk.unscheduled, unscheduledCost);
+    tag('overdue', risk.overdue, overdueCost);
+    tag('inferredUtil', risk.inferredUtil, Number(r.cost) || 0);
+    tag('conditionModelled', risk.conditionModelled, Number(r.cost) || 0);
+    tag('missingBenchmark', risk.missingBenchmark, 0);
+    tag('cost', risk.costMissing || risk.costUnparseable, 0);
+    tag('capped', risk.capped, 0);
+    const flags = [];
+    if (risk.unscheduled) flags.push('unscheduled');
+    if (risk.overdue) flags.push('overdue');
+    if (risk.inferredUtil) flags.push('inferred-util');
+    if (risk.conditionModelled) flags.push('condition-modelled');
+    if (risk.missingBenchmark) flags.push('missing-benchmark');
+    if (risk.costMissing) flags.push('missing-cost');
+    if (risk.costUnparseable) flags.push('unparseable-cost');
+    if (risk.capped) flags.push('cycle-capped');
+    if (flags.length) riskRows.push({
+      unit: r.unit, component: r.component, fleet: r.fleet, model: r.model,
+      issues: flags.join(', '),
+      field: flags.includes('missing-cost') || flags.includes('unparseable-cost') ? 'cost'
+           : flags.includes('missing-benchmark') ? 'benchmark'
+           : (flags.includes('inferred-util') || flags.includes('unscheduled')) ? 'util_rate' : '',
+      value: (r.cost === undefined ? '' : r.cost)
+    });
+    detailRows.push({ fleet:fkey, model:r.model||'', unit:ukey, component:r.component||'', tier:_budgetTier(r), nextDue:r.changeout_date||'', bafPct:bafPct, baseCost:Number(r.cost)||0, adjCost:(Number(r.cost)||0)*_mult, inPeriods:compPeriods, overdue:overdueCost||0, unscheduled:unscheduledCost||0, total:compPeriods+(overdueCost||0)+(unscheduledCost||0), flags:flags.join(', ') });
+  });
+
+  const bands = _buildBudgetBands(monthly, opts);
+  const bandsTotal = bands.reduce((s, b) => s + b.total, 0);
+  const grandTotal = bandsTotal + overdueTotal + unscheduledTotal;
+
+  return {
+    opts, monthly, bands,
+    overdue: { total: overdueTotal, rows: overdueRows },
+    unscheduled: { total: unscheduledTotal, rows: unscheduledRows },
+    risk: { count: riskCount, cost: riskCost, rows: riskRows },
+    reconciliation: { bandsTotal, overdueTotal, unscheduledTotal, grandTotal, baseGrand },
+    perFleet, perUnit, detailRows
+  };
+}
 </script>
 
 <div id="dataEditorPanel">
   <!-- populated by renderDataEditor() -->
-<
+</div>
+
+<!-- ═══ v18.8 FEAT-1 — Generate Budget pop-up (additive; matches Cadence dark theme) ═══ -->
+<style>
+#budgetModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9200;align-items:center;justify-content:center}
+#budgetModal.show{display:flex}
+#budgetModalBox{background:#161b22;border:1px solid #30363d;border-radius:10px;width:600px;max-width:95vw;max-height:97vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px #000a}
+.bm-head{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid #21262d;flex-shrink:0}
+.bm-head h3{margin:0;font-size:15px;color:#e6edf3;font-weight:700;letter-spacing:.3px}
+.bm-head h3 .bm-amber{color:#e3a72c}
+.bm-x{background:none;border:none;color:#8b949e;font-size:16px;cursor:pointer;padding:2px 6px;border-radius:4px}
+.bm-x:hover{background:#30363d;color:#e6edf3}
+.bm-body{padding:16px 22px}
+.bm-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px}
+.bm-row{margin-bottom:14px}
+.bm-row:last-child{margin-bottom:0}
+.bm-lab{display:block;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;font-weight:600}
+.bm-inline{display:flex;align-items:center;gap:8px}
+.bm-inline span{color:#6e7681;font-size:12px}
+#budgetModal input[type=month],#budgetModal select{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 9px;border-radius:5px;font-size:12px;font-family:inherit}
+#budgetModal input[type=month]:focus,#budgetModal select:focus{outline:none;border-color:#e3a72c}
+#budgetModal select{width:100%}
+.bm-radios{display:flex;gap:8px 18px;flex-wrap:wrap}
+.bm-radios label,.bm-check{display:flex;align-items:center;gap:7px;font-size:12px;color:#c9d1d9;cursor:pointer;line-height:1.35}
+.bm-radios input,.bm-check input{accent-color:#e3a72c;flex-shrink:0}
+.bm-check{align-items:flex-start}
+.bm-check input{margin-top:1px}
+.bm-hint{font-size:10px;color:#6e7681;margin-top:5px;line-height:1.45}
+.bm-equip-btn{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 14px;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit}
+.bm-equip-btn:hover{border-color:#e3a72c;color:#e6edf3}
+.bm-equip-summary{font-size:11px;color:#8b949e}
+.bm-foot{display:flex;align-items:center;justify-content:space-between;padding:13px 22px;border-top:1px solid #21262d;gap:12px;flex-shrink:0}
+.bm-risk-link{color:#d29922;cursor:pointer;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:5px}
+.bm-risk-link:hover{text-decoration:underline}
+.bm-foot-btns{display:flex;gap:10px}
+.bm-btn-ghost{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:12px}
+.bm-btn-ghost:hover{background:#30363d}
+.bm-btn-go{background:#bb8009;border:1px solid #e3a72c;color:#fff;padding:7px 18px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:700}
+.bm-btn-go:hover{background:#d29922}
+.bm-result{margin:0 22px 14px;border:1px solid #30363d;border-radius:8px;padding:12px 16px;background:#0d1117;font-size:12px;color:#c9d1d9;display:none;flex-shrink:0}
+.bm-result.show{display:block}
+.bm-result .bm-r-total{font-size:20px;color:#e6edf3;font-weight:700}
+.bm-result .bm-r-sub{color:#8b949e;font-size:11px;margin-top:2px}
+.bm-r-recon{display:flex;gap:18px;margin-top:9px;flex-wrap:wrap}
+.bm-r-recon .bm-r-k{color:#6e7681;font-size:10px;text-transform:uppercase;letter-spacing:.5px;display:block}
+.bm-r-recon .bm-r-v{color:#c9d1d9;font-weight:700;font-size:13px;display:block}
+.bm-r-risk{margin-top:9px;padding-top:9px;border-top:1px solid #21262d;font-size:11px;color:#8b949e;line-height:1.5}
+.bm-hdr-budget-btn{background:#21262d;color:#e3a72c;border:1px solid #30363d}
+.bm-hdr-budget-btn:hover{background:#30363d;border-color:#e3a72c}
+/* Equipment selector pop-out (fleet/model/unit tree) */
+#bmEquipModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9300;align-items:center;justify-content:center}
+#bmEquipModal.show{display:flex}
+#bmEquipBox{background:#161b22;border:1px solid #30363d;border-radius:10px;width:460px;max-width:92vw;height:min(960px,92vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px #000a}
+.be-head{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #21262d;flex-shrink:0}
+.be-head h3{margin:0;font-size:14px;color:#e6edf3;font-weight:700}
+.be-toolbar{display:flex;align-items:center;gap:6px;padding:8px 18px;border-bottom:1px solid #21262d;flex-wrap:wrap;flex-shrink:0}
+.be-toolbar button{background:#21262d;border:1px solid #30363d;color:#8b949e;font-size:10px;padding:4px 9px;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:.4px;font-family:inherit}
+.be-toolbar button:hover{background:#30363d;color:#e3a72c}
+.be-sep{width:1px;height:16px;background:#30363d;margin:0 3px}
+.be-tree{flex:1;overflow-y:auto;padding:8px 16px;min-height:140px}
+.be-row{display:flex;align-items:center;gap:7px;padding:3px 0;font-size:12px;color:#c9d1d9}
+.be-caret{width:12px;cursor:pointer;color:#8b949e;font-size:9px;user-select:none;text-align:center;flex-shrink:0}
+.be-caret-none{cursor:default}
+.be-cb{accent-color:#e3a72c;flex-shrink:0;cursor:pointer}
+.be-lbl{cursor:pointer}
+.be-children{margin-left:16px;border-left:1px solid #21262d;padding-left:6px}
+.be-lbl-fleet{font-weight:700;color:#e6edf3}
+.be-lbl-model{color:#adbac7}
+.be-foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 18px;border-top:1px solid #21262d;flex-shrink:0}
+/* Budget Adjustment Factor pop-out */
+#bmBafModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9300;align-items:center;justify-content:center}
+#bmBafModal.show{display:flex}
+#bmBafBox{background:#161b22;border:1px solid #30363d;border-radius:10px;width:540px;max-width:95vw;height:min(960px,92vh);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 12px 40px #000a}
+#bmBafBox .be-toolbar .be-legend{margin-left:auto;font-size:9px;color:#6e7681;display:flex;gap:10px;align-items:center;text-transform:none;letter-spacing:0}
+.baf-lg-b{color:#e3a72c;font-weight:700}.baf-lg-i{color:#6e7681}
+.baf-total-row{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid #21262d;flex-shrink:0}
+.baf-total-row .bm-lab{margin:0}
+.baf-tree{flex:1;overflow-y:auto;padding:8px 16px;min-height:140px}
+.baf-row{display:flex;align-items:center;gap:7px;padding:2px 0;font-size:12px;color:#c9d1d9}
+.baf-caret{width:12px;cursor:pointer;color:#8b949e;font-size:9px;text-align:center;flex-shrink:0;user-select:none}
+.baf-caret-none{cursor:default}
+.baf-lbl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.baf-lbl-fleet{font-weight:700;color:#e6edf3}
+.baf-lbl-model{color:#adbac7}
+.baf-lbl-comp{color:#8b949e}
+.baf-inp{width:58px;background:#0d1117;border:1px solid #30363d;color:#8b949e;padding:3px 6px;border-radius:4px;font-size:11px;text-align:right;font-family:inherit}
+.baf-inp:focus{outline:none;border-color:#e3a72c}
+.baf-inp.baf-explicit{color:#e3a72c;border-color:#8a6410;font-weight:700}
+.baf-inp::placeholder{color:#484f58}
+.baf-pct{color:#6e7681;font-size:10px;width:8px}
+.baf-children{margin-left:16px;border-left:1px solid #21262d;padding-left:6px}
+#bafImportPrompt,#bmZeroBafWarn{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9400;align-items:center;justify-content:center}
+#bafImportPrompt.show,#bmZeroBafWarn.show{display:flex}
+#budgetModal input[type=number]{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 9px;border-radius:5px;font-size:12px;font-family:inherit;width:60px}
+#budgetModal input[type=number]:focus{outline:none;border-color:#e3a72c}
+.baf-prompt-box{background:#161b22;border:1px solid #30363d;border-radius:10px;width:420px;max-width:92vw;padding:22px}
+.baf-prompt-box h3{margin:0 0 8px;font-size:14px;color:#e6edf3;font-weight:700}
+.baf-prompt-box p{font-size:12px;color:#8b949e;line-height:1.6;margin:0 0 16px}
+.baf-prompt-btns{display:flex;gap:10px;justify-content:flex-end}
+</style>
+
+<div id="budgetModal" role="dialog" aria-modal="true">
+  <div id="budgetModalBox">
+    <div class="bm-head">
+      <h3><span class="bm-amber">&#128202;</span>&nbsp; Generate Budget</h3>
+      <button class="bm-x" onclick="closeBudgetModal()" title="Close">&#10005;</button>
+    </div>
+    <div class="bm-body">
+      <div class="bm-row">
+        <span class="bm-lab">Budget start &amp; period</span>
+        <div class="bm-inline">
+          <input type="month" id="bmFrom"><span>for</span>
+          <input type="number" id="bmPeriodNum" min="1" max="600" value="10">
+          <select id="bmPeriodUnit" style="width:auto"><option value="years">years</option><option value="months">months</option></select>
+        </div>
+      </div>
+      <div class="bm-grid2" style="margin-bottom:14px">
+        <div>
+          <span class="bm-lab">Short-term bucket</span>
+          <div class="bm-radios" id="bmBucket">
+            <label><input type="radio" name="bmBucket" value="month" checked> Month</label>
+            <label><input type="radio" name="bmBucket" value="quarter"> Quarter</label>
+          </div>
+          <div class="bm-hint">First 24 months. Beyond that: quarterly (yrs 3&ndash;5) then annual.</div>
+        </div>
+        <div>
+          <span class="bm-lab">Projection start</span>
+          <div class="bm-radios" id="bmStart">
+            <label><input type="radio" name="bmStart" value="today" checked> Today</label>
+            <label><input type="radio" name="bmStart" value="nextFY"> Next fiscal year</label>
+          </div>
+          <div class="bm-hint" id="bmNextFYNote" style="display:none;color:#d29922;margin-top:6px"></div>
+        </div>
+      </div>
+      <div class="bm-grid2" style="margin-bottom:14px">
+        <div>
+          <span class="bm-lab">Fiscal year starts</span>
+          <select id="bmFiscal"></select>
+          <div class="bm-hint">Saved to the fleet file.</div>
+        </div>
+        <div>
+          <span class="bm-lab">Overdue components</span>
+          <label class="bm-check"><input type="checkbox" id="bmOverdue" checked> Continue to budget forward per replacement schedule</label>
+        </div>
+      </div>
+      <div class="bm-row">
+        <span class="bm-lab">Equipment (fleet / model / unit)</span>
+        <div class="bm-inline">
+          <button type="button" class="bm-equip-btn" onclick="_bmOpenEquip()">Select equipment&hellip;</button>
+          <span class="bm-equip-summary" id="bmEquipSummary">All equipment</span>
+        </div>
+      </div>
+      <div class="bm-row">
+        <span class="bm-lab">Budget adjustment factor <span style="text-transform:none;letter-spacing:0;color:#6e7681;font-weight:400">(parts / labour uplift %)</span></span>
+        <div class="bm-inline">
+          <button type="button" class="bm-equip-btn" onclick="_bmOpenBaf()">Set BAF&hellip;</button>
+          <span class="bm-equip-summary" id="bmBafSummary">Total +0%</span>
+        </div>
+      </div>
+    </div>
+    <div class="bm-result" id="bmResult"></div>
+    <div class="bm-foot">
+      <a class="bm-risk-link" onclick="_bmOpenRisk()">&#9888; Risk Report</a>
+      <div class="bm-foot-btns">
+        <button class="bm-btn-ghost" onclick="closeBudgetModal()">Cancel</button>
+        <button class="bm-btn-go" id="bmGenerateBtn" onclick="_bmGenerate()">Generate Budget</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Equipment selector pop-out (fleet -> model -> unit tree) -->
+<div id="bmEquipModal" role="dialog" aria-modal="true">
+  <div id="bmEquipBox">
+    <div class="be-head">
+      <h3>Select Equipment</h3>
+      <button class="bm-x" onclick="_bmCloseEquip()" title="Close">&#10005;</button>
+    </div>
+    <div class="be-toolbar">
+      <button onclick="_beExpandAll(true)">&#9660; Expand all</button>
+      <button onclick="_beExpandAll(false)">&#9654; Collapse all</button>
+      <span class="be-sep"></span>
+      <button onclick="_beSelectAll(true)">&#10003; Select all</button>
+      <button onclick="_beSelectAll(false)">&#9744; Deselect all</button>
+    </div>
+    <div class="be-tree" id="bmEquipTree"></div>
+    <div class="be-foot">
+      <button class="bm-btn-ghost" onclick="_bmCloseEquip()">Cancel</button>
+      <button class="bm-btn-go" onclick="_beApply()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- Budget Adjustment Factor pop-out (fleet -> model -> unit -> component; % boxes, inherit/override) -->
+<div id="bmBafModal" role="dialog" aria-modal="true">
+  <div id="bmBafBox">
+    <div class="be-head">
+      <h3>Budget Adjustment Factor</h3>
+      <button class="bm-x" onclick="_bmCloseBaf()" title="Close">&#10005;</button>
+    </div>
+    <div class="be-toolbar">
+      <button onclick="_bafExpandAll(true)">&#9660; Expand all</button>
+      <button onclick="_bafExpandAll(false)">&#9654; Collapse all</button>
+      <button onclick="_bafResetAll()">&#8635; Reset all</button>
+      <span class="be-sep"></span>
+      <button onclick="_bafDownload()">&#11015; Download</button>
+      <button onclick="document.getElementById('bafUpload').click()">&#11014; Upload</button>
+      <input type="file" id="bafUpload" accept=".xlsx" style="display:none" onchange="_bafUpload(event)">
+      <span class="be-legend"><span class="baf-lg-b">bright = set here</span><span class="baf-lg-i">dim = inherited</span></span>
+    </div>
+    <div class="baf-total-row">
+      <span class="bm-lab">Total (all selected)</span>
+      <input type="text" class="baf-inp" id="bafTotalInp" placeholder="0"><span class="baf-pct">%</span>
+      <span style="font-size:10px;color:#6e7681;margin-left:auto">Empty a box + Enter resets it to its parent.</span>
+    </div>
+    <div class="baf-tree" id="bmBafTree"></div>
+    <div class="be-foot">
+      <button class="bm-btn-go" onclick="_bmCloseBaf()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- BAF import: empty-cell handling prompt -->
+<div id="bafImportPrompt">
+  <div class="baf-prompt-box">
+    <h3>Some cells are blank</h3>
+    <p>The uploaded template has empty BAF&nbsp;% cells. How should blanks be treated?</p>
+    <div class="baf-prompt-btns">
+      <button class="bm-btn-ghost" onclick="_bafImportChoose('inherit')">Inherit (cascade)</button>
+      <button class="bm-btn-go" onclick="_bafImportChoose('zero')">Treat as 0%</button>
+    </div>
+  </div>
+</div>
+
+<!-- Warn if budget generated with no BAF set -->
+<div id="bmZeroBafWarn">
+  <div class="baf-prompt-box">
+    <h3>&#9888; No adjustment factor set</h3>
+    <p>All Budget Adjustment Factors are 0% &mdash; no parts / labour uplift will be applied to this budget. Review the BAF first, or continue with no uplift?</p>
+    <div class="baf-prompt-btns">
+      <button class="bm-btn-ghost" onclick="_bmZeroBafReview()">Review BAF</button>
+      <button class="bm-btn-go" onclick="_bmGenerateProceed()">Continue to generate</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Generate Budget pop-up wiring (v18.8 FEAT-1) ──────────────────────────
+window._bmSelUnits = (typeof window._bmSelUnits === 'undefined') ? null : window._bmSelUnits; // null = all
+
+(function _bmInit(){
+  function injectBtn(){
+    const hdr = document.querySelector('.hdr-right');
+    if (!hdr || document.getElementById('genBudgetBtn')) return;
+    const b = document.createElement('button');
+    b.id = 'genBudgetBtn'; b.className = 'btn bm-hdr-budget-btn';
+    b.title = 'Generate a life-of-fleet budget';
+    b.innerHTML = '&#128202;&nbsp; Budget';
+    b.onclick = openBudgetModal;
+    const exp = document.getElementById('doneBtn');
+    if (exp && exp.parentNode === hdr) hdr.insertBefore(b, exp.nextSibling); else hdr.appendChild(b);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', injectBtn); else injectBtn();
+  const sel = document.getElementById('bmFiscal');
+  if (sel && !sel.options.length){
+    ['January','February','March','April','May','June','July','August','September','October','November','December']
+      .forEach((m,i)=>{ const o=document.createElement('option'); o.value=String(i+1); o.textContent=m; sel.appendChild(o); });
+  }
+  // Event delegation on the (static) equipment tree — synchronous propagation, no lag.
+  const tree = document.getElementById('bmEquipTree');
+  if (tree){
+    tree.addEventListener('change', e=>{ if (e.target.classList.contains('be-cb')) _beOnCheck(e.target); });
+    tree.addEventListener('click', e=>{ const c = e.target.closest('.be-caret'); if (c && !c.classList.contains('be-caret-none')) _beToggle(c); });
+  }
+  // 'Next fiscal year' assumption note
+  document.querySelectorAll('input[name=bmStart]').forEach(r=>r.addEventListener('change', _bmUpdateNextFYNote));
+  const fisc = document.getElementById('bmFiscal'); if (fisc) fisc.addEventListener('change', _bmUpdateNextFYNote);
+  // BAF tree (delegated change/click) + total box — synchronous cascade, no lag
+  const bafTree = document.getElementById('bmBafTree');
+  if (bafTree){
+    bafTree.addEventListener('change', e=>{ if (e.target.classList.contains('baf-inp')) _bafOnChange(e.target); });
+    bafTree.addEventListener('click', e=>{ const c=e.target.closest('.baf-caret'); if (c && !c.classList.contains('baf-caret-none')) _bafToggle(c); });
+  }
+  const bafTotal = document.getElementById('bafTotalInp'); if (bafTotal) bafTotal.addEventListener('change', ()=>_bafOnChange(bafTotal));
+})();
+
+function _bmUpdateNextFYNote(){
+  const note = document.getElementById('bmNextFYNote'); if (!note) return;
+  if (_bmRadio('bmStart') !== 'nextFY'){ note.style.display='none'; return; }
+  const fsm = parseInt(document.getElementById('bmFiscal').value,10) || 1;
+  let lbl = 'the next fiscal year';
+  try { if (typeof _fyNextStart==='function'){ const s=_fyNextStart(new Date(), fsm); lbl=s.toLocaleDateString('en-CA',{month:'short',year:'numeric'}); } } catch(e){}
+  note.innerHTML = '&#9888; Assumes all work scheduled before '+lbl+' is completed as planned &mdash; it is excluded from this budget.';
+  note.style.display = '';
+}
+
+function _bmMonthStr(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function _bmRadio(name){ const el=document.querySelector('input[name='+name+']:checked'); return el?el.value:null; }
+function _beEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+
+// ── Equipment tree ────────────────────────────────────────────────────────
+function _beTreeData(){
+  const t={};
+  (typeof DATA!=='undefined'?DATA:[]).forEach(r=>{
+    const f=r.fleet||'(no fleet)', m=r.model||'(no model)', u=String(r.unit||'(no unit)');
+    (t[f]=t[f]||{}); (t[f][m]=t[f][m]||new Set()); t[f][m].add(u);
+  });
+  return t;
+}
+function _beRender(){
+  const t=_beTreeData(); let html='';
+  if (!Object.keys(t).length) return '<div style="color:#6e7681;font-size:11px;padding:8px">No fleet data loaded.</div>';
+  Object.keys(t).sort().forEach(f=>{
+    html+='<div class="be-node"><div class="be-row"><span class="be-caret">&#9654;</span><input type="checkbox" class="be-cb" data-level="fleet"><label class="be-lbl be-lbl-fleet">'+_beEsc(f)+'</label></div><div class="be-children" style="display:none">';
+    Object.keys(t[f]).sort().forEach(m=>{
+      html+='<div class="be-node"><div class="be-row"><span class="be-caret">&#9654;</span><input type="checkbox" class="be-cb" data-level="model"><label class="be-lbl be-lbl-model">'+_beEsc(m)+'</label></div><div class="be-children" style="display:none">';
+      [...t[f][m]].sort().forEach(u=>{
+        html+='<div class="be-node"><div class="be-row"><span class="be-caret be-caret-none"></span><input type="checkbox" class="be-cb" data-level="unit" data-unit="'+_beEsc(u)+'"><label class="be-lbl">'+_beEsc(u)+'</label></div></div>';
+      });
+      html+='</div></div>';
+    });
+    html+='</div></div>';
+  });
+  return html;
+}
+// Synchronous: parent click updates ALL descendants now, and rolls state up ancestors.
+function _beOnCheck(cb){
+  const node = cb.closest('.be-node');
+  node.querySelectorAll('.be-cb').forEach(c=>{ c.checked = cb.checked; c.indeterminate = false; });
+  let anc = node.parentElement ? node.parentElement.closest('.be-node') : null;
+  while (anc){
+    const own = anc.querySelector(':scope > .be-row > .be-cb');
+    const units = [...anc.querySelectorAll('.be-cb[data-level="unit"]')];
+    const on = units.filter(u=>u.checked).length;
+    if (own){ own.checked = units.length>0 && on===units.length; own.indeterminate = on>0 && on<units.length; }
+    anc = anc.parentElement ? anc.parentElement.closest('.be-node') : null;
+  }
+}
+function _beRecomputeAll(){
+  document.querySelectorAll('#bmEquipTree .be-node').forEach(node=>{
+    const own = node.querySelector(':scope > .be-row > .be-cb');
+    if (!own || own.dataset.level==='unit') return;
+    const units = [...node.querySelectorAll('.be-cb[data-level="unit"]')];
+    const on = units.filter(u=>u.checked).length;
+    own.checked = units.length>0 && on===units.length; own.indeterminate = on>0 && on<units.length;
+  });
+}
+function _beToggle(caret){
+  const node = caret.closest('.be-node');
+  const kids = node.querySelector(':scope > .be-children'); if (!kids) return;
+  const open = kids.style.display !== 'none';
+  kids.style.display = open ? 'none' : '';
+  caret.innerHTML = open ? '&#9654;' : '&#9660;';
+}
+function _beExpandAll(open){
+  document.querySelectorAll('#bmEquipTree .be-children').forEach(c=>c.style.display = open?'':'none');
+  document.querySelectorAll('#bmEquipTree .be-caret:not(.be-caret-none)').forEach(c=>c.innerHTML = open?'&#9660;':'&#9654;');
+}
+function _beSelectAll(on){
+  document.querySelectorAll('#bmEquipTree .be-cb').forEach(c=>{ c.checked = on; c.indeterminate = false; });
+}
+function _bmOpenEquip(){
+  const tree = document.getElementById('bmEquipTree');
+  tree.innerHTML = _beRender();
+  const sel = window._bmSelUnits;
+  tree.querySelectorAll('.be-cb[data-level="unit"]').forEach(u=>{ u.checked = !sel || sel.has(u.dataset.unit); });
+  _beRecomputeAll();
+  document.getElementById('bmEquipModal').classList.add('show');
+}
+function _bmCloseEquip(){ document.getElementById('bmEquipModal').classList.remove('show'); }
+function _beApply(){
+  const units = [...document.querySelectorAll('#bmEquipTree .be-cb[data-level="unit"]')];
+  const checked = units.filter(u=>u.checked).map(u=>u.dataset.unit);
+  window._bmSelUnits = (units.length && checked.length===units.length) ? null : new Set(checked);
+  _bmUpdateEquipSummary();
+  _bmCloseEquip();
+}
+function _bmUpdateEquipSummary(){
+  const el = document.getElementById('bmEquipSummary'); if (!el) return;
+  const sel = window._bmSelUnits;
+  if (!sel){ el.textContent = 'All equipment'; return; }
+  if (!sel.size){ el.textContent = 'None selected'; return; }
+  const fleets = new Set((typeof DATA!=='undefined'?DATA:[]).filter(r=>sel.has(String(r.unit))).map(r=>r.fleet));
+  el.textContent = sel.size+' unit'+(sel.size!==1?'s':'')+' · '+fleets.size+' fleet'+(fleets.size!==1?'s':'');
+}
+
+// ── Budget modal ──────────────────────────────────────────────────────────
+function openBudgetModal(){
+  const now = new Date();
+  document.getElementById('bmFrom').value = _bmMonthStr(now);
+  document.getElementById('bmPeriodNum').value = budgetConfig.periodNum || 10;
+  document.getElementById('bmPeriodUnit').value = budgetConfig.periodUnit || 'years';
+  document.getElementById('bmFiscal').value = String(budgetConfig.fiscalStartMonth||1);
+  document.getElementById('bmOverdue').checked = budgetConfig.includeOverdueForward!==false;
+  const bs = budgetConfig.bucketSize||'month', ps = budgetConfig.projectionStart||'today';
+  const br = document.querySelector('input[name=bmBucket][value="'+bs+'"]'); if (br) br.checked = true;
+  const pr = document.querySelector('input[name=bmStart][value="'+ps+'"]'); if (pr) pr.checked = true;
+  _bmUpdateEquipSummary();
+  _bmUpdateNextFYNote();
+  _bmUpdateBafSummary();
+  document.getElementById('bmResult').classList.remove('show');
+  document.getElementById('budgetModal').classList.add('show');
+}
+function closeBudgetModal(){ document.getElementById('budgetModal').classList.remove('show'); }
+
+function _bmReadOpts(){
+  const fromM = document.getElementById('bmFrom').value || _bmMonthStr(new Date());
+  const [fy,fmo] = fromM.split('-').map(Number);
+  const num  = Math.max(1, parseInt(document.getElementById('bmPeriodNum').value,10)||1);
+  const unit = document.getElementById('bmPeriodUnit').value;
+  const monthsToAdd = (unit==='years') ? num*12 : num;
+  const end = new Date(fy, (fmo-1)+monthsToAdd, 0);   // last day of the final month
+  const toDate = end.getFullYear()+'-'+String(end.getMonth()+1).padStart(2,'0')+'-'+String(end.getDate()).padStart(2,'0');
+  return {
+    fromDate: fromM + '-01',
+    toDate: toDate,
+    periodNum: num, periodUnit: unit,
+    bucketSize: _bmRadio('bmBucket'),
+    projectionStart: _bmRadio('bmStart'),
+    fiscalStartMonth: parseInt(document.getElementById('bmFiscal').value,10),
+    includeOverdueForward: document.getElementById('bmOverdue').checked,
+    fleets: null,
+    units: window._bmSelUnits || null,
+    baf: (budgetConfig.baf || null)
+  };
+}
+function _bmPersist(o){
+  budgetConfig.bucketSize=o.bucketSize; budgetConfig.projectionStart=o.projectionStart;
+  budgetConfig.fiscalStartMonth=o.fiscalStartMonth; budgetConfig.includeOverdueForward=o.includeOverdueForward;
+  budgetConfig.periodNum=o.periodNum; budgetConfig.periodUnit=o.periodUnit;
+  try { if (typeof _scheduleSave==='function') _scheduleSave(); } catch(e){}
+}
+function _bmFmt(v){ return v>=1e6 ? '$'+(v/1e6).toFixed(2)+'M' : '$'+Math.round(v).toLocaleString(); }
+
+function _bafAllZero(){ const b=budgetConfig.baf; if(!b) return true; const vals=[b.total].concat(Object.values(b.fleet||{}),Object.values(b.model||{}),Object.values(b.unit||{}),Object.values(b.component||{})); return vals.every(v=>v===''||v===undefined||v===null||Number(v)===0); }
+function _bmZeroBafReview(){ const w=document.getElementById('bmZeroBafWarn'); if(w) w.classList.remove('show'); _bmOpenBaf(); }
+function _bmGenerate(){
+  if (typeof _computeBudget!=='function'){ alert('Budget engine unavailable.'); return; }
+  if (_bafAllZero()){ const w=document.getElementById('bmZeroBafWarn'); if(w){ w.classList.add('show'); return; } }
+  _bmGenerateProceed();
+}
+function _bmGenerateProceed(){
+  const w=document.getElementById('bmZeroBafWarn'); if(w) w.classList.remove('show');
+  const opts = _bmReadOpts(); _bmPersist(opts);
+  const res = _computeBudget(opts); const rc = res.reconciliation, rk = res.risk.count;
+  const el = document.getElementById('bmResult');
+  el.innerHTML =
+    '<div class="bm-r-total">'+_bmFmt(rc.grandTotal)+'</div>'+
+    '<div class="bm-r-sub">life-of-fleet total &middot; '+res.bands.length+' report columns &middot; '+opts.fromDate.slice(0,7)+' &rarr; '+opts.toDate.slice(0,7)+'</div>'+
+    '<div class="bm-r-recon">'+
+      '<div><span class="bm-r-k">In periods</span><span class="bm-r-v">'+_bmFmt(rc.bandsTotal)+'</span></div>'+
+      '<div><span class="bm-r-k">Overdue / backlog</span><span class="bm-r-v">'+_bmFmt(rc.overdueTotal)+'</span></div>'+
+      '<div><span class="bm-r-k">Unscheduled</span><span class="bm-r-v">'+_bmFmt(rc.unscheduledTotal)+'</span></div>'+
+    '</div>'+
+    '<div class="bm-r-risk">Risks: '+rk.unscheduled+' unscheduled &middot; '+rk.overdue+' overdue &middot; '+rk.inferredUtil+' inferred-util &middot; '+rk.conditionModelled+' modelled &middot; '+rk.missingBenchmark+' no-benchmark &middot; '+rk.cost+' cost &middot; '+rk.capped+' capped</div>'+
+    '<div class="bm-r-risk" id="bmExportNote">Building Excel workbook&hellip;</div>';
+  el.classList.add('show');
+  window._bmLastResult = res;
+  _bmExportExcel(res, opts);
+}
+function _bmOpenRisk(){
+  const res = window._bmLastResult;
+  if (!res){ alert('Click Generate Budget first to compute risks, then open the Risk Report.'); return; }
+  const rk = res.risk.count;
+  alert('Risk summary (detailed two-level report is the next build stage):\n\n'+
+    'Unscheduled: '+rk.unscheduled+'\nOverdue/backlog: '+rk.overdue+'\nInferred util_rate: '+rk.inferredUtil+
+    '\nCondition-based (modelled): '+rk.conditionModelled+'\nMissing benchmark: '+rk.missingBenchmark+
+    '\nCost missing/unparseable: '+rk.cost+'\nCycle-capped: '+rk.capped);
+}
+
+// ── Excel export — chart-ready tables (SheetJS; no native charts) ──────────
+function _bmBuildWorkbook(res, opts){
+  const XL = window.XLSX; if (!XL) return null;
+  const f2 = v => Math.round((v||0)*100)/100;
+  const blend = (adj,base)=> base ? Math.round((adj/base-1)*1000)/10 : 0;   // blended BAF % from component-level calc
+  const bandLabels = res.bands.map(b=>b.label);
+
+  // 1. Fleet Summary (chart-ready: fleet x band) + blended BAF %
+  const fsRows = [['Fleet', ...bandLabels, 'Overdue/Backlog','Unscheduled','Total','BAF %']];
+  const bandTot = bandLabels.map(()=>0); let tOd=0,tUn=0,tAll=0;
+  Object.keys(res.perFleet).sort().forEach(fk=>{
+    const pf=res.perFleet[fk], fb=_buildBudgetBands(pf.monthly,opts);
+    const cells=fb.map(b=>f2(b.total));
+    const rt=f2(cells.reduce((a,b)=>a+b,0)+pf.overdue+pf.unscheduled);
+    fb.forEach((b,i)=>bandTot[i]+=b.total); tOd+=pf.overdue; tUn+=pf.unscheduled; tAll+=rt;
+    fsRows.push([fk, ...cells, f2(pf.overdue), f2(pf.unscheduled), rt, blend(rt, pf.base)]);
+  });
+  fsRows.push(['TOTAL', ...bandTot.map(f2), f2(tOd), f2(tUn), f2(tAll), blend(tAll, res.reconciliation.baseGrand)]);
+
+  // 2. Unit Summary + blended BAF %
+  const usRows = [['Fleet','Model','Unit', ...bandLabels, 'Overdue/Backlog','Unscheduled','Total','BAF %']];
+  Object.keys(res.perUnit).sort((a,b)=>{const pa=res.perUnit[a],pb=res.perUnit[b];return (pa.fleet+'|'+pa.model+'|'+a).localeCompare(pb.fleet+'|'+pb.model+'|'+b);}).forEach(u=>{
+    const pu=res.perUnit[u], ub=_buildBudgetBands(pu.monthly,opts);
+    const cells=ub.map(b=>f2(b.total));
+    const rt=f2(cells.reduce((a,b)=>a+b,0)+pu.overdue+pu.unscheduled);
+    usRows.push([pu.fleet,pu.model,u, ...cells, f2(pu.overdue), f2(pu.unscheduled), rt, blend(rt, pu.base)]);
+  });
+
+  // 3. Detail (component rows + subtotals per unit/model/fleet) — base cost, effective BAF %, adjusted
+  const D=['Fleet','Model','Unit','Component','Tier','Next Due','Base Cost','BAF %','Adj Cost','In Periods','Overdue','Unscheduled','Total','Flags'];
+  const dRows=[D.slice()];
+  const subRow=(labelIdx,label,total)=>{ const a=new Array(D.length).fill(''); a[labelIdx]=label; a[12]=f2(total); return a; };
+  const sorted=[...res.detailRows].sort((a,b)=>(a.fleet+'|'+a.model+'|'+a.unit+'|'+a.component).localeCompare(b.fleet+'|'+b.model+'|'+b.unit+'|'+b.component));
+  let cF=null,cM=null,cU=null,uS=0,mS=0,fS=0;
+  const flU=()=>{ if(cU!==null) dRows.push(subRow(3,cU+' — unit total',uS)); uS=0; };
+  const flM=()=>{ if(cM!==null) dRows.push(subRow(2,cM+' — model total',mS)); mS=0; };
+  const flF=()=>{ if(cF!==null) dRows.push(subRow(1,cF+' — fleet total',fS)); fS=0; };
+  sorted.forEach(r=>{
+    if(cF!==null && r.fleet!==cF){ flU(); flM(); flF(); }
+    else if(cM!==null && r.model!==cM){ flU(); flM(); }
+    else if(cU!==null && r.unit!==cU){ flU(); }
+    cF=r.fleet;cM=r.model;cU=r.unit;
+    dRows.push([r.fleet,r.model,r.unit,r.component,r.tier,r.nextDue,f2(r.baseCost),r.bafPct,f2(r.adjCost),f2(r.inPeriods),f2(r.overdue),f2(r.unscheduled),f2(r.total),r.flags]);
+    uS+=r.total;mS+=r.total;fS+=r.total;
+  });
+  flU();flM();flF();
+
+  // 4. Overdue backlog
+  const odRows=[['Fleet','Model','Unit','Component','Cost','Original Date','Effective Date']];
+  res.overdue.rows.forEach(o=>{const r=o.r; odRows.push([r.fleet,r.model,String(r.unit),r.component,f2(o.cost),r.original_date||'',r.changeout_date||'']);});
+
+  // 5. Risk Summary
+  const rl={unscheduled:'Unscheduled (undated)',overdue:'Overdue / backlog',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
+  const rsRows=[['Risk class','Count','$ exposure']];
+  Object.keys(rl).forEach(k=>rsRows.push([rl[k],res.risk.count[k],f2(res.risk.cost[k])]));
+
+  // 6. Risk Detail (fix-at-source)
+  const rdRows=[['Unit','Component','Fleet','Model','Issues','Field to fix','Current value']];
+  res.risk.rows.forEach(x=>rdRows.push([String(x.unit),x.component,x.fleet,x.model,x.issues,x.field,x.value]));
+
+  // 0. Summary / reconciliation
+  const rc=res.reconciliation;
+  const cov=[['Cadence — Life-of-Fleet Budget'],[],
+    ['Range', opts.fromDate+' to '+opts.toDate],['Short-term bucket', opts.bucketSize],
+    ['Projection start', opts.projectionStart],['Fiscal year start (month)', opts.fiscalStartMonth],
+    ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],['Basis',"Today's money (no inflation)"],[],
+    ['In periods', f2(rc.bandsTotal)],['Overdue / backlog', f2(rc.overdueTotal)],['Unscheduled', f2(rc.unscheduledTotal)],[],
+    ['Base (before BAF)', f2(rc.baseGrand)],['Blended BAF %', blend(rc.grandTotal, rc.baseGrand)],['GRAND TOTAL (with BAF)', f2(rc.grandTotal)]];
+
+  const wb=XL.utils.book_new();
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(cov),    'Summary');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(fsRows), 'Fleet Summary');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(usRows), 'Unit Summary');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(dRows),  'Detail');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(odRows), 'Overdue');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rsRows), 'Risk Summary');
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rdRows), 'Risk Detail');
+  return wb;
+}
+function _bmExportExcel(res, opts){
+  const note=document.getElementById('bmExportNote');
+  const wb=_bmBuildWorkbook(res,opts);
+  if(!wb){ if(note) note.textContent='Excel library not available.'; return; }
+  const fname='Cadence Budget '+(new Date().toISOString().split('T')[0])+'.xlsx';
+  try { window.XLSX.writeFile(wb, fname); if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' (7 sheets).'; }
+  catch(e){ if(note) note.textContent='Export failed: '+e.message; console.error(e); }
+}
+
+// ── Budget Adjustment Factor (BAF) — hierarchical % uplift, inherit/override ──
+function _bafObj(){ if(!budgetConfig.baf) budgetConfig.baf={total:'',fleet:{},model:{},unit:{},component:{}}; return budgetConfig.baf; }
+function _bafNum(x){ if(x===undefined||x===null||x==='') return undefined; const n=Number(x); return isFinite(n)?n:undefined; }
+function _bafFirst(){ for(let i=0;i<arguments.length;i++) if(arguments[i]!==undefined) return arguments[i]; }
+function _bafKey(level,d){ if(level==='fleet') return d.fleet; if(level==='model') return d.fleet+'||'+d.model; if(level==='unit') return d.unit; if(level==='component') return d.unit+'||'+d.comp; return null; }
+function _bafMap(level){ const b=_bafObj(); return {fleet:b.fleet,model:b.model,unit:b.unit,component:b.component}[level]; }
+function _bafOwn(level,d){ const b=_bafObj(); if(level==='total') return _bafNum(b.total); return _bafNum(_bafMap(level)[_bafKey(level,d)]); }
+function _bafInherited(level,d){ const b=_bafObj(); const t=_bafNum(b.total), fv=_bafNum(b.fleet[d.fleet]), mv=_bafNum(b.model[d.fleet+'||'+d.model]), uv=_bafNum(b.unit[d.unit]);
+  if(level==='component') return _bafFirst(uv,mv,fv,t,0);
+  if(level==='unit') return _bafFirst(mv,fv,t,0);
+  if(level==='model') return _bafFirst(fv,t,0);
+  if(level==='fleet') return _bafFirst(t,0);
+  return 0; }
+function _bafTreeData(){ const sel=window._bmSelUnits; const t={};
+  (typeof DATA!=='undefined'?DATA:[]).forEach(r=>{ const u=String(r.unit||'(no unit)'); if(sel && !sel.has(u)) return;
+    const f=r.fleet||'(no fleet)', m=r.model||'(no model)', c=r.component||'';
+    ((t[f]=t[f]||{})[m]=t[f][m]||{}); (t[f][m][u]=t[f][m][u]||new Set()); t[f][m][u].add(c); });
+  return t; }
+function _bafInp(level,d){ return '<input type="text" class="baf-inp" data-level="'+level+'" data-fleet="'+_beEsc(d.fleet||'')+'" data-model="'+_beEsc(d.model||'')+'" data-unit="'+_beEsc(d.unit||'')+'" data-comp="'+_beEsc(d.comp||'')+'"><span class="baf-pct">%</span>'; }
+function _bafRender(){ const t=_bafTreeData(); let html='';
+  if(!Object.keys(t).length) return '<div style="color:#6e7681;font-size:11px;padding:8px">No equipment selected.</div>';
+  Object.keys(t).sort().forEach(f=>{
+    html+='<div class="baf-node"><div class="baf-row"><span class="baf-caret">&#9654;</span><span class="baf-lbl baf-lbl-fleet">'+_beEsc(f)+'</span>'+_bafInp('fleet',{fleet:f})+'</div><div class="baf-children" style="display:none">';
+    Object.keys(t[f]).sort().forEach(m=>{
+      html+='<div class="baf-node"><div class="baf-row"><span class="baf-caret">&#9654;</span><span class="baf-lbl baf-lbl-model">'+_beEsc(m)+'</span>'+_bafInp('model',{fleet:f,model:m})+'</div><div class="baf-children" style="display:none">';
+      Object.keys(t[f][m]).sort().forEach(u=>{
+        html+='<div class="baf-node"><div class="baf-row"><span class="baf-caret">&#9654;</span><span class="baf-lbl">'+_beEsc(u)+'</span>'+_bafInp('unit',{fleet:f,model:m,unit:u})+'</div><div class="baf-children" style="display:none">';
+        [...t[f][m][u]].sort().forEach(c=>{ html+='<div class="baf-node"><div class="baf-row"><span class="baf-caret baf-caret-none"></span><span class="baf-lbl baf-lbl-comp">'+_beEsc(c)+'</span>'+_bafInp('component',{fleet:f,model:m,unit:u,comp:c})+'</div></div>'; });
+        html+='</div></div>';
+      });
+      html+='</div></div>';
+    });
+    html+='</div></div>';
+  });
+  return html; }
+function _bafRefreshTree(){
+  const tb=document.getElementById('bafTotalInp');
+  if(tb){ const own=_bafOwn('total',{}); if(own!==undefined){ if(document.activeElement!==tb) tb.value=own; tb.classList.add('baf-explicit'); } else { if(document.activeElement!==tb) tb.value=''; tb.classList.remove('baf-explicit'); } tb.placeholder='0'; }
+  document.querySelectorAll('#bmBafTree .baf-inp').forEach(inp=>{
+    const level=inp.dataset.level, d={fleet:inp.dataset.fleet,model:inp.dataset.model,unit:inp.dataset.unit,comp:inp.dataset.comp};
+    const own=_bafOwn(level,d);
+    if(own!==undefined){ if(document.activeElement!==inp) inp.value=own; inp.classList.add('baf-explicit'); inp.placeholder=''; }
+    else { if(document.activeElement!==inp) inp.value=''; inp.classList.remove('baf-explicit'); inp.placeholder=String(_bafInherited(level,d)); }
+  });
+}
+function _bafOnChange(inp){
+  const level=inp.dataset.level, d={fleet:inp.dataset.fleet,model:inp.dataset.model,unit:inp.dataset.unit,comp:inp.dataset.comp};
+  const raw=(inp.value||'').trim(); const b=_bafObj();
+  const apply=(v)=>{ if(level==='total'){ b.total=v; return; } const m=_bafMap(level), k=_bafKey(level,d); if(v===''||v===undefined) delete m[k]; else m[k]=v; };
+  if(raw===''){ apply(''); } else { const n=Number(raw); apply(isFinite(n)?n:''); }
+  _bafRefreshTree(); _bmUpdateBafSummary();
+  try{ if(typeof _scheduleSave==='function') _scheduleSave(); }catch(e){}
+}
+function _bafToggle(caret){ const node=caret.closest('.baf-node'); const kids=node.querySelector(':scope > .baf-children'); if(!kids) return; const open=kids.style.display!=='none'; kids.style.display=open?'none':''; caret.innerHTML=open?'&#9654;':'&#9660;'; }
+function _bafExpandAll(open){ document.querySelectorAll('#bmBafTree .baf-children').forEach(c=>c.style.display=open?'':'none'); document.querySelectorAll('#bmBafTree .baf-caret:not(.baf-caret-none)').forEach(c=>c.innerHTML=open?'&#9660;':'&#9654;'); }
+function _bafResetAll(){ budgetConfig.baf={total:'',fleet:{},model:{},unit:{},component:{}}; _bafRefreshTree(); _bmUpdateBafSummary(); try{ if(typeof _scheduleSave==='function') _scheduleSave(); }catch(e){} }
+function _bmOpenBaf(){ _bafObj(); document.getElementById('bmBafTree').innerHTML=_bafRender(); _bafRefreshTree(); document.getElementById('bmBafModal').classList.add('show'); }
+function _bmCloseBaf(){ document.getElementById('bmBafModal').classList.remove('show'); }
+function _bmUpdateBafSummary(){ const el=document.getElementById('bmBafSummary'); if(!el) return; const b=_bafObj(); const total=_bafNum(b.total)||0; const n=Object.keys(b.fleet).length+Object.keys(b.model).length+Object.keys(b.unit).length+Object.keys(b.component).length; el.textContent='Total +'+total+'%'+(n?(' · '+n+' override'+(n!==1?'s':'')):''); }
+// Enumerate template rows from the selected equipment (current explicit values; blank = inheriting).
+function _bafTreeRows(){
+  const t=_bafTreeData(); const b=_bafObj(); const rows=[];
+  const own=(lvl,d)=>{ const v=_bafOwn(lvl,d); return (v===undefined)?'':v; };
+  rows.push(['(TOTAL - all selected)','','','', (_bafNum(b.total)===undefined?'':_bafNum(b.total))]);
+  Object.keys(t).sort().forEach(f=>{
+    rows.push([f,'','','', own('fleet',{fleet:f})]);
+    Object.keys(t[f]).sort().forEach(m=>{
+      rows.push([f,m,'','', own('model',{fleet:f,model:m})]);
+      Object.keys(t[f][m]).sort().forEach(u=>{
+        rows.push([f,m,u,'', own('unit',{fleet:f,model:m,unit:u})]);
+        [...t[f][m][u]].sort().forEach(c=>{ rows.push([f,m,u,c, own('component',{fleet:f,model:m,unit:u,comp:c})]); });
+      });
+    });
+  });
+  return rows;
+}
+function _bafDownload(){
+  const XL=window.XLSX; if(!XL){ alert('Excel library not available.'); return; }
+  const instr=[
+    ['Budget Adjustment Factor (BAF) - parts / labour uplift %'],[],
+    ['HOW IT WORKS - the cascade rule'],
+    ['You do NOT have to complete every level. Values cascade DOWN the hierarchy:'],
+    ['      Total  ->  Fleet  ->  Model  ->  Unit  ->  Component'],
+    ['Leave a cell BLANK to inherit from its parent. Enter a % only where it should DIFFER from the parent.'],[],
+    ['Example:'],
+    ['   - Set a Fleet to 30 and leave its models / units / components blank  ->  they all inherit 30%.'],
+    ['   - Then set one Component to 0  ->  only that component changes; everything else stays 30%.'],
+    ['   - A value entered at a child is NOT overridden when you later change the parent.'],[],
+    ['ON RE-IMPORT:'],
+    ['   - If EVERY % cell is filled, all are imported as explicit (direct) entries.'],
+    ['   - If ANY % cells are blank, you will be asked whether blanks mean "inherit (cascade)" or "0%".'],[],
+    ['Fill in the "BAF" sheet. Only the "BAF %" column is read; Fleet/Model/Unit/Component identify each row.']
+  ];
+  const data=[['Fleet','Model','Unit','Component','BAF %']].concat(_bafTreeRows());
+  const wb=XL.utils.book_new();
+  XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(instr), 'Instructions');
+  const ws=XL.utils.aoa_to_sheet(data); ws['!cols']=[{wch:18},{wch:14},{wch:16},{wch:20},{wch:8}];
+  XL.utils.book_append_sheet(wb, ws, 'BAF');
+  try{ XL.writeFile(wb, 'Cadence BAF template.xlsx'); }catch(e){ alert('Download failed: '+e.message); }
+}
+// Structural signature of the CURRENT template — upload must match this EXACTLY.
+function _bafExpectedKeys(){
+  const t=_bafTreeData(); const keys=new Set(['TOTAL']);
+  Object.keys(t).forEach(f=>{ keys.add('F|'+f);
+    Object.keys(t[f]).forEach(m=>{ keys.add('M|'+f+'||'+m);
+      Object.keys(t[f][m]).forEach(u=>{ keys.add('U|'+u);
+        [...t[f][m][u]].forEach(c=>keys.add('C|'+u+'||'+c)); }); }); });
+  return keys;
+}
+function _bafRowKey(r){ return (r.level==='total')?'TOTAL':(r.level.charAt(0).toUpperCase()+'|'+r.key); }
+function _bafParseWorkbook(wb){
+  const XL=window.XLSX;
+  const hasBaf=(wb.SheetNames.indexOf('BAF')>=0);
+  const name=hasBaf?'BAF':(wb.SheetNames.filter(n=>n!=='Instructions')[0]||wb.SheetNames[0]);
+  const aoa=XL.utils.sheet_to_json(wb.Sheets[name],{header:1});
+  const header=(aoa[0]||[]).map(x=>x==null?'':String(x).trim());
+  const rows=[]; let anyBlank=false;
+  for(let i=1;i<aoa.length;i++){ const r=aoa[i]||[];
+    const fleet=(r[0]==null?'':String(r[0])).trim(), model=(r[1]==null?'':String(r[1])).trim(), unit=(r[2]==null?'':String(r[2])).trim(), comp=(r[3]==null?'':String(r[3])).trim();
+    const pctRaw=r[4]; const blank=(pctRaw===undefined||pctRaw===null||String(pctRaw).trim()==='');
+    if(!fleet && !model && !unit && !comp && blank) continue;
+    let level,key;
+    if(fleet.toUpperCase().indexOf('TOTAL')>=0 && !model && !unit && !comp){ level='total'; key=null; }
+    else if(comp){ level='component'; key=unit+'||'+comp; }
+    else if(unit){ level='unit'; key=unit; }
+    else if(model){ level='model'; key=fleet+'||'+model; }
+    else if(fleet){ level='fleet'; key=fleet; }
+    else continue;
+    if(blank) anyBlank=true;
+    rows.push({level,key,val:blank?undefined:Number(pctRaw),blank});
+  }
+  return {rows,anyBlank,header,hasBaf};
+}
+function _bafApplyImport(parsed, emptyMode){
+  const baf={total:'',fleet:{},model:{},unit:{},component:{}};
+  parsed.rows.forEach(r=>{ let v;
+    if(r.blank){ if(emptyMode==='zero') v=0; else return; }
+    else { if(!isFinite(r.val)) return; v=r.val; }
+    if(r.level==='total') baf.total=v; else baf[r.level][r.key]=v;
+  });
+  budgetConfig.baf=baf;
+  document.getElementById('bmBafTree').innerHTML=_bafRender(); _bafRefreshTree(); _bmUpdateBafSummary();
+  try{ if(typeof _scheduleSave==='function') _scheduleSave(); }catch(e){}
+}
+function _bafImportChoose(mode){ const p=document.getElementById('bafImportPrompt'); if(p) p.classList.remove('show'); if(window._bafPending){ _bafApplyImport(window._bafPending, mode); window._bafPending=null; } }
+function _bafUpload(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f) return; ev.target.value='';
+  const XL=window.XLSX; if(!XL){ alert('Excel library not available.'); return; }
+  const rd=new FileReader();
+  rd.onload=function(){ try{
+    const wb=XL.read(new Uint8Array(rd.result),{type:'array'});
+    const parsed=_bafParseWorkbook(wb);
+    // STRICT — must be an unaltered Cadence template matching the current selection exactly. No mapping, no guessing.
+    const HDR=['Fleet','Model','Unit','Component','BAF %'];
+    if(!parsed.hasBaf || parsed.header.length!==HDR.length || HDR.some((h,i)=>parsed.header[i]!==h)){
+      alert('Upload rejected.\n\nThis is not a valid Cadence BAF template (the "BAF" sheet is missing or its header row was changed).\n\nDownload a fresh template and fill in the BAF % column only.'); return;
+    }
+    const expected=_bafExpectedKeys();
+    const got=new Set(parsed.rows.map(_bafRowKey));
+    const missing=[...expected].filter(k=>!got.has(k));
+    const extra=[...got].filter(k=>!expected.has(k));
+    if(missing.length || extra.length || got.size!==expected.size || parsed.rows.length!==expected.size){
+      alert('Upload rejected.\n\nThe file does not exactly match the current equipment selection — rows may have been added, removed, renamed, reordered into duplicates, or the selection changed since download.\n'+
+        (missing.length?('   Missing rows: '+missing.length+'\n'):'')+
+        (extra.length?('   Unexpected / renamed rows: '+extra.length+'\n'):'')+
+        '\nNo additions, deletions, or renames are allowed. Download a fresh template, fill in the BAF % column only, and re-upload.'); return;
+    }
+    if(!parsed.anyBlank){ _bafApplyImport(parsed,'zero'); return; }
+    window._bafPending=parsed;
+    const p=document.getElementById('bafImportPrompt'); if(p) p.classList.add('show'); else _bafApplyImport(parsed,'inherit');
+  }catch(e){ alert('Could not read Excel file: '+e.message); } };
+  rd.readAsArrayBuffer(f);
+}
+</script>
+</body>
+</html>
