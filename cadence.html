@@ -9692,6 +9692,11 @@ function _bmBuildPivotHtml(res, opts){
 <style>
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2129;--line:#21262d;--line2:#30363d;--txt:#c9d1d9;--txt2:#8b949e;--head:#e6edf3;--amber:#e3a72c;--amber2:#bb8009;--red:#f85149;--green:#2ea043}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:13px}
+*{scrollbar-width:thin;scrollbar-color:#30363d transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#484f58}
+::-webkit-scrollbar-track{background:transparent}
 header{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:linear-gradient(90deg,#12161d,#0d1117)}
 header h1{margin:0;font-size:16px;color:var(--head);font-weight:700;letter-spacing:.3px}
 header .meta{color:var(--txt2);font-size:11px}
@@ -9715,11 +9720,17 @@ header .meta{color:var(--txt2);font-size:11px}
 .btn:hover{border-color:var(--amber)}
 select{background:var(--bg);border:1px solid var(--line2);color:var(--txt);padding:6px 9px;border-radius:6px;font-size:12px;font-family:inherit;cursor:pointer}
 .btn.g{background:var(--green);border-color:#3fb950;color:#fff;margin-left:auto}
-.charts{display:grid;grid-template-columns:320px 1fr;gap:16px;margin-bottom:16px}
-@media(max-width:900px){.charts{grid-template-columns:1fr}}
-.charts .card{height:410px;overflow:hidden;display:flex;flex-direction:column}
+.charts{display:flex;gap:0;align-items:stretch;height:410px;margin-bottom:0}
+.charts .card{overflow:hidden;display:flex;flex-direction:column;min-width:170px}
+#pieCard{flex:0 0 340px}#barCard{flex:1 1 auto}
+.splitter{flex:0 0 12px;cursor:col-resize;position:relative}
+.splitter::before{content:"";position:absolute;left:5px;top:50%;transform:translateY(-50%);width:2px;height:46px;background:var(--line2);border-radius:2px}
+.splitter:hover::before{background:var(--amber)}
+.vhandle{height:14px;cursor:row-resize;position:relative;margin:2px 0 14px}
+.vhandle::before{content:"";position:absolute;top:5px;left:50%;transform:translateX(-50%);width:46px;height:2px;background:var(--line2);border-radius:2px}
+.vhandle:hover::before{background:var(--amber)}
 .charts .card>h2{flex:0 0 auto}
-.charts .card>*:last-child{flex:1 1 auto;min-height:0;overflow:auto}
+.charts .card>*:last-child{flex:1 1 auto;min-height:0;overflow:hidden}
 .scroll{overflow:auto;max-height:calc(100vh - 190px);border:1px solid var(--line);border-radius:8px}
 table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
 th,td{padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -9774,10 +9785,12 @@ tr.drill{cursor:pointer}tr.drill:hover td{background:#1c2129;color:var(--amber)}
     <span class="lbl">Stack by</span><div class="seg" id="segStack"><button data-v="fleet" class="on">Fleet</button><button data-v="model">Model</button></div>
     <span class="lbl">Time</span><div class="seg" id="segGran"><button data-v="month" class="on">Month</button><button data-v="quarter">Quarter</button><button data-v="year">Year</button></div>
   </div>
-  <div class="charts">
-    <div class="card"><h2>Cost share (click to drill)</h2><div class="crumb" id="pieCrumb"></div><div id="pieWrap"></div></div>
-    <div class="card"><h2 id="barTitle">Cost over time</h2><div style="overflow-x:auto"><div id="barWrap"></div></div></div>
+  <div class="charts" id="chartsRow">
+    <div class="card" id="pieCard"><h2>Cost share (click to drill)</h2><div class="crumb" id="pieCrumb"></div><div id="pieWrap"></div></div>
+    <div class="splitter" id="chartSplit" title="Drag to resize left/right"></div>
+    <div class="card" id="barCard"><h2 id="barTitle">Cost over time</h2><div><div id="barWrap"></div></div></div>
   </div>
+  <div class="vhandle" id="chartVHandle" title="Drag to resize height"></div>
   <div id="barDetail"></div>
 </div>
 <div id="panel-data" style="display:none">
@@ -9827,6 +9840,9 @@ function buildTree(){var root={key:'ALL',label:'TOTAL',level:-1,children:{},orde
   return root;}
 function sortedKids(n){return n.order.map(function(k){return n.children[k];}).sort(function(a,b){return a.label.localeCompare(b.label);});}
 function childByLabel(n,l){for(var i=0;i<n.order.length;i++){var c=n.children[n.order[i]];if(c.label===l)return c;}return null;}
+var COLOR={},_cidx=0;
+function assignColors(){(function w(n){sortedKids(n).forEach(function(k){if(COLOR[k.label]===undefined)COLOR[k.label]=PAL[_cidx++%PAL.length];w(k);});})(TREE);}
+function colorOf(l){return COLOR[l]||'#8b949e';}
 // ----- heat -----
 function heatRange(rowsN,cols){var mn=Infinity,mx=-Infinity;rowsN.forEach(function(n){cols.forEach(function(c){var v=colSum(n,c);if(v>0){if(v<mn)mn=v;if(v>mx)mx=v;}});});return {mn:mn,mx:mx};}
 function heatColor(v,rg){if(!(v>0)||rg.mx<=0)return '';var t=rg.mx>rg.mn?(v-rg.mn)/(rg.mx-rg.mn):1;t=Math.max(0,Math.min(1,t));var stops=[[33,80,120],[227,167,44],[248,81,73]];var seg=t<=0.5?0:1,tt=t<=0.5?t/0.5:(t-0.5)/0.5;var a=stops[seg],b=stops[seg+1];var r=Math.round(a[0]+(b[0]-a[0])*tt),g=Math.round(a[1]+(b[1]-a[1])*tt),bl=Math.round(a[2]+(b[2]-a[2])*tt);return 'background:rgba('+r+','+g+','+bl+',.82);color:#0b0e14;font-weight:700';}
@@ -9920,17 +9936,19 @@ function drawPie(dir){var parent=pieNode();var kids=sortedKids(parent).map(funct
   var crumb='<a data-i="-1">All</a>';S.pie.forEach(function(l,i){crumb+=' \\u203a <a data-i="'+i+'">'+esc(l)+'</a>';});el('pieCrumb').innerHTML=crumb;
   var tot=kids.reduce(function(s,d){return s+d.val;},0);
   if(!tot){el('pieWrap').innerHTML='<div class="empty">Nothing to show.</div>';return;}
-  var cx=110,cy=110,r=100,a=-Math.PI/2,svg='<svg width="230" height="230" viewBox="0 0 230 230" id="pieSvg" class="'+(dir||'')+'">';
+  var _ph=el('pieWrap'),_pw=(_ph&&_ph.clientWidth)||300,_phh=(_ph&&_ph.clientHeight)||300,_ps=Math.max(140,Math.min(_pw-6,_phh-88));
+  var cx=110,cy=110,r=100,a=-Math.PI/2,svg='<svg width="'+_ps+'" height="'+_ps+'" viewBox="0 0 230 230" id="pieSvg" class="'+(dir||'')+'" style="display:block;margin:2px auto">';
   var leg='<div class="legend">';
-  kids.forEach(function(d,i){var frac=d.val/tot,a2=a+frac*2*Math.PI,col=PAL[i%PAL.length];var sh;
+  kids.forEach(function(d,i){var frac=d.val/tot,a2=a+frac*2*Math.PI,col=colorOf(d.label);var sh;
     if(frac>=0.9999){sh='<circle class="pieslice" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+col+'" stroke="#0d1117" stroke-width="1.5" data-label="'+esc(d.label)+'" data-leaf="'+(d.leaf?1:0)+'"><title>'+esc(d.label)+': '+fmt(d.val)+' (100%)</title></circle>';}
     else{var x0=cx+r*Math.cos(a),y0=cy+r*Math.sin(a),x1=cx+r*Math.cos(a2),y1=cy+r*Math.sin(a2),lg=(a2-a)>Math.PI?1:0;var pth='M'+cx+' '+cy+' L'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+r+' '+r+' 0 '+lg+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' Z';sh='<path class="pieslice" d="'+pth+'" fill="'+col+'" stroke="#0d1117" stroke-width="1.5" data-label="'+esc(d.label)+'" data-leaf="'+(d.leaf?1:0)+'"><title>'+esc(d.label)+': '+fmt(d.val)+' ('+Math.round(frac*100)+'%)</title></path>';}
-    svg+=sh;leg+='<span><i style="background:'+col+'"></i>'+esc(d.label)+' \\u00b7 '+fmt(d.val)+' ('+Math.round(frac*100)+'%)</span>';a=a2;});
+    svg+=sh;if(frac>=0.05){var _mid=(a+a2)/2;svg+='<text x="'+(cx+72*Math.cos(_mid)).toFixed(1)+'" y="'+(cy+72*Math.sin(_mid)+3).toFixed(1)+'" fill="#0b0e14" font-size="9" font-weight="700" text-anchor="middle" style="pointer-events:none">'+Math.round(frac*100)+'%</text>';}
+    leg+='<span><i style="background:'+col+'"></i>'+esc(d.label)+' \\u00b7 '+fmt(d.val)+' ('+Math.round(frac*100)+'%)</span>';a=a2;});
   if(S.pie.length){var pnode=TREE;for(var pi=0;pi<S.pie.length-1;pi++){pnode=childByLabel(pnode,S.pie[pi]);}
     var pk=sortedKids(pnode).map(function(k){return {label:k.label,val:nodeTotal(k)};}).filter(function(d){return d.val>0;}).sort(function(x,y){return y.val-x.val;});
     var pt=pk.reduce(function(s,d){return s+d.val;},0)||1,ga=-Math.PI/2,gr=40;
     svg+='<g class="pieback" data-back="1"><circle cx="'+cx+'" cy="'+cy+'" r="52" fill="#0d1117"/>';
-    pk.forEach(function(d,i){var fr=d.val/pt,a2=ga+fr*2*Math.PI,col=PAL[i%PAL.length];if(fr>=0.9999){svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+gr+'" fill="'+col+'" opacity="0.26"/>';}else{var x0=cx+gr*Math.cos(ga),y0=cy+gr*Math.sin(ga),x1=cx+gr*Math.cos(a2),y1=cy+gr*Math.sin(a2),lg=(a2-ga)>Math.PI?1:0;svg+='<path d="M'+cx+' '+cy+' L'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+gr+' '+gr+' 0 '+lg+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' Z" fill="'+col+'" opacity="0.26"/>';}ga=a2;});
+    pk.forEach(function(d,i){var fr=d.val/pt,a2=ga+fr*2*Math.PI,col=colorOf(d.label);if(fr>=0.9999){svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+gr+'" fill="'+col+'" opacity="0.26"/>';}else{var x0=cx+gr*Math.cos(ga),y0=cy+gr*Math.sin(ga),x1=cx+gr*Math.cos(a2),y1=cy+gr*Math.sin(a2),lg=(a2-ga)>Math.PI?1:0;svg+='<path d="M'+cx+' '+cy+' L'+x0.toFixed(1)+' '+y0.toFixed(1)+' A'+gr+' '+gr+' 0 '+lg+' 1 '+x1.toFixed(1)+' '+y1.toFixed(1)+' Z" fill="'+col+'" opacity="0.26"/>';}ga=a2;});
     svg+='<circle cx="'+cx+'" cy="'+cy+'" r="21" fill="#0d1117"/>';
     svg+='<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" fill="#6b7280" font-size="8">\\u2039 back</text>';
     svg+='<text x="'+cx+'" y="'+(cy+10)+'" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="700">'+fmt(tot)+'</text>';
@@ -9963,16 +9981,24 @@ function drawBar(){var bb=barBuckets(),buckets=bb.buckets,series=bb.series,n=buc
   if(maxT<=0||!n){el('barWrap').innerHTML='<div class="empty">Nothing to show.</div>';return;}
   var WU={month:1,quarter:2,year:3},uw=16,gap=5,padL=46,padT=10;
   var showMonth=(S.barGran==='month'),showQtr=(S.barGran!=='year');
-  var padB=showMonth?58:(showQtr?42:26),h=214+padB,plotH=h-padB-padT;
+  var padB=showMonth?58:(showQtr?42:26);
+  var _bh=el('barWrap')?el('barWrap').parentNode:null,availW=(_bh&&_bh.clientWidth)||620,availH=(_bh&&_bh.clientHeight)||300;
+  var h=Math.max(170,availH-52),plotH=h-padB-padT;
+  var totalU=0;buckets.forEach(function(bu){totalU+=WU[bu.type];});
+  var n=buckets.length,avail=availW-6-padL-14,per=avail/(n||1);
+  gap=per<6?1:(per<12?2:5);
+  uw=Math.max(0.5,(avail-n*gap)/(totalU||1));
   var xs=[],x=padL;buckets.forEach(function(bu,i){var w=WU[bu.type]*uw;var from=P.bands[bu.idx[0]].from,mo=+from.slice(5,7),off=((mo-P.fsm)%12+12)%12;bu._fy=fyOf(from);bu._fq=Math.floor(off/3)+1;xs.push({x:x,w:w});x+=w+gap;});
-  var cw=x+14,yBase=padT+plotH;
-  var svg='<svg width="'+cw+'" height="'+h+'" viewBox="0 0 '+cw+' '+h+'" style="max-width:100%;height:auto;display:block">';
+  var cw=availW-6,yBase=padT+plotH;
+  var svg='<svg width="'+cw+'" height="'+h+'" viewBox="0 0 '+cw+' '+h+'" style="display:block">';
   for(var gl=0;gl<=4;gl++){var yy=padT+plotH*gl/4;svg+='<line x1="'+padL+'" y1="'+yy.toFixed(1)+'" x2="'+cw+'" y2="'+yy.toFixed(1)+'" stroke="#21262d"/><text x="4" y="'+(yy+3).toFixed(1)+'" fill="#8b949e" font-size="8">'+fmt(maxT*(1-gl/4))+'</text>';}
-  buckets.forEach(function(bu,ci){var X=xs[ci].x,W=xs[ci].w;svg+='<rect class="bkthit" x="'+(X-gap/2).toFixed(1)+'" y="'+padT+'" width="'+(W+gap).toFixed(1)+'" height="'+(h-padT)+'" fill="transparent" data-bkt="'+ci+'"/>';});
+  buckets.forEach(function(bu,ci){var X=xs[ci].x,W=xs[ci].w;svg+='<rect class="bkthit" x="'+(X-gap/2).toFixed(1)+'" y="'+yBase+'" width="'+(W+gap).toFixed(1)+'" height="'+(h-yBase)+'" fill="transparent" data-bkt="'+ci+'"/>';});
   var focus=(S.stackBy==='fleet')?(S.pie[0]||null):(S.pie.length>=2?S.pie[1]:null);
   buckets.forEach(function(bu,ci){var X=xs[ci].x,W=xs[ci].w,y=yBase,dim=(S.barSel&&S.barSel.bucket!==ci)?0.4:1;
-    series.forEach(function(se,si){var v=se.vals[ci];if(v<=0)return;var hh=v/maxT*plotH;y-=hh;var so=(S.barSel&&S.barSel.bucket===ci&&S.barSel.series&&S.barSel.series!==se.label)?0.4:dim;var col=PAL[si%PAL.length];var outl=(focus&&se.label!==focus);
-      svg+='<rect class="barseg" x="'+X+'" y="'+y.toFixed(1)+'" width="'+W+'" height="'+hh.toFixed(1)+'" '+(outl?'fill="none" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 2"':'fill="'+col+'"')+' opacity="'+so+'" data-bkt="'+ci+'" data-series="'+attr(se.label)+'"><title>'+esc(se.label)+' \\u2014 '+esc(bu.label)+': '+fmt(v)+'</title></rect>';});});
+    series.forEach(function(se,si){var v=se.vals[ci];if(v<=0)return;var hh=v/maxT*plotH;y-=hh;var so=(S.barSel&&S.barSel.bucket===ci&&S.barSel.series&&S.barSel.series!==se.label)?0.4:dim;var col=colorOf(se.label);var outl=(focus&&se.label!==focus);
+      svg+='<rect class="barseg" x="'+X+'" y="'+y.toFixed(1)+'" width="'+W+'" height="'+hh.toFixed(1)+'" '+(outl?'fill="none" stroke="'+col+'" stroke-width="1" stroke-dasharray="2 2"':'fill="'+col+'"')+' opacity="'+so+'" data-bkt="'+ci+'" data-series="'+attr(se.label)+'"><title>'+esc(se.label)+' \\u2014 '+esc(bu.label)+': '+fmt(v)+'</title></rect>';});
+    var bt=0;series.forEach(function(se){bt+=se.vals[ci];});
+    if(bt>0){var lab=(S.measure==='cost')?(bt/1e6).toFixed(1):fmt(bt);svg+='<text x="'+(X+W/2)+'" y="'+(y-3).toFixed(1)+'" fill="#c9d1d9" font-size="8.5" text-anchor="middle" style="pointer-events:none">'+lab+'</text>';}});
   if(showMonth){buckets.forEach(function(bu,ci){if(bu.type!=='month')return;var X=xs[ci].x+xs[ci].w/2;svg+='<text x="'+X+'" y="'+(yBase+10)+'" fill="#8b949e" font-size="7.5" text-anchor="end" transform="rotate(-45 '+X+' '+(yBase+10)+')">'+esc(bu.label.split(' ')[0])+'</text>';});}
   if(showQtr){var qg=groupBy(buckets,xs,function(bu){return bu.type==='year'?null:('q'+bu._fy+'.'+bu._fq);});
     qg.forEach(function(g,gi){if(gi>0&&showMonth)svg+='<line x1="'+(g.minX-gap/2).toFixed(1)+'" y1="'+padT+'" x2="'+(g.minX-gap/2).toFixed(1)+'" y2="'+yBase+'" stroke="#30363d" stroke-dasharray="2 3"/>';
@@ -9981,8 +10007,8 @@ function drawBar(){var bb=barBuckets(),buckets=bb.buckets,series=bb.series,n=buc
   yg.forEach(function(g,gi){if(gi>0)svg+='<line x1="'+(g.minX-gap/2).toFixed(1)+'" y1="'+padT+'" x2="'+(g.minX-gap/2).toFixed(1)+'" y2="'+(yBase+(showMonth?42:showQtr?26:11)).toFixed(1)+'" stroke="#565e68"/>';
     svg+='<text x="'+((g.minX+g.maxX)/2).toFixed(1)+'" y="'+(yBase+(showMonth?45:showQtr?29:14))+'" fill="#e6edf3" font-size="9.5" font-weight="700" text-anchor="middle">'+esc(fyLabel(g.sample._fy))+'</text>';});
   svg+='</svg>';
-  var leg='<div class="legend">';series.forEach(function(se,si){if(se.vals.some(function(v){return v>0;}))leg+='<span><i style="background:'+PAL[si%PAL.length]+'"></i>'+esc(se.label)+'</span>';});leg+='</div>';
-  el('barWrap').innerHTML=svg+leg+'<div class="note">Click a bar or period for the detail below. Width = period length (month 1 &middot; qtr 2 &middot; year 3).</div>';}
+  var leg='<div class="legend">';series.forEach(function(se,si){if(se.vals.some(function(v){return v>0;}))leg+='<span><i style="background:'+colorOf(se.label)+'"></i>'+esc(se.label)+'</span>';});leg+='</div>';
+  el('barWrap').innerHTML=svg+leg+'<div class="note">Click a bar for its detail below; click empty space to clear. Width = period length (month 1 &middot; qtr 2 &middot; year 3).'+(S.measure==='cost'?' Bar-top totals in $m.':'')+'</div>';}
 function barDetailRows(){if(!S.barSel)return null;var bb=barBuckets(),bu=bb.buckets[S.barSel.bucket];if(!bu)return null;var idx=bu.idx,sel=S.barSel.series,rows=[];
   (function walk(nd){if(nd.leaf){if(sel){if(S.stackBy==='fleet'&&nd.row.f!==sel)return;if(S.stackBy==='model'&&nd.row.m!==sel)return;}var cost=0,cnt=0;idx.forEach(function(i){cost+=nd.cost[i];cnt+=nd.cnt[i];});if(cost>0||cnt>0)rows.push({f:nd.row.f,m:nd.row.m,u:nd.row.u,c:nd.row.c,cost:cost,cnt:cnt});}else sortedKids(nd).forEach(walk);})(TREE);
   rows.sort(function(a,b){return b.cost-a.cost;});return {label:bu.label,series:sel,rows:rows};}
@@ -10006,7 +10032,7 @@ function toXlsx(){if(!window.XLSX){alert('Excel library still loading - try agai
   ws['!autofilter']={ref:ws['!ref']};var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,S.measure==='cost'?'Cost':'Count');
   XLSX.writeFile(wb,'Cadence Budget View '+P.gen+'.xlsx');}
 // ----- wire -----
-(function init(){TREE=buildTree();
+(function init(){TREE=buildTree();assignColors();
   el('tab-parameters').parentNode.addEventListener('click',function(e){var t=e.target.closest('.tab');if(!t)return;S.tab=t.getAttribute('data-tab');render();});
   el('segMeasure').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.measure=b.getAttribute('data-v');S.pie=[];S.barSel=null;render();});
   el('segMeasure2').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;S.measure=b.getAttribute('data-v');S.pie=[];S.barSel=null;render();});
@@ -10016,7 +10042,14 @@ function toXlsx(){if(!window.XLSX){alert('Excel library still loading - try agai
   el('lvlSel').addEventListener('change',function(e){S.level=e.target.value;expandToLevel(+S.level);render();});
   el('colGran').addEventListener('change',function(e){S.tableGran=e.target.value;render();});
   el('btnXlsx').addEventListener('click',toXlsx);
-  el('barWrap').addEventListener('click',function(e){var seg=e.target.closest('.barseg');if(seg){S.barSel={bucket:+seg.getAttribute('data-bkt'),series:seg.getAttribute('data-series')};drawBar();renderBarDetail();return;}var hit=e.target.closest('.bkthit');if(hit){S.barSel={bucket:+hit.getAttribute('data-bkt'),series:null};drawBar();renderBarDetail();}});
+  el('barWrap').addEventListener('click',function(e){
+    var seg=e.target.closest('.barseg');
+    if(seg){var bkt=+seg.getAttribute('data-bkt'),ser=seg.getAttribute('data-series');
+      S.barSel=(S.barSel&&S.barSel.bucket===bkt&&S.barSel.series===ser)?null:{bucket:bkt,series:ser};
+      drawBar();renderBarDetail();return;}
+    var hit=e.target.closest('.bkthit');
+    if(hit){var b=+hit.getAttribute('data-bkt');S.barSel=(S.barSel&&S.barSel.bucket===b&&!S.barSel.series)?null:{bucket:b,series:null};drawBar();renderBarDetail();return;}
+    if(S.barSel){S.barSel=null;drawBar();renderBarDetail();}});
   el('barDetail').addEventListener('click',function(e){if(e.target.closest('#barDetClose')){S.barSel=null;drawBar();renderBarDetail();}});
   el('panel-risk').addEventListener('click',function(e){var tr=e.target.closest('tr.drill');if(!tr)return;openRiskModal(tr.getAttribute('data-panel'),tr.getAttribute('data-fleet'));});
   el('mclose').addEventListener('click',function(){el('rmodal').classList.remove('show');});
@@ -10025,6 +10058,13 @@ function toXlsx(){if(!window.XLSX){alert('Excel library still loading - try agai
   el('tableWrap').addEventListener('click',function(e){var yr=e.target.closest('th.yr');if(yr){var fy=yr.getAttribute('data-fy');S.colYears[fy]=!S.colYears[fy];render();return;}var nm=e.target.closest('td.name[data-row]');if(nm){var k=nm.getAttribute('data-row');S.openRows[k]=!S.openRows[k];render();}});
   el('pieWrap').addEventListener('click',function(e){var bk=e.target.closest('.pieback');if(bk){if(S.pie.length){S.pie.pop();drawPie('out');drawBar();}return;}var sl=e.target.closest('.pieslice');if(!sl)return;if(sl.getAttribute('data-leaf')==='1')return;if(S.pie.length>=3)return;S.pie.push(sl.getAttribute('data-label'));drawPie('in');drawBar();});
   el('pieCrumb').addEventListener('click',function(e){var a=e.target.closest('a');if(!a)return;var i=+a.getAttribute('data-i');S.pie=S.pie.slice(0,i+1);drawPie('out');drawBar();});
+  var _rap=null;function scheduleRedraw(){if(_rap)return;_rap=requestAnimationFrame(function(){_rap=null;if(S.tab==='budget'){drawPie(null);drawBar();}});}
+  (function(){var row=el('chartsRow'),pieC=el('pieCard'),split=el('chartSplit'),vh=el('chartVHandle');var cdrag=false,vdrag=false;
+    split.addEventListener('mousedown',function(e){cdrag=true;e.preventDefault();document.body.style.userSelect='none';});
+    vh.addEventListener('mousedown',function(e){vdrag=true;e.preventDefault();document.body.style.userSelect='none';});
+    document.addEventListener('mousemove',function(e){if(cdrag){var r=row.getBoundingClientRect();var wpx=Math.max(190,Math.min(r.width-230,e.clientX-r.left));pieC.style.flex='0 0 '+wpx+'px';scheduleRedraw();}else if(vdrag){var r=row.getBoundingClientRect();var hpx=Math.max(240,Math.min(1100,e.clientY-r.top));row.style.height=hpx+'px';scheduleRedraw();}});
+    document.addEventListener('mouseup',function(){if(cdrag||vdrag){cdrag=vdrag=false;document.body.style.userSelect='';scheduleRedraw();}});
+    window.addEventListener('resize',scheduleRedraw);})();
   render();})();
 <\/script></body></html>`;
 }
