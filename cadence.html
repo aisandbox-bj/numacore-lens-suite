@@ -189,6 +189,9 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .project-bar:hover{filter:brightness(1.15)}
 .project-bar.drag-active{cursor:grabbing;filter:brightness(1.25);z-index:20}
 .project-bar.drop-target{filter:brightness(1.4) drop-shadow(0 0 6px rgba(255,255,255,.5));outline:2px solid rgba(255,255,255,.7)}
+/* v18.10.6 — a project whose start has slipped into the past; pinned to TODAY and flagged */
+.project-bar.slipped{outline:2px dashed #f0883e;outline-offset:-2px;animation:projSlipPulse 1.9s ease-in-out infinite}
+@keyframes projSlipPulse{0%,100%{box-shadow:0 0 0 1px rgba(240,136,23,.5),0 1px 6px rgba(240,136,23,.35)}50%{box-shadow:0 0 0 1px rgba(240,136,23,.85),0 1px 11px rgba(240,136,23,.7)}}
 .proj-edge-r{position:absolute;right:0;top:0;width:8px;height:100%;cursor:ew-resize;background:rgba(0,0,0,.25);border-radius:0 4px 4px 0;display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,.5)}
 .proj-edge-r::after{content:'⋮'}
 .proj-create-preview{position:absolute;border-radius:4px;opacity:.55;pointer-events:none;z-index:7;border:2px dashed rgba(255,255,255,.7)}
@@ -279,6 +282,11 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .proj-list-table td{padding:9px 12px;border-bottom:1px solid #161b22;color:#c9d1d9;vertical-align:middle}
 .proj-list-row{cursor:pointer;transition:background .1s}
 .proj-list-row:hover{background:#161b22}
+/* v18.10.6 — project with a past start date */
+.proj-list-row.slipped{background:rgba(240,136,23,.06)}
+.proj-list-row.slipped:hover{background:rgba(240,136,23,.12)}
+.proj-list-row.slipped td:first-child{box-shadow:inset 3px 0 0 #f0883e}
+.proj-slip-chip{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.4px;color:#f0883e;background:rgba(240,136,23,.13);border:1px solid rgba(240,136,23,.5);border-radius:3px;padding:0 4px;margin-right:2px;vertical-align:middle;white-space:nowrap}
 .proj-list-row.expanded{background:#161b22}
 .proj-fleet-dot{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:7px;vertical-align:middle;flex-shrink:0}
 .proj-id-cell{font-weight:700;color:#7dd3fc;font-family:monospace}
@@ -2283,6 +2291,37 @@ function xToDateFree(x) {
   d.setHours(0, 0, 0, 0);
   return d.toISOString().split('T')[0];
 }
+// ─── v18.10.6 — PROJECT START-DATE FLOOR (a start can never be in the past) ──────
+// "Today" here MUST match the visible TODAY line (todayX() uses TODAY.toISOString),
+// so a clamped bar edge lands exactly on the line. Purely a display + write-guard
+// mechanism: existing stored dates are never rewritten on load (see Approach A).
+function _projTodayDS() { return TODAY.toISOString().split('T')[0]; }
+// Clamp a start to >= today, sliding end to preserve the given duration.
+// Returns {start,end,clamped}. Leaves dates untouched when start is already >= today.
+function _clampProjStart(startDs, endDs) {
+  const t = _projTodayDS();
+  if (!startDs || startDs >= t) return { start: startDs, end: endDs, clamped: false };
+  let durMs = DAY_MS;
+  if (endDs) { const dm = new Date(endDs+'T00:00:00') - new Date(startDs+'T00:00:00'); if (dm > 0) durMs = dm; }
+  const ne = new Date(new Date(t+'T00:00:00').getTime() + durMs).toISOString().split('T')[0];
+  return { start: t, end: ne, clamped: true };
+}
+// ─── v18.10.6 — DOWNLOAD FILENAME TIMESTAMP in the COMPUTER'S LOCAL time ─────────
+// Was new Date().toISOString() (UTC → read as European). No timeZone option ⇒ the
+// runtime's local zone = the computer's calendar. formatToParts keeps it locale-safe.
+function _localFileStamp(withSeconds) {
+  const opt = { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false };
+  if (withSeconds) opt.second = '2-digit';
+  const p = new Intl.DateTimeFormat('en-CA', opt).formatToParts(new Date());
+  const g = ty => { const x = p.find(o => o.type === ty); return x ? x.value : '00'; };
+  let hh = g('hour'); if (hh === '24') hh = '00';
+  return g('year')+'-'+g('month')+'-'+g('day')+'_'+hh+'-'+g('minute') + (withSeconds ? '-'+g('second') : '');
+}
+function _localDateStamp() {
+  const p = new Intl.DateTimeFormat('en-CA', { year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+  const g = ty => { const x = p.find(o => o.type === ty); return x ? x.value : '01'; };
+  return g('year')+'-'+g('month')+'-'+g('day');
+}
 // v17.1: esc sourced from numacore_lib.js with inline fallback for resilience
 // v18.7 C3 — fallback now escapes single quotes too (5-char parity with the lib;
 // the 4-char divergent twin left single-quoted attr contexts open if the lib failed to load).
@@ -2693,10 +2732,15 @@ function renderTimeline() {
 
       // Project bars
       unitProjs.forEach(proj => {
-        const px  = dateToX(proj.start_date);
+        // v18.10.6 — a project start can never sit before TODAY. If it has slipped
+        // into the past, pin the bar's left edge to the TODAY line (so it "drags
+        // with today") and flag it .slipped. Stored dates are untouched (Approach A).
+        const _pt   = _projTodayDS();
+        const _slip = !!proj.start_date && proj.start_date < _pt;
+        const px  = dateToX(_slip ? _pt : proj.start_date);
         const pw  = Math.max(dateToX(proj.end_date) - px, 14);
         const bar = document.createElement('div');
-        bar.className = 'project-bar';
+        bar.className = 'project-bar' + (_slip ? ' slipped' : '');
         bar.dataset.projId = proj.id;
         bar.style.cssText = `left:${px}px;top:${barTop}px;width:${pw}px;height:${BAR_H}px;background:${proj.color}`;
         bar.textContent = proj.name || proj.id;
@@ -3084,8 +3128,10 @@ function cancelProjectCreate() {
     const clickDate = xToDate(x);
 
     if (_projCreate.stage === 1) {
-      _projCreate.startDate = clickDate;
-      _projCreate.startPx   = dateToX(clickDate);
+      // v18.10.6 — a start date can never be in the past; floor the click to today.
+      const _cd = (clickDate < _projTodayDS()) ? _projTodayDS() : clickDate;
+      _projCreate.startDate = _cd;
+      _projCreate.startPx   = dateToX(_cd);
       _projCreate.stage     = 2;
       const unitWrap = document.querySelector(`.timeline-row-wrap[data-key="${_projCreate.row.key}"]`);
       if (unitWrap) {
@@ -3234,8 +3280,11 @@ function addProjectDrag(barEl, proj) {
     }
     _lastTap = now;
     active=true; startX=e.clientX;
-    origStartPx = dateToX(proj.start_date);
-    origEndPx   = dateToX(proj.end_date);
+    // v18.10.6 — anchor a slipped bar's drag at its rendered (today-clamped) left so it
+    // doesn't jump when grabbed; origEndPx preserves the full stored duration.
+    const _dcs = (proj.start_date && proj.start_date < _projTodayDS()) ? _projTodayDS() : proj.start_date;
+    origStartPx = dateToX(_dcs);
+    origEndPx   = origStartPx + (dateToX(proj.end_date) - dateToX(proj.start_date));
     proj.linkedIds.forEach(id => {
       const rec = state.data.find(r=>r.id===id);
       if (rec) origLinkedPx[id] = dateToX(rec.changeout_date);
@@ -3262,9 +3311,14 @@ function addProjectDrag(barEl, proj) {
     if (!active) return;
     active=false; barEl.classList.remove('drag-active');
     const dx = e.clientX - startX;
+    // v18.10.6 — treat a near-zero move as a click, not a reschedule (also avoids
+    // rewriting a slipped bar's start just by clicking it).
+    if (Math.abs(dx) < 3) { render(); renderConnectors(); return; }
     const oldStart = proj.start_date, oldEnd = proj.end_date;
-    proj.start_date = xToDateFree(origStartPx + dx);
-    proj.end_date   = xToDateFree(origEndPx   + dx);
+    // v18.10.6 — enforce the start-date floor (never in the past), preserving duration.
+    const _cl = _clampProjStart(xToDateFree(origStartPx + dx), xToDateFree(origEndPx + dx));
+    proj.start_date = _cl.start;
+    proj.end_date   = _cl.end;
     if (proj.start_date !== oldStart || proj.end_date !== oldEnd)
       logEvent('PROJECT_DATES', `${termLabel()} "${proj.name||proj.id}" dragged`, proj.id, {start:oldStart,end:oldEnd}, {start:proj.start_date,end:proj.end_date});
     proj.linkedIds.forEach(id => {
@@ -3430,10 +3484,16 @@ document.getElementById('ebSave').onclick = () => {
   const proj = state.projects.find(p => p.id === _editProjId);
   if (!proj) { closeEditBubble(); return; }
   const newName  = document.getElementById('ebName').value.trim() || proj.name;
-  const newStart = document.getElementById('ebStart').value;
-  const newEnd   = document.getElementById('ebEnd').value;
+  let newStart = document.getElementById('ebStart').value;
+  let newEnd   = document.getElementById('ebEnd').value;
   if (!newStart || !newEnd || newEnd <= newStart) {
     showToast('End date must be after start date'); return;
+  }
+  // v18.10.6 — a start date can never be in the past; snap it to today (keep duration).
+  if (newStart < _projTodayDS()) {
+    const _cl = _clampProjStart(newStart, newEnd);
+    newStart = _cl.start; newEnd = _cl.end;
+    showToast('Start date moved to today — a start can’t be in the past');
   }
   const oldName = proj.name, oldStart = proj.start_date, oldEnd = proj.end_date;
   if (newName !== oldName)
@@ -3643,8 +3703,9 @@ function renderProjectList() {
     const endD   = new Date(proj.end_date  +'T00:00:00');
     const days   = Math.round((endD - startD) / DAY_MS);
     const isOpen = expandedProjs.has(proj.id);
+    const _slip = !!proj.start_date && proj.start_date < _projTodayDS();  // v18.10.6 — start in the past
     const tr = document.createElement('tr');
-    tr.className = 'proj-list-row' + (isOpen?' expanded':'');
+    tr.className = 'proj-list-row' + (isOpen?' expanded':'') + (_slip?' slipped':'');
     tr.dataset.projId = proj.id;
     tr.innerHTML = `
       <td><span class="proj-expand-btn" style="transform:rotate(${isOpen?90:0}deg)">▶</span></td>
@@ -3652,7 +3713,7 @@ function renderProjectList() {
       <td>${esc(proj.model)}</td>
       <td>${esc(proj.unit)}</td>
       <td class="proj-id-cell" title="${esc(proj.name||proj.id)}">${proj.flagged?'<span style="color:#fbbf24;filter:drop-shadow(0 0 3px rgba(251,191,36,.9));margin-right:4px">★</span>':''}${esc(proj.name||proj.id)}</td>
-      <td>${fmtDate(proj.start_date)}</td>
+      <td>${_slip?'<span class="proj-slip-chip" title="Start date is in the past — the bar now tracks TODAY on the Schedule">⚠ past</span> ':''}${fmtDate(proj.start_date)}</td>
       <td>${fmtDate(proj.end_date)}</td>
       <td>${days}d</td>
       <td><span class="proj-comp-count">${proj.linkedIds.length}</span></td>
@@ -3666,6 +3727,21 @@ function renderProjectList() {
         const btn = tr.querySelector('.proj-expand-btn');
         if (btn) btn.style.transform = `rotate(${opening?90:0}deg)`;
       }
+    });
+    // Right-click context menu — parity with the Schedule tab's project-bar menu.
+    // Lets a project be edited/flagged/removed from the list even when it has
+    // slipped into the past and no longer has a draggable bar on the Schedule.
+    tr.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      showCtxMenu(e.clientX, e.clientY, [
+        { label: `✎  Edit ${termLabel()}`, action: () => openEditBubble(proj, e.clientX, e.clientY) },
+        { sep: true },
+        proj.flagged
+          ? { label: '✕  Clear flag',         action: () => toggleFlag(proj.id) }
+          : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
+        { sep: true },
+        { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => removeProject(proj.id) }
+      ]);
     });
     tbody.appendChild(tr);
 
@@ -3943,7 +4019,10 @@ function addOptProjDrag(barEl, proj) {
     }
     _lastTap = now;
     active=true; startX=e.clientX;
-    origStartPx=dateToX(proj.start_date); origEndPx=dateToX(proj.end_date);
+    // v18.10.6 — anchor slipped bar at clamped left, preserve full stored duration.
+    const _ocs = (proj.start_date && proj.start_date < _projTodayDS()) ? _projTodayDS() : proj.start_date;
+    origStartPx = dateToX(_ocs);
+    origEndPx   = origStartPx + (dateToX(proj.end_date) - dateToX(proj.start_date));
     barEl.classList.add('drag-active'); barEl.setPointerCapture(e.pointerId);
   });
   barEl.addEventListener('pointermove', e => {
@@ -3953,9 +4032,12 @@ function addOptProjDrag(barEl, proj) {
   barEl.addEventListener('pointerup', e => {
     if (!active) return; active=false; barEl.classList.remove('drag-active');
     const dx = e.clientX - startX;
+    if (Math.abs(dx) < 3) { renderProjectOptimiser(); renderConnectors(); return; }  // click, not a reschedule
     const oldStart = proj.start_date, oldEnd = proj.end_date;
-    proj.start_date = xToDateFree(origStartPx + dx);
-    proj.end_date   = xToDateFree(origEndPx   + dx);
+    // v18.10.6 — start-date floor (never in the past), preserving duration.
+    const _cl = _clampProjStart(xToDateFree(origStartPx + dx), xToDateFree(origEndPx + dx));
+    proj.start_date = _cl.start;
+    proj.end_date   = _cl.end;
     if (proj.start_date !== oldStart || proj.end_date !== oldEnd)
       logEvent('PROJECT_DATES', `${termLabel()} "${proj.name||proj.id}" dragged`, proj.id, {start:oldStart,end:oldEnd}, {start:proj.start_date,end:proj.end_date});
     proj.linkedIds.forEach(id => {
@@ -4545,7 +4627,7 @@ function generateExports() {
   XLSX.utils.book_append_sheet(wb, wsCR,     'Change Register');
 
   const clientCode = (_meta && _meta.clientCode) ? _meta.clientCode.replace(/[^A-Z0-9_]/gi,'_') : 'CLIENT';
-  const exportTs   = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-').replace(':','-');
+  const exportTs   = _localFileStamp(false);   // v18.10.6 — computer-local time (was UTC/toISOString)
   XLSX.writeFile(wb, `${clientCode}_PCR_Export_${exportTs}.xlsx`);
 
   const histNote = HIST.length > 0 ? `, ${HIST.length} history records` : ' (no history imported yet)';
@@ -4600,7 +4682,7 @@ function generateProjectsExport() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsProj, 'Projects');
   const clientCode = (_meta && _meta.clientCode) ? _meta.clientCode.replace(/[^A-Z0-9_]/gi,'_') : 'CLIENT';
-  const exportTs   = new Date().toISOString().slice(0,16).replace('T','_').replace(/:/g,'-');
+  const exportTs   = _localFileStamp(false);   // v18.10.6 — computer-local time (was UTC/toISOString)
   XLSX.writeFile(wb, `${clientCode}_Projects_${exportTs}.xlsx`);
   showToast(`Projects exported — ${state.projects.length} project${state.projects.length !== 1 ? 's' : ''}`);
 }
@@ -7530,7 +7612,7 @@ function saveToFile() {
     a.download = window.NumaCoreLib.buildSaveFilename(code, { fleetData: snap });
   } else {
     const safeCC = code.replace(/[^A-Z0-9_]/gi, '_');
-    const saveTs = new Date().toISOString().slice(0,16).replace('T','_').replace(':','-').replace(':','-');
+    const saveTs = _localFileStamp(false);   // v18.10.6 — computer-local time (was UTC); parity with lib buildSaveFilename
     a.download = safeCC + '_fleet_' + saveTs + '.json';
   }
   a.click();
@@ -10074,7 +10156,7 @@ function _bmDownloadPivot(){
     const html=_bmBuildPivotHtml(res,opts);
     const blob=new Blob([html],{type:'text/html'});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement('a'); a.href=url; a.download='Cadence Budget Report '+(new Date().toISOString().split('T')[0])+'.html';
+    const a=document.createElement('a'); a.href=url; a.download='Cadence Budget Report '+_localDateStamp()+'.html';   // v18.10.6 — computer-local date (was UTC)
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url), 5000);
   }catch(e){ console.error('report export failed', e); alert('Budget report export failed: '+e.message); }
