@@ -55,9 +55,9 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 #treePanel{width:310px;flex-shrink:0;background:#0d1117;border-right:1px solid #21262d;display:flex;flex-direction:column;overflow:hidden}
 #treeHeader{padding:0 12px;background:#161b22;font-size:10px;font-weight:700;color:#484f58;text-transform:uppercase;letter-spacing:1px;flex-shrink:0;border-bottom:1px solid #21262d;display:flex;align-items:center;height:36px}
 #treeBody{flex:1;overflow-y:scroll;overflow-x:hidden}
-#treeBody::-webkit-scrollbar{width:5px}
+#treeBody::-webkit-scrollbar{width:8px}
 #treeBody::-webkit-scrollbar-track{background:transparent}
-#treeBody::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+#treeBody::-webkit-scrollbar-thumb{background:#565e68;border-radius:4px}#treeBody::-webkit-scrollbar-thumb:hover{background:#6e7681}
 
 /* ── DETAIL COLUMN PANEL ── */
 #detailPanel{width:0;flex-shrink:0;background:#0a0f16;border-right:1px solid #21262d;display:flex;flex-direction:column;overflow:hidden;transition:width .2s ease}
@@ -90,10 +90,10 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 /* ── TIMELINE PANEL ── */
 #timelinePanel{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #timelineScroll{flex:1;overflow:auto}
-#timelineScroll::-webkit-scrollbar{height:7px;width:7px}
+#timelineScroll::-webkit-scrollbar{height:10px;width:10px}
 #timelineScroll::-webkit-scrollbar-track{background:#0d1117}
-#timelineScroll::-webkit-scrollbar-thumb{background:#30363d;border-radius:4px}
-#timelineScroll::-webkit-scrollbar-thumb:hover{background:#484f58}
+#timelineScroll::-webkit-scrollbar-thumb{background:#565e68;border-radius:5px}
+#timelineScroll::-webkit-scrollbar-thumb:hover{background:#6e7681}
 #timelineScroll::-webkit-scrollbar-corner{background:#0d1117}
 #timelineInner{display:inline-block;min-width:100%;position:relative;vertical-align:top}
 #timelineHeader{position:sticky;top:0;z-index:30;background:#161b22;border-bottom:1px solid #30363d;height:36px;overflow:hidden;white-space:nowrap}
@@ -9247,7 +9247,7 @@ function _computeBudget(userOpts) {
     </div>
     <div class="baf-total-row">
       <span class="bm-lab">Total (all selected)</span>
-      <input type="text" class="baf-inp" id="bafTotalInp" placeholder="0"><span class="baf-pct">%</span>
+      <input type="text" class="baf-inp" id="bafTotalInp" data-level="total" placeholder="0"><span class="baf-pct">%</span>
       <span style="font-size:10px;color:#6e7681;margin-left:auto">Empty a box + Enter resets it to its parent.</span>
     </div>
     <div class="baf-tree" id="bmBafTree"></div>
