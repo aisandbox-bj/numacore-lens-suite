@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.8 — Mission Control</title>
+<title>NumaCore Lens v4.9.1 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1852,7 +1852,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.9';
+const VERSION = '4.9.1';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4850,8 +4850,17 @@ const EMBED_TOOL_URLS = (function() {
 // Allowed slice keys per owner (per V5 Migration Plan §Hard constraints).
 // Crossing slice ownership = data integrity failure → message dropped.
 const EMBED_OWNED_SLICES = {
-  cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder',
-            'working.projects', 'working.componentDates', 'working.decisionLog'],  // V4 Flat fallback shapes
+  // v4.9.1 FIX-1 (2026-08-20) — added budgetConfig to BOTH envelopes so Cadence's
+  // v18.8+ Budget settings (BAF tree, fiscal/period, last-used) survive the Mission
+  // Control merge instead of being silently dropped as an out-of-slice key. Cadence's
+  // _ownedSliceForShell() has emitted working/workingData.budgetConfig since v18.8, but
+  // this allow-list was never updated, so _mergeChildEdits() discarded it on every save
+  // and the downloaded fleet file lost the budget config. Also brought the V4-Flat
+  // `working.*` fallback to PARITY with the V5 `workingData.*` list — projConfig /
+  // visibleMonths / granularity / abScopeState / deColOrder were previously dropped for
+  // V4-Flat files too. budgetConfig stays OPAQUE to Lens (pass-through only; Cadence owns it).
+  cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder', 'workingData.budgetConfig',
+            'working.projects', 'working.componentDates', 'working.decisionLog', 'working.projConfig', 'working.visibleMonths', 'working.granularity', 'working.abScopeState', 'working.deColOrder', 'working.budgetConfig'],  // V4 Flat fallback shapes (parity with V5 list; +budgetConfig v4.9.1)
   // v4.8 — paired with Deploy v8.18 dual-shape retirement. Deploy now emits
   // ONE canonical slice: workingData.deployData (wholesale-replaced on
   // receipt; Deploy owns it per slice-ownership rule — the Risk Report
