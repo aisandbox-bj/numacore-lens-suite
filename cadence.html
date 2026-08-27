@@ -9856,7 +9856,7 @@ tr.drill{cursor:pointer}tr.drill:hover td{background:#1c2129;color:var(--amber)}
 #mbody{padding:4px 6px 14px;max-height:72vh;overflow:auto}
 </style></head><body>
 <header><h1>&#128202; Cadence &mdash; Life-of-Fleet Budget Report</h1><span class="meta" id="meta"></span></header>
-<div class="tabs"><div class="tab" id="tab-parameters" data-tab="parameters">Parameters</div><div class="tab" id="tab-risk" data-tab="risk">Risk items</div><div class="tab" id="tab-budget" data-tab="budget">Budget graphs</div><div class="tab" id="tab-data" data-tab="data">Data table</div></div>
+<div class="tabs"><div class="tab" id="tab-parameters" data-tab="parameters">Parameters</div><div class="tab" id="tab-risk" data-tab="risk">Risk items</div><div class="tab" id="tab-budget" data-tab="budget">Budget graphs</div><div class="tab" id="tab-data" data-tab="data">Data table</div><div class="tab" id="tab-drill" data-tab="drill">&#128269; Drill-down</div></div>
 <div class="wrap">
 <div id="panel-parameters" style="display:none"></div>
 <div id="panel-risk" style="display:none"></div>
@@ -9886,12 +9886,23 @@ tr.drill{cursor:pointer}tr.drill:hover td{background:#1c2129;color:var(--amber)}
   <div class="scroll" id="tableWrap" style="max-height:calc(100vh - 168px)"></div>
   <div class="note">Blank = no intervention in that period. <span style="color:var(--red);font-weight:700">Red</span> = a scheduled intervention with $0 cost (fix the cost at source). Click a row name to drill Fleet &rarr; Model &rarr; Unit &rarr; Component; click a year header to fold that year. Totals are in-period; overdue &amp; unscheduled are on the Risk tab.</div>
 </div>
+<div id="panel-drill" style="display:none">
+  <div class="ctl">
+    <input id="ddSearch" type="text" placeholder="Search fleet, model or unit..." style="background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:5px;padding:5px 9px;font-size:12px;min-width:250px"/>
+    <button class="btn" id="ddClear">Clear</button>
+    <button class="btn" id="ddExpand">Expand all</button>
+    <button class="btn" id="ddCollapse">Collapse all</button>
+    <span class="lbl">Columns</span><select id="ddGran"><option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option></select>
+  </div>
+  <div class="scroll" id="ddWrap" style="max-height:calc(100vh - 168px)"></div>
+  <div class="note">Type to find a fleet, model or unit &mdash; the tree filters to matches and highlights them. Click a row to drill Fleet &rarr; Model &rarr; Unit &rarr; Component. Costs are BAF-inclusive and in-period; overdue &amp; unscheduled are on the Risk tab.</div>
+</div>
 </div>
 <div id="rmodal" class="modal"><div class="mbox"><div class="mhead"><span id="mtitle"></span><span id="mclose">&times;</span></div><div id="mbody"></div></div></div>
 <script>
 var P=${json};
 var PAL=['#e3a72c','#5FA8E0','#1D9E75','#E24B4A','#9B97E8','#5DCAA5','#378ADD','#d98c34','#8b949e','#BA7517','#c96fd0','#6ee7b7','#f0883e','#79c0ff','#ffab70','#a5d6ff'];
-var S={tab:'budget',measure:'cost',heat:false,stackBy:'fleet',barGran:'month',tableGran:'month',level:'0',barSel:null,colYears:{},openRows:{},pie:[]};
+var S={tab:'budget',measure:'cost',heat:false,stackBy:'fleet',barGran:'month',tableGran:'month',level:'0',barSel:null,colYears:{},openRows:{},pie:[],ddSearch:'',ddOpen:{},ddGran:'year'};
 var SEP='\\u0001';
 function el(id){return document.getElementById(id);}
 var BAFTIP='Budget Adjustment Factor: a % uplift on component cost for associated parts/labour not in the base cost. The blended % shown is cost-weighted (dollar-weighted), not a simple average \\u2014 so 5% on a large item outweighs 50% on a small one.';
@@ -9930,8 +9941,8 @@ function heatRange(rowsN,cols){var mn=Infinity,mx=-Infinity;rowsN.forEach(functi
 function heatColor(v,rg){if(!(v>0)||rg.mx<=0)return '';var t=rg.mx>rg.mn?(v-rg.mn)/(rg.mx-rg.mn):1;t=Math.max(0,Math.min(1,t));var stops=[[33,80,120],[227,167,44],[248,81,73]];var seg=t<=0.5?0:1,tt=t<=0.5?t/0.5:(t-0.5)/0.5;var a=stops[seg],b=stops[seg+1];var r=Math.round(a[0]+(b[0]-a[0])*tt),g=Math.round(a[1]+(b[1]-a[1])*tt),bl=Math.round(a[2]+(b[2]-a[2])*tt);return 'background:rgba('+r+','+g+','+bl+',.82);color:#0b0e14;font-weight:700';}
 // ----- render dispatch -----
 function render(){el('meta').textContent=P.range+'  \\u00b7  generated '+P.gen+'  \\u00b7  '+P.rows.length+' components';
-  ['parameters','risk','budget','data'].forEach(function(t){el('tab-'+t).className='tab'+(S.tab===t?' on':'');el('panel-'+t).style.display=(S.tab===t?'block':'none');});
-  if(S.tab==='parameters')renderParams();else if(S.tab==='risk')renderRisk();else if(S.tab==='data')renderData();else renderBudget();}
+  ['parameters','risk','budget','data','drill'].forEach(function(t){el('tab-'+t).className='tab'+(S.tab===t?' on':'');el('panel-'+t).style.display=(S.tab===t?'block':'none');});
+  if(S.tab==='parameters')renderParams();else if(S.tab==='risk')renderRisk();else if(S.tab==='data')renderData();else if(S.tab==='drill')renderDrill();else renderBudget();}
 function renderData(){setSeg('segMeasure2',S.measure);setSeg('segHeat',S.heat?'on':'off');el('lvlSel').value=S.level;el('colGran').value=S.tableGran;renderTable();}
 function expandToLevel(L){S.openRows={};(function w(n){sortedKids(n).forEach(function(k){if(!k.leaf&&k.level<L){S.openRows[k.key]=1;w(k);}});})(TREE);}
 // ----- parameters tab -----
@@ -10011,6 +10022,26 @@ function rowHtml(n,cols,rg,heatLevel,heatType,totRg){var pad=8+n.level*16;var tw
     cells+='<td'+st+'>'+txt+'</td>';});
   var totSt='';if(canHeat&&totRg&&rowTot>totRg.mn){var thc=heatColor(rowTot,totRg);if(thc)totSt=' style="'+thc+'"';}
   return '<tr>'+nm+cells+'<td'+totSt+'>'+(rowTot?fmt(rowTot):'')+'</td></tr>';}
+// ----- drill-down (search + tree) — v18.11 FEAT-1, additive; reuses TREE/bucketOf/colSum/yearGroups -----
+function ddCols(){var cols=[];yearGroups().forEach(function(g){var map={},loc=[];g.idx.forEach(function(i){var info=bucketOf(i,S.ddGran);if(map[info.key]===undefined){map[info.key]=loc.length;loc.push({label:info.label,short:info.short,idx:[i]});}else loc[map[info.key]].idx.push(i);});loc.forEach(function(c){cols.push(c);});});return cols;}
+function ddMatchNode(n){return n.level>=0&&n.level<=2&&!!S.ddSearch&&n.label.toLowerCase().indexOf(S.ddSearch)>=0;}
+function ddVisible(){var show={},open={},match={};
+  (function walk(n,anc){if(ddMatchNode(n)){match[n.key]=1;anc.forEach(function(a){show[a.key]=1;open[a.key]=1;});(function desc(x){show[x.key]=1;sortedKids(x).forEach(desc);})(n);}sortedKids(n).forEach(function(k){walk(k,anc.concat(n));});})(TREE,[]);
+  return {show:show,open:open,match:match};}
+function ddFlatRows(vis){var out=[];(function walk(n){sortedKids(n).forEach(function(k){if(vis){if(!vis.show[k.key])return;out.push(k);if(!k.leaf&&(vis.open[k.key]||S.ddOpen[k.key]))walk(k);}else{out.push(k);if(!k.leaf&&S.ddOpen[k.key])walk(k);}});})(TREE);return out;}
+function ddRowHtml(n,cols,vis){var pad=8+n.level*16;var isOpen=(vis&&vis.open[n.key])||S.ddOpen[n.key];var tw=(!n.leaf)?('<span class="tw">'+(isOpen?'\\u25be':'\\u25b8')+'</span> '):'';
+  var hit=vis&&vis.match[n.key];var lbl=hit?('<mark style="background:#e3a72c;color:#0b0e14;border-radius:2px;padding:0 2px">'+esc(n.label)+'</mark>'):esc(n.label);
+  var nm='<td class="name lvl'+n.level+'" style="padding-left:'+pad+'px" data-ddrow="'+esc(n.key)+'">'+tw+lbl+'</td>';
+  var cells='',rowTot=0;cols.forEach(function(c){var v=colSum(n,c,'cost');rowTot+=v;cells+='<td>'+(v?fmt(v):'')+'</td>';});
+  return '<tr>'+nm+cells+'<td>'+(rowTot?fmt(rowTot):'')+'</td></tr>';}
+function renderDrill(){el('ddSearch').value=S.ddSearch;el('ddGran').value=S.ddGran;
+  var vis=S.ddSearch?ddVisible():null;var cols=ddCols(),rowsN=ddFlatRows(vis);
+  var h='<table><thead><tr><th class="name">Equipment</th>';cols.forEach(function(c){h+='<th>'+esc(c.short||c.label)+'</th>';});h+='<th>Total</th></tr></thead><tbody>';
+  rowsN.forEach(function(n){h+=ddRowHtml(n,cols,vis);});
+  h+='<tr class="tot"><td class="name">TOTAL</td>';var gt=0;cols.forEach(function(c){var v=colSum(TREE,c,'cost');gt+=v;h+='<td>'+(v?fmt(v):'')+'</td>';});h+='<td>'+fmt(gt)+'</td></tr>';
+  h+='</tbody></table>';
+  var empty=S.ddSearch?'<div class="empty">No fleet, model or unit matches \\u201c'+esc(S.ddSearch)+'\\u201d.</div>':'<div class="empty">No components.</div>';
+  el('ddWrap').innerHTML=rowsN.length?h:empty;}
 // ----- pie -----
 function pieNode(){var node=TREE;for(var i=0;i<S.pie.length;i++){var c=childByLabel(node,S.pie[i]);if(!c)break;node=c;}return node;}
 function drawPie(dir){var parent=pieNode();var kids=sortedKids(parent).map(function(k){return {label:k.label,val:nodeTotal(k),leaf:k.leaf};}).filter(function(d){return d.val>0;});
@@ -10147,6 +10178,12 @@ function toXlsx(){if(!window.XLSX){alert('Excel library still loading - try agai
     document.addEventListener('mousemove',function(e){if(cdrag){var r=row.getBoundingClientRect();var wpx=Math.max(190,Math.min(r.width-230,e.clientX-r.left));pieC.style.flex='0 0 '+wpx+'px';scheduleRedraw();}else if(vdrag){var r=row.getBoundingClientRect();var hpx=Math.max(240,Math.min(1100,e.clientY-r.top));row.style.height=hpx+'px';scheduleRedraw();}});
     document.addEventListener('mouseup',function(){if(cdrag||vdrag){cdrag=vdrag=false;document.body.style.userSelect='';scheduleRedraw();}});
     window.addEventListener('resize',scheduleRedraw);})();
+  el('ddSearch').addEventListener('input',function(e){S.ddSearch=e.target.value.trim().toLowerCase();renderDrill();});
+  el('ddClear').addEventListener('click',function(){S.ddSearch='';renderDrill();});
+  el('ddExpand').addEventListener('click',function(){S.ddOpen={};(function w(n){sortedKids(n).forEach(function(k){if(!k.leaf){S.ddOpen[k.key]=1;w(k);}});})(TREE);renderDrill();});
+  el('ddCollapse').addEventListener('click',function(){S.ddOpen={};renderDrill();});
+  el('ddGran').addEventListener('change',function(e){S.ddGran=e.target.value;renderDrill();});
+  el('ddWrap').addEventListener('click',function(e){var nm=e.target.closest('td.name[data-ddrow]');if(!nm)return;var k=nm.getAttribute('data-ddrow');S.ddOpen[k]=!S.ddOpen[k];renderDrill();});
   render();})();
 <\/script></body></html>`;
 }
