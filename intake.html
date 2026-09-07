@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NumaCore Intake v8</title>
+<title>NumaCore Intake v8.11</title>
 <script src="numacore_lib.js"></script>
 <!-- v8.8 FIX-1 (2026-06-10, review P5 Chunk A) — vendored libraries, local-first
      with CDN fallback. SheetJS upgraded 0.18.5 → 0.20.2: cdnjs froze at 0.18.5;
@@ -696,6 +696,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <div class="card-title">Update Results</div>
         <div class="stat-row" id="updateResultStats"></div>
         <div id="updateResultDetail"></div>
+        <div id="reductionsReview"></div>
         <div class="btn-row">
           <button class="btn btn-gold" onclick="exportUpdatedJSON()">⬇ Download Updated fleet.json</button>
         </div>
@@ -1189,6 +1190,9 @@ let state = {
   pendingDiff: [],
   mergeExcluded: new Set(),
   mergeOrphanRemove: new Set(),
+  // v8.11 — units whose source SMU dropped below the current on-file value; held
+  // for operator review + accept (not auto-applied). {unit,oldSmu,newSmu,oldDate,newDate,mode,applied}
+  pendingReductions: [],
   // HISTORIC import
   historicWorkbook: null,
   historicSheet: null,
@@ -2574,6 +2578,78 @@ function runUpdate() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// v8.11 — REDUCED-HOURS REVIEW (source SMU below the current on-file value)
+// A meter normally only climbs, so both UPDATE paths keep their higher-only
+// default. A genuine reduction is NOT auto-applied — it is surfaced here for the
+// operator to accept. Accepting writes BOTH last_smu AND last_read for the unit's
+// components; the missing read-date was what stranded the unit in the past and
+// broke the downstream forecast. state.pendingReductions is populated per-run by
+// runSMUUpdate / runFullUpdate.
+// ═══════════════════════════════════════════════════════════════
+function renderReductionsReview() {
+  const box = document.getElementById('reductionsReview');
+  if (!box) return;
+  const list = (state.pendingReductions || []).filter(r => !r.applied);
+  if (!list.length) { box.innerHTML = ''; return; }
+  const num = v => Number(v || 0).toLocaleString();
+  const rows = list.map((r, i) => `
+    <tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:5px 8px"><input type="checkbox" class="red-accept" data-idx="${i}" checked></td>
+      <td style="padding:5px 8px;font-weight:600">${esc(String(r.unit))}</td>
+      <td style="padding:5px 8px;text-align:right;color:var(--text3)">${num(r.oldSmu)}</td>
+      <td style="padding:5px 8px;text-align:right;color:var(--gold);font-weight:700">${num(r.newSmu)}</td>
+      <td style="padding:5px 8px;color:var(--text3)">${esc(r.oldDate || '—')}</td>
+      <td style="padding:5px 8px;color:var(--gold);font-weight:600">${esc(r.newDate || '—')}</td>
+    </tr>`).join('');
+  box.innerHTML = `
+    <div class="alert alert-warn" style="margin-top:12px">
+      <div style="font-weight:700;margin-bottom:6px">⚠ ${list.length} unit(s) with REDUCED hours — not applied automatically</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">The new sheet's hours are lower than what's on file. Review each and accept to apply the new HRS <b>and</b> last-read date (this is what fixes a unit stranded in the past). Unchecked rows keep the current on-file value.</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="border-bottom:1px solid var(--border2);text-align:left;color:var(--text2)">
+          <th style="padding:5px 8px">Accept</th><th style="padding:5px 8px">Unit</th>
+          <th style="padding:5px 8px;text-align:right">HRS (on file)</th><th style="padding:5px 8px;text-align:right">HRS (new)</th>
+          <th style="padding:5px 8px">Last read (on file)</th><th style="padding:5px 8px">Last read (new)</th>
+        </tr></thead><tbody>${rows}</tbody>
+      </table>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn btn-outline btn-sm" onclick="toggleAllReductions(true)">Accept all</button>
+        <button class="btn btn-outline btn-sm" onclick="toggleAllReductions(false)">Clear all</button>
+        <button class="btn btn-gold btn-sm" onclick="applyAcceptedReductions()">✓ Apply accepted</button>
+      </div>
+    </div>`;
+}
+function toggleAllReductions(on) {
+  document.querySelectorAll('#reductionsReview .red-accept').forEach(cb => { cb.checked = on; });
+}
+function applyAcceptedReductions() {
+  if (!state.updatedFleetJSON || !state.pendingReductions) return;
+  const fj = state.updatedFleetJSON;
+  const isV17 = Array.isArray(fj.components);
+  const arr = isV17 ? fj.components : (fj.masterData && fj.masterData.components) || [];
+  const list = state.pendingReductions.filter(r => !r.applied);
+  const checked = new Set();
+  document.querySelectorAll('#reductionsReview .red-accept:checked').forEach(cb => checked.add(parseInt(cb.getAttribute('data-idx'))));
+  let appliedUnits = 0, appliedComps = 0;
+  list.forEach((r, i) => {
+    if (!checked.has(i)) return;
+    const uk = String(r.unit).toUpperCase();
+    arr.forEach(c => {
+      const cu = String(c.unit || c.unit_id || c.unit_floc || '').toUpperCase();
+      if (cu === uk) { c.last_smu = r.newSmu; c.last_read = r.newDate; appliedComps++; }
+    });
+    r.applied = true; appliedUnits++;
+  });
+  if (!appliedUnits) { if (window.NumaCoreLib && NumaCoreLib.showToast) NumaCoreLib.showToast('No reductions were selected.', 'info', 2500); return; }
+  fj.meta = fj.meta || {};
+  fj.meta.lastSaved = new Date().toISOString();
+  state.updatedFleetJSON = fj;
+  _setSessionJSON(fj, `Accepted ${appliedUnits} hour reduction${appliedUnits === 1 ? '' : 's'}`);
+  renderReductionsReview();
+  if (window.NumaCoreLib && NumaCoreLib.showToast) NumaCoreLib.showToast(`Applied ${appliedUnits} reduced-hours unit(s) — ${appliedComps} component(s) updated. Re-download to save.`, 'success', 4000);
+}
+
 function runSMUUpdate() {
   const sheetName = document.getElementById('updateSheetSelect').value;
   const ws = state.updateWorkbook.Sheets[sheetName];
@@ -2605,6 +2681,7 @@ function runSMUUpdate() {
   const compArray = isV17 ? fleetJSON.components : (fleetJSON.masterData && fleetJSON.masterData.components) || [];
 
   let updatedComponents = 0;
+  state.pendingReductions = [];   // v8.11 — reset reduced-hours review for this run
   const now = new Date().toISOString().split('T')[0];
   // v8.7 FIX-4 (2026-06-10) — unit matching is now case-insensitive, extending the
   // v8.4 BUILD-boundary CAPS rule to the UPDATE boundary ("ex401" in a source export
@@ -2629,13 +2706,21 @@ function runSMUUpdate() {
       String(c.unit_id   || '').toUpperCase() === unitKey ||
       String(c.unit_floc || '').toUpperCase() === unitKey);
     if (matches.length === 0) { unmatchedUnits.add(unit_id); return; }
-    matches.forEach(c => {
-      if (smu > (c.last_smu || 0)) {
-        c.last_smu  = smu;
-        c.last_read = date;
-        updatedComponents++;
-      }
-    });
+    // v8.11 — a source SMU below the unit's current reading is a genuine reduction;
+    // do NOT auto-apply (meters climb) — flag the whole unit for operator review.
+    const curMax = matches.reduce((m, c) => Math.max(m, c.last_smu || 0), 0);
+    if (smu < curMax) {
+      const oldC = matches.find(c => (c.last_smu || 0) === curMax) || matches[0];
+      state.pendingReductions.push({ unit: unit_id, oldSmu: curMax, newSmu: smu, oldDate: (oldC && oldC.last_read) || null, newDate: date, mode: 'smu' });
+    } else {
+      matches.forEach(c => {
+        if (smu > (c.last_smu || 0)) {
+          c.last_smu  = smu;
+          c.last_read = date;
+          updatedComponents++;
+        }
+      });
+    }
   });
 
   fleetJSON.meta.lastSaved      = new Date().toISOString();
@@ -2667,6 +2752,7 @@ function runSMUUpdate() {
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML =
     `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>${unmatchedHTML}${badSmuHTML}`;
+  renderReductionsReview();   // v8.11 — surface any reduced-hours units for accept
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2989,6 +3075,8 @@ function runFullUpdate() {
   let smuUpdates = 0, replacements = 0, fieldUpdates = 0, newUnits = 0, newComponents = 0;
   const replacementLog = [];
   const erpDateLog     = [];
+  const _redMap = {};                 // v8.11 — per-unit SMU reductions (source below current)
+  state.pendingReductions = [];       // reset reduced-hours review for this run
 
   // Build project-link lookup: compId → project object (from working.projects in the loaded JSON)
   const projectLinks = {};
@@ -3012,6 +3100,12 @@ function runFullUpdate() {
       c.last_smu  = unitData.smu;
       c.last_read = unitData.date || now;
       smuUpdates++;
+    } else if (unitData && unitData.smu && unitData.smu < (c.last_smu || 0)) {
+      // v8.11 — genuine reduction: source SMU below current. Flag the unit for
+      // operator review instead of silently skipping (see renderReductionsReview).
+      const _rk = String(c.unit || c.unit_id || '').toUpperCase();
+      if (!_redMap[_rk]) _redMap[_rk] = { unit: c.unit || c.unit_id, oldSmu: c.last_smu || 0, newSmu: unitData.smu, oldDate: c.last_read || null, newDate: unitData.date || now, mode: 'full' };
+      else if ((c.last_smu || 0) > _redMap[_rk].oldSmu) { _redMap[_rk].oldSmu = c.last_smu || 0; _redMap[_rk].oldDate = c.last_read || null; }
     }
 
     if (!row) return;
@@ -3140,6 +3234,9 @@ function runFullUpdate() {
       if (!isV17 && c.status !== newStatus) { c.status = newStatus; fieldUpdates++; }
     }
   });
+
+  // v8.11 — collect per-unit SMU reductions detected in Pass 1 for operator review
+  state.pendingReductions = Object.values(_redMap);
 
   // ── Pass 1.5: Sync unit-level idle % onto existing masterData.units[] entries.
   // v8.5 (Ship 4). Pass 1 iterates components, not units, so it never touches
@@ -3408,6 +3505,7 @@ function runFullUpdate() {
 
   // [TWEAK-2] Click-to-sort on result tables (in-place DOM sort, date/number/text autodetect)
   attachTableSort(document.getElementById('updateResultDetail'));
+  renderReductionsReview();   // v8.11 — surface any reduced-hours units for accept
 }
 
 // In-place click-to-sort for all <table> elements inside a container.
