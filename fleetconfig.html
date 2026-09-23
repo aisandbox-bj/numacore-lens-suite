@@ -3,60 +3,86 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore FleetConfig v0.1</title>
+<title>NumaCore FleetConfig v0.2</title>
+<link rel="stylesheet" href="numacore-ui.css">
 <script src="numacore_lib.js"></script>
 <style>
-  :root {
-    --bg-deep: #0a0e1a; --bg-panel: #0f1525; --bg-card: #141b2d; --bg-card2: #1a2340;
-    --accent: #64b5f6; --green: #4caf50; --orange: #ff9800; --red: #f44336;
-    --gold: #ffd54f; --teal: #4dd0e1;
-    --text-pri: #e8f0fe; --text-sec: #8eaac8; --text-dim: #6a829e;
-    --border: rgba(100,181,246,0.18);
+  /* FleetConfig v0.2 — adopts numacore-ui.css (design tokens + locally-bundled
+     brand fonts). LOOK-AND-FEEL ONLY; no logic changed from v0.1.
+     Tool keeps its own class names (.btn/.card/.tab/table/.toast/.badge) and
+     restyles them with the --nc-* tokens so nothing in the JS had to change. */
+
+  /* back-compat aliases: any v0.1 inline var() (e.g. empty-state --text-dim)
+     keeps resolving after the old :root palette was removed */
+  :root{
+    --text-pri:var(--nc-text); --text-sec:var(--nc-text-m); --text-dim:var(--nc-text-d);
+    --border:var(--nc-border); --green:var(--nc-ok); --orange:var(--nc-warn);
+    --red:var(--nc-crit); --gold:var(--nc-warn); --teal:var(--nc-lens);
+    --bg-deep:var(--nc-void); --bg-panel:var(--nc-surface); --bg-card:var(--nc-chrome); --bg-card2:var(--nc-chrome);
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg-deep); color: var(--text-pri); font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.55; padding: 28px 36px 56px; min-height: 100vh; }
-  header.head { display:flex; align-items:flex-end; gap:18px; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 22px; }
-  header.head h1 { font-size: 22px; font-weight: 700; color: var(--text-pri); letter-spacing: 0.02em; }
-  header.head .sub { font-size: 12px; color: var(--text-sec); }
-  header.head .sv { margin-left:auto; font-size:11px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; }
-  .row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
-  .btn { background: var(--bg-card2); border: 1px solid var(--border); color: var(--text-pri); padding: 7px 14px; border-radius: 5px; font-size: 13px; cursor: pointer; }
-  .btn:hover { background: var(--bg-card); border-color: var(--accent); }
-  .btn.primary { background: rgba(100,181,246,0.12); border-color: var(--accent); color: var(--accent); }
-  .btn.gold { background: rgba(255,213,79,0.12); border-color: var(--gold); color: var(--gold); }
-  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 30px; text-align: center; font-size: 13px; color: var(--text-sec); background: var(--bg-panel); cursor: pointer; transition: border-color 0.15s; }
-  #drop.hover { border-color: var(--accent); color: var(--accent); }
-  #drop.loaded { background: rgba(76,175,80,0.06); border-color: var(--green); color: var(--green); }
-  .tabs { display:flex; gap:4px; margin: 18px 0 8px; border-bottom:1px solid var(--border); }
-  .tab { padding: 8px 18px; cursor: pointer; font-size: 12px; letter-spacing: 0.04em; border-bottom: 2px solid transparent; color: var(--text-sec); }
-  .tab.active { border-bottom-color: var(--accent); color: var(--accent); }
-  .panel { display: none; padding: 14px 0; }
-  .panel.active { display: block; }
-  .grid { display: grid; gap: 14px; }
-  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-  .card h3 { font-size: 13px; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.06em; text-transform: uppercase; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { background: var(--bg-card2); color: var(--text-sec); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
-  td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--text-pri); vertical-align: middle; }
-  td input, td select { background: var(--bg-deep); border: 1px solid var(--border); color: var(--text-pri); padding: 4px 6px; border-radius: 3px; font-size: 12px; width: 100%; }
-  .scroll-box { max-height: 60vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
-  .meta-strip { display:flex; gap:16px; font-size:11px; color: var(--text-dim); padding: 6px 0; }
-  .meta-strip strong { color: var(--text-pri); }
-  .toast { position: fixed; bottom: 30px; right: 30px; background: var(--bg-card); border: 1px solid var(--accent); padding: 11px 18px; border-radius: 6px; color: var(--text-pri); font-size: 13px; box-shadow: 0 4px 18px rgba(0,0,0,0.5); }
-  .toast.error { border-color: var(--red); color: var(--red); }
-  .toast.warn  { border-color: var(--gold); color: var(--gold); }
-  .badge { display:inline-block; font-size:9px; padding:2px 7px; border-radius:9px; letter-spacing:0.06em; text-transform:uppercase; }
-  .badge.unconfig { background: rgba(255,152,0,0.15); color: var(--orange); border: 1px solid rgba(255,152,0,0.3); }
-  .badge.ok { background: rgba(76,175,80,0.12); color: var(--green); border: 1px solid rgba(76,175,80,0.3); }
-  .conflict-banner { background: rgba(255,152,0,0.1); border: 1px solid var(--orange); border-radius: 6px; padding: 10px 14px; font-size: 12px; color: var(--orange); margin-bottom: 12px; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{padding:28px 36px 56px;min-height:100vh}   /* .nc-root supplies bg/color/font */
+
+  header.head{display:flex;align-items:flex-end;gap:18px;border-bottom:1px solid var(--nc-border);padding-bottom:16px;margin-bottom:22px}
+  header.head h1{font-family:var(--nc-font-display);font-weight:700;text-transform:uppercase;letter-spacing:2px;font-size:30px;color:var(--nc-text)}
+  header.head h1 .ver{color:var(--nc-text-d);font-weight:500;font-size:15px;letter-spacing:0}
+  header.head .sub{font-family:var(--nc-font-head);font-weight:500;font-size:13px;color:var(--nc-text-m)}
+  header.head .sv{margin-left:auto;font-family:var(--nc-font-mono);font-size:11px;color:var(--nc-text-d);letter-spacing:1px;text-transform:uppercase}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+
+  /* buttons — mirror .nc-btn on the active accent (FleetConfig = Lens) */
+  .btn{font-family:var(--nc-font-head);font-weight:600;font-size:14px;letter-spacing:.3px;background:transparent;color:var(--nc-text-m);border:1px solid var(--nc-border);padding:8px 16px;min-height:36px;border-radius:var(--nc-r-sm);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+  .btn:hover{color:var(--nc-text);border-color:var(--accent)}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--nc-void)}
+  .btn.primary:hover{filter:brightness(1.06);box-shadow:0 0 16px -2px var(--accent)}
+  .btn.gold{color:var(--accent);border-color:var(--accent);background:transparent}   /* off-brand gold retired → accent secondary */
+  .btn.gold:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+  .btn.danger{color:var(--nc-crit);border-color:color-mix(in srgb,var(--nc-crit) 45%,transparent);padding:4px 10px;min-height:28px;font-size:13px}
+  .btn.danger:hover{background:var(--nc-crit);color:#fff;border-color:var(--nc-crit)}
+
+  #drop{border:2px dashed var(--nc-border);border-radius:var(--nc-r-lg);padding:30px;text-align:center;font-size:14px;color:var(--nc-text-m);background:var(--nc-surface);cursor:pointer;transition:border-color .15s,color .15s}
+  #drop.hover{border-color:var(--accent);color:var(--accent)}
+  #drop.loaded{background:color-mix(in srgb,var(--nc-ok) 6%,transparent);border-color:var(--nc-ok);color:var(--nc-ok)}
+
+  .tabs{display:flex;gap:4px;margin:18px 0 8px;border-bottom:1px solid var(--nc-border)}
+  .tab{font-family:var(--nc-font-head);font-weight:600;padding:9px 16px;cursor:pointer;font-size:13px;letter-spacing:.4px;border-bottom:2px solid transparent;color:var(--nc-text-m)}
+  .tab:hover{color:var(--nc-text)}
+  .tab.active{border-bottom-color:var(--accent);color:var(--accent)}
+  .panel{display:none;padding:14px 0}
+  .panel.active{display:block}
+
+  .grid{display:grid;gap:14px}
+  .card{position:relative;background:var(--nc-surface);border:1px solid color-mix(in srgb,var(--accent) 14%,var(--nc-border));border-radius:var(--nc-r-xl);padding:16px 18px}
+  .card h3{font-family:var(--nc-font-head);font-weight:600;font-size:15px;color:var(--accent);margin-bottom:10px;letter-spacing:.4px;text-transform:uppercase}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-family:var(--nc-font-head);font-weight:600;background:rgba(255,255,255,.03);color:var(--nc-text-m);font-size:11px;letter-spacing:.6px;text-transform:uppercase;padding:8px 10px;text-align:left;border-bottom:1px solid var(--nc-border);position:sticky;top:0;z-index:1}
+  td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);color:var(--nc-text);vertical-align:middle}
+  td input,td select{font-family:var(--nc-font-body);background:var(--nc-void);border:1px solid var(--nc-border);color:var(--nc-text);padding:5px 7px;border-radius:var(--nc-r-sm);font-size:13px;width:100%}
+  td input:focus,td select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 22%,transparent)}
+  td input[type=number]{font-family:var(--nc-font-mono)}
+  .scroll-box{max-height:60vh;overflow:auto;border:1px solid var(--nc-border);border-radius:var(--nc-r-md)}
+
+  .meta-strip{display:flex;gap:16px;font-family:var(--nc-font-mono);font-size:11px;color:var(--nc-text-d);padding:6px 0}
+  .meta-strip strong{color:var(--nc-text-m);font-weight:500}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);font-family:var(--nc-font-body);background:var(--nc-chrome);border:1px solid var(--accent);padding:11px 18px;border-radius:var(--nc-r-md);color:var(--nc-text);font-size:14px;box-shadow:var(--nc-shadow)}
+  .toast.error{border-color:var(--nc-crit)}
+  .toast.warn{border-color:var(--nc-warn)}
+
+  .badge{display:inline-block;font-family:var(--nc-font-mono);font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;letter-spacing:.5px;text-transform:uppercase}
+  .badge.unconfig{background:color-mix(in srgb,var(--nc-warn) 12%,transparent);color:var(--nc-warn);border:1px solid color-mix(in srgb,var(--nc-warn) 30%,transparent)}
+  .badge.ok{background:color-mix(in srgb,var(--nc-ok) 12%,transparent);color:var(--nc-ok);border:1px solid color-mix(in srgb,var(--nc-ok) 30%,transparent)}
+  .conflict-banner{display:inline-block;font-family:var(--nc-font-body);background:color-mix(in srgb,var(--nc-warn) 8%,transparent);border:1px solid color-mix(in srgb,var(--nc-warn) 35%,transparent);border-radius:var(--nc-r-md);padding:10px 14px;font-size:13px;color:#fdedc0}
 </style>
 </head>
-<body>
+<body class="nc nc-root" data-suite="lens" data-panel="lens">
 
 <header class="head">
   <div>
-    <h1>NumaCore FleetConfig <span style="color:var(--text-dim);font-weight:400;font-size:14px">v0.1</span></h1>
-    <div class="sub">Fleet &amp; Model Manager (M1) · Utilization Profile Editor (M4)</div>
+    <h1>NumaCore FleetConfig <span class="ver">v0.2</span></h1>
+    <div class="sub">Fleet &amp; model manager · Utilization profile editor</div>
   </div>
   <div class="sv" id="loaded-meta">No fleet loaded</div>
 </header>
@@ -71,22 +97,22 @@
 
 <div id="appBody" style="display:none">
   <div class="row" style="margin-bottom:10px">
-    <button class="btn" onclick="resetLoad()">Load different file</button>
-    <button class="btn primary" onclick="exportFleet()">Save fleet JSON</button>
+    <button class="btn" onclick="resetLoad()" title="Discard edits and load a different fleet file">Load different file</button>
+    <button class="btn primary" onclick="exportFleet()" title="Save the edited fleet back to a JSON file">Save fleet JSON</button>
     <span id="conflictBanner"></span>
   </div>
   <div class="meta-strip" id="metaStrip"></div>
 
   <div class="tabs">
-    <div class="tab active" data-tab="m1" onclick="switchTab('m1')">M1 — Fleet &amp; Model Manager</div>
-    <div class="tab" data-tab="m4" onclick="switchTab('m4')">M4 — Utilization Profile Editor</div>
+    <div class="tab active" data-tab="m1" onclick="switchTab('m1')">Fleet &amp; models</div>
+    <div class="tab" data-tab="m4" onclick="switchTab('m4')">Utilization profiles</div>
   </div>
 
   <!-- ── M1: Fleet & Model Manager ── -->
   <div id="panel-m1" class="panel active">
     <div class="row" style="margin-bottom:10px">
-      <button class="btn" onclick="addFleet()">+ Fleet</button>
-      <button class="btn" onclick="addUnit()">+ Unit</button>
+      <button class="btn" onclick="addFleet()" title="Add a fleet">+ Fleet</button>
+      <button class="btn" onclick="addUnit()" title="Add a unit">+ Unit</button>
     </div>
     <div class="grid" style="grid-template-columns: 1fr 2fr">
       <div class="card">
@@ -117,9 +143,9 @@
   <!-- ── M4: Utilization Profile Editor ── -->
   <div id="panel-m4" class="panel">
     <div class="row" style="margin-bottom:10px">
-      <button class="btn" onclick="addUtilProfile('fleet')">+ Fleet rate</button>
-      <button class="btn" onclick="addUtilProfile('model')">+ Model rate</button>
-      <button class="btn" onclick="addUtilProfile('unit')">+ Unit rate</button>
+      <button class="btn" onclick="addUtilProfile('fleet')" title="Add a fleet-scoped utilization rate">+ Fleet rate</button>
+      <button class="btn" onclick="addUtilProfile('model')" title="Add a model-scoped utilization rate">+ Model rate</button>
+      <button class="btn" onclick="addUtilProfile('unit')" title="Add a unit-scoped utilization rate">+ Unit rate</button>
       <button class="btn gold" onclick="deriveUtilFromReadings()" title="Suggest util_rate per fleet from readings[] history">Suggest from readings</button>
     </div>
     <div class="card">
@@ -143,7 +169,7 @@
         </table>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="btn" onclick="addActivityRow()">+ Activity row</button>
+        <button class="btn" onclick="addActivityRow()" title="Add a monthly activity override">+ Activity row</button>
       </div>
     </div>
   </div>
@@ -167,7 +193,7 @@ function showToast(msg, sev) {
   showToast._t = setTimeout(() => { el.style.display = 'none'; }, 2400);
 }
 
-const VERSION = '0.1';
+const VERSION = '0.2';
 let _originalJSON = null;
 let _isV5 = false;
 let _meta = {};
@@ -178,7 +204,7 @@ let state = {
   units:                [],   // masterData.units[]
   utilizationProfiles:  [],   // masterData.utilizationProfiles[]
   unitActivitySchedule: []    // masterData.unitActivitySchedule[]
-  // componentPockets, partsLibrary deferred to v0.2 (Chunk 9c).
+  // componentPockets, partsLibrary deferred to a later chunk.
 };
 
 // ── File load + slice extraction ─────────────────────────────────────────────
@@ -295,9 +321,9 @@ function renderM1() {
   document.getElementById('fleetsTbody').innerHTML = state.fleets.map((f, i) =>
     '<tr><td><input value="' + esc(f.name || '') + '" onchange="state.fleets[' + i + '].name=this.value"></td>' +
     '<td><input value="' + esc(f.type || '') + '" onchange="state.fleets[' + i + '].type=this.value"></td>' +
-    '<td><button class="btn" onclick="deleteFleet(' + i + ')">&times;</button></td></tr>'
+    '<td><button class="btn danger" title="Delete fleet" onclick="deleteFleet(' + i + ')">&times;</button></td></tr>'
   ).join('') || '<tr><td colspan="3" style="text-align:center;color:var(--text-dim);padding:14px">No fleets defined.</td></tr>';
-  // Units — show pocket-config status (always "Unconfigured" in v0.1; v0.2 wires the pocket editor)
+  // Units — show pocket-config status (always "Unconfigured" here; the pocket editor is a later chunk)
   document.getElementById('unitsTbody').innerHTML = state.units.map((u, i) => {
     const pocketBadge = '<span class="badge unconfig">Unconfigured</span>';
     return '<tr>' +
@@ -337,7 +363,7 @@ function renderM4() {
       '<td><input type="date" value="' + esc(p.effective_from || '') + '" onchange="state.utilizationProfiles[' + i + '].effective_from=this.value"></td>' +
       '<td>' + sourceSelect(p.source || 'manual', i) + '</td>' +
       '<td><input value="' + esc(p.notes || '') + '" onchange="state.utilizationProfiles[' + i + '].notes=this.value"></td>' +
-      '<td><button class="btn" onclick="deleteUtil(' + i + ')">&times;</button></td>' +
+      '<td><button class="btn danger" title="Delete profile" onclick="deleteUtil(' + i + ')">&times;</button></td>' +
     '</tr>'
   ).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:14px">No utilization profiles defined.</td></tr>';
 
@@ -348,7 +374,7 @@ function renderM4() {
       '<td><input type="checkbox"' + (a.active === false ? '' : ' checked') + ' onchange="state.unitActivitySchedule[' + i + '].active=this.checked"></td>' +
       '<td><input type="number" step="0.1" value="' + (a.override_rate == null ? '' : a.override_rate) + '" onchange="state.unitActivitySchedule[' + i + '].override_rate=parseFloat(this.value)||null"></td>' +
       '<td><input value="' + esc(a.reason || '') + '" onchange="state.unitActivitySchedule[' + i + '].reason=this.value"></td>' +
-      '<td><button class="btn" onclick="deleteActivity(' + i + ')">&times;</button></td>' +
+      '<td><button class="btn danger" title="Delete override" onclick="deleteActivity(' + i + ')">&times;</button></td>' +
     '</tr>'
   ).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:14px">No activity overrides defined.</td></tr>';
 }
@@ -376,7 +402,7 @@ function deriveUtilFromReadings() {
   const readings = (_isV5 ? _originalJSON.masterData?.readings : _originalJSON.readings) || [];
   if (!readings.length) { showToast('No readings[] in this file.', 'warn'); return; }
   // Group readings by fleet (via unit lookup) and compute average hrs/day
-  // across the most recent 365 days. Simple aggregator — refined in v0.2.
+  // across the most recent 365 days. Simple aggregator — refined in a later chunk.
   const unitsById = {}; state.units.forEach(u => { unitsById[u.id] = u; unitsById[u.floc] = u; });
   const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000;
   const perFleet = {};
@@ -426,7 +452,7 @@ function exportFleet() {
   const cc = out.meta.clientCode || 'CLIENT';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  // Chunk 11 — unified save filename via numacore_lib v1.2.0 helper.
+  // Unified save filename via numacore_lib helper.
   // Falls back to legacy <cc>_fleet.json (overwrite-in-place) if lib not loaded.
   a.download = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
     ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: out })

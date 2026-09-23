@@ -1,0 +1,220 @@
+/* ============================================================================
+   numacore-ui.css  —  NumaCore Lens Suite shared design system
+   v1.0 · 2026-09-22 · Birchwood/NumaCore Brand System v1.1
+
+   ONE stylesheet for the whole suite. Link it once, before each tool's own
+   <style>, then delete that tool's hardcoded palette/fonts and use the tokens
+   and .nc-* component classes below.
+
+       <link rel="stylesheet" href="numacore-ui.css">
+
+   Fonts are BUNDLED LOCALLY in vendor/fonts/ (latin subset, ~276 KB, 14 files).
+   No external CDN call — safe for air-gapped client machines.
+
+   PER-PANEL ACCENT: set data-panel on any container to theme everything inside
+   it with that panel's accent (drives buttons, tabs, badges, links, glows):
+       <div class="nc" data-panel="pulse">   ... </div>
+   Panels: numacore stride lens pulse vitals horizon cadence deploy signal intake
+   Default accent (no data-panel) is Lens cyan-green.
+   ============================================================================ */
+
+/* ---- 1. LOCAL FONTS ------------------------------------------------------- */
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:500;font-display:swap;src:url(vendor/fonts/barlow-condensed-500.woff2) format('woff2')}
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:600;font-display:swap;src:url(vendor/fonts/barlow-condensed-600.woff2) format('woff2')}
+@font-face{font-family:'Barlow Condensed';font-style:normal;font-weight:700;font-display:swap;src:url(vendor/fonts/barlow-condensed-700.woff2) format('woff2')}
+@font-face{font-family:'Rajdhani';font-style:normal;font-weight:400;font-display:swap;src:url(vendor/fonts/rajdhani-400.woff2) format('woff2')}
+@font-face{font-family:'Rajdhani';font-style:normal;font-weight:500;font-display:swap;src:url(vendor/fonts/rajdhani-500.woff2) format('woff2')}
+@font-face{font-family:'Rajdhani';font-style:normal;font-weight:600;font-display:swap;src:url(vendor/fonts/rajdhani-600.woff2) format('woff2')}
+@font-face{font-family:'Rajdhani';font-style:normal;font-weight:700;font-display:swap;src:url(vendor/fonts/rajdhani-700.woff2) format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:300;font-display:swap;src:url(vendor/fonts/barlow-300.woff2) format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:400;font-display:swap;src:url(vendor/fonts/barlow-400.woff2) format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:500;font-display:swap;src:url(vendor/fonts/barlow-500.woff2) format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:600;font-display:swap;src:url(vendor/fonts/barlow-600.woff2) format('woff2')}
+@font-face{font-family:'Barlow';font-style:normal;font-weight:700;font-display:swap;src:url(vendor/fonts/barlow-700.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(vendor/fonts/jetbrains-mono-400.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url(vendor/fonts/jetbrains-mono-500.woff2) format('woff2')}
+
+/* ---- 2. TOKENS ------------------------------------------------------------ */
+:root{
+  /* NumaCore backgrounds (colder blue-black) */
+  --nc-void:#0A0D1A; --nc-deep:#040E1C; --nc-surface:#080C14;
+  --nc-dark-green:#030F0C; --nc-chrome:#14161D; --nc-border:#2A2D3A;
+  /* text */
+  --nc-text:#E8E9ED; --nc-text-m:#8B8FA3; --nc-text-d:#5C6078;
+  /* panel accents (primary / secondary) */
+  --nc-numacore:#9B97E8; --nc-numacore-2:#7F77DD;
+  --nc-stride:#5FA8E0;   --nc-stride-2:#1E6FAC;
+  --nc-lens:#3DC9A0;     --nc-lens-2:#0F6E56;
+  --nc-pulse:#E24B4A;    --nc-pulse-2:#C03030;
+  --nc-vitals:#1D9E75;   --nc-vitals-2:#0D6B50;
+  --nc-horizon:#378ADD;  --nc-horizon-2:#1055A0;
+  --nc-cadence:#BA7517;  --nc-cadence-2:#854F0B;
+  --nc-deploy:#9B97E8;   --nc-deploy-2:#5340C8;
+  --nc-signal:#5DCAA5;   --nc-signal-2:#0B6648;
+  --nc-intake:#888780;   --nc-intake-2:#444441;
+  /* status — semantic only, never decorative */
+  --nc-ok:#34D399; --nc-warn:#FBBF24; --nc-crit:#EF4444; --nc-info:#1FCED8;
+  /* the active panel accent — overridden by [data-panel]; defaults to Lens */
+  --accent:var(--nc-lens); --accent-2:var(--nc-lens-2);
+  /* fonts (bundled + fallbacks) */
+  --nc-font-display:'Barlow Condensed','Arial Narrow',sans-serif;
+  --nc-font-head:'Rajdhani','Segoe UI',sans-serif;
+  --nc-font-body:'Barlow','Segoe UI',system-ui,sans-serif;
+  --nc-font-mono:'JetBrains Mono','Consolas',monospace;
+  /* radii + elevation */
+  --nc-r-sm:4px; --nc-r-md:6px; --nc-r-lg:12px; --nc-r-xl:14px;
+  --nc-shadow:0 2px 8px rgba(0,0,0,.35), 0 8px 30px rgba(0,0,0,.25);
+  /* spacing scale */
+  --nc-sp-1:4px; --nc-sp-2:8px; --nc-sp-3:12px; --nc-sp-4:16px; --nc-sp-5:24px; --nc-sp-6:32px;
+}
+
+/* per-panel accent switch */
+[data-panel="numacore"]{--accent:var(--nc-numacore);--accent-2:var(--nc-numacore-2)}
+[data-panel="stride"]  {--accent:var(--nc-stride);  --accent-2:var(--nc-stride-2)}
+[data-panel="lens"]    {--accent:var(--nc-lens);    --accent-2:var(--nc-lens-2)}
+[data-panel="pulse"]   {--accent:var(--nc-pulse);   --accent-2:var(--nc-pulse-2)}
+[data-panel="vitals"]  {--accent:var(--nc-vitals);  --accent-2:var(--nc-vitals-2)}
+[data-panel="horizon"] {--accent:var(--nc-horizon); --accent-2:var(--nc-horizon-2)}
+[data-panel="cadence"] {--accent:var(--nc-cadence); --accent-2:var(--nc-cadence-2)}
+[data-panel="deploy"]  {--accent:var(--nc-deploy);  --accent-2:var(--nc-deploy-2)}
+[data-panel="signal"]  {--accent:var(--nc-signal);  --accent-2:var(--nc-signal-2)}
+[data-panel="intake"]  {--accent:var(--nc-intake);  --accent-2:var(--nc-intake-2)}
+
+/* ---- 3. BASE ------------------------------------------------------------- */
+.nc, .nc *{box-sizing:border-box}
+.nc-root{
+  background:var(--nc-void); color:var(--nc-text);
+  font-family:var(--nc-font-body); font-weight:400; font-size:15px; line-height:1.6;
+  color-scheme:dark; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+/* Lens-suite tools sit on the green-tinted ground */
+.nc-root[data-suite="lens"]{background:var(--nc-dark-green)}
+
+/* ---- 4. TYPOGRAPHY ------------------------------------------------------- */
+.nc h1,.nc-h1{font-family:var(--nc-font-display);font-weight:700;text-transform:uppercase;letter-spacing:3px;font-size:48px;line-height:1.1;margin:0 0 .3em}
+.nc h2,.nc-h2{font-family:var(--nc-font-display);font-weight:700;text-transform:uppercase;letter-spacing:2px;font-size:36px;line-height:1.15;margin:0 0 .3em}
+.nc h3,.nc-h3{font-family:var(--nc-font-head);font-weight:600;font-size:24px;line-height:1.25;margin:0 0 .3em}
+.nc h4,.nc-h4{font-family:var(--nc-font-head);font-weight:600;font-size:18px;letter-spacing:.5px;line-height:1.3;margin:0 0 .3em}
+.nc-body{font-family:var(--nc-font-body);font-size:16px;line-height:1.6}
+.nc-caption{font-size:13px;line-height:1.5;color:var(--nc-text-m)}
+.nc-mono{font-family:var(--nc-font-mono);font-size:14px;line-height:1.5}
+.nc-label{font-family:var(--nc-font-mono);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:1.5px;line-height:1.3;color:var(--nc-text-m)}
+.nc-eyebrow{font-family:var(--nc-font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);opacity:.85}
+.nc a,.nc-link{color:var(--accent);text-decoration:none}
+.nc a:hover,.nc-link:hover{text-decoration:underline}
+.nc-num{font-family:var(--nc-font-mono);font-variant-numeric:tabular-nums}
+
+/* ---- 5. BUTTONS ---------------------------------------------------------- */
+.nc-btn{
+  --_bg:transparent; --_fg:var(--nc-text); --_bd:var(--nc-border);
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  font-family:var(--nc-font-head);font-weight:600;font-size:14px;letter-spacing:.3px;
+  padding:8px 16px;min-height:36px;border-radius:var(--nc-r-sm);
+  background:var(--_bg);color:var(--_fg);border:1px solid var(--_bd);
+  cursor:pointer;transition:background .15s,border-color .15s,box-shadow .15s,color .15s;white-space:nowrap;
+}
+.nc-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.nc-btn:disabled{opacity:.45;cursor:not-allowed}
+.nc-btn--primary{--_bg:var(--accent);--_fg:var(--nc-void);--_bd:var(--accent)}
+.nc-btn--primary:hover{box-shadow:0 0 16px -2px var(--accent);filter:brightness(1.06)}
+.nc-btn--secondary{--_bg:transparent;--_fg:var(--accent);--_bd:var(--accent)}
+.nc-btn--secondary:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.nc-btn--ghost{--_bg:transparent;--_fg:var(--nc-text-m);--_bd:var(--nc-border)}
+.nc-btn--ghost:hover{--_fg:var(--nc-text);--_bd:var(--accent)}
+.nc-btn--danger{--_bg:var(--nc-crit);--_fg:#fff;--_bd:var(--nc-crit)}
+.nc-btn--danger:hover{filter:brightness(1.08);box-shadow:0 0 16px -2px var(--nc-crit)}
+.nc-btn--sm{min-height:28px;padding:4px 10px;font-size:12px}
+.nc-btn--lg{min-height:44px;padding:11px 22px;font-size:15px}
+.nc-btn--icon{padding:6px;min-height:32px;width:32px}
+
+/* ---- 6. BADGES + STATUS DOT --------------------------------------------- */
+.nc-badge{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--nc-font-mono);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;
+  padding:2px 9px;border-radius:20px;
+  color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);
+}
+.nc-badge--ok  {color:var(--nc-ok);  background:color-mix(in srgb,var(--nc-ok) 12%,transparent);  border-color:color-mix(in srgb,var(--nc-ok) 30%,transparent)}
+.nc-badge--warn{color:var(--nc-warn);background:color-mix(in srgb,var(--nc-warn) 12%,transparent);border-color:color-mix(in srgb,var(--nc-warn) 30%,transparent)}
+.nc-badge--crit{color:var(--nc-crit);background:color-mix(in srgb,var(--nc-crit) 14%,transparent);border-color:color-mix(in srgb,var(--nc-crit) 32%,transparent)}
+.nc-badge--info{color:var(--nc-info);background:color-mix(in srgb,var(--nc-info) 12%,transparent);border-color:color-mix(in srgb,var(--nc-info) 30%,transparent)}
+.nc-dot{width:7px;height:7px;border-radius:50%;display:inline-block;background:currentColor;box-shadow:0 0 7px currentColor}
+
+/* ---- 7. CARDS + PANELS --------------------------------------------------- */
+.nc-card{
+  position:relative;background:var(--nc-surface);
+  border:1px solid color-mix(in srgb,var(--accent) 14%,var(--nc-border));
+  border-radius:var(--nc-r-xl);padding:18px 20px;box-shadow:var(--nc-shadow);
+}
+.nc-card:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--nc-border))}
+.nc-card__hd{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+/* full NumaCore panel: eyebrow + name + glow blob + hex texture */
+.nc-panel{position:relative;overflow:hidden;background:var(--nc-chrome);
+  border:1px solid color-mix(in srgb,var(--accent) 14%,var(--nc-border));border-radius:var(--nc-r-xl);padding:20px 22px}
+.nc-panel::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(0,210,180,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,210,180,.04) 1px,transparent 1px);
+  background-size:28px 28px;opacity:.6}
+.nc-panel__glow{position:absolute;width:240px;height:240px;border-radius:50%;filter:blur(48px);opacity:.15;background:var(--accent);top:-90px;right:-70px;pointer-events:none}
+.nc-panel__eyebrow{font-family:var(--nc-font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:color-mix(in srgb,var(--accent) 60%,var(--nc-text-m));position:relative}
+.nc-panel__name{font-family:var(--nc-font-head);font-weight:500;font-size:22px;color:var(--accent);position:relative;margin:2px 0 0}
+
+/* ---- 8. TABS ------------------------------------------------------------- */
+.nc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--nc-border)}
+.nc-tab{
+  font-family:var(--nc-font-head);font-weight:600;font-size:13px;letter-spacing:.4px;
+  padding:9px 16px;color:var(--nc-text-m);background:transparent;border:none;
+  border-bottom:2px solid transparent;cursor:pointer;transition:color .15s,border-color .15s;
+}
+.nc-tab:hover{color:var(--nc-text)}
+.nc-tab[aria-selected="true"],.nc-tab.is-active{color:var(--accent);border-bottom-color:var(--accent)}
+/* pill-tab variant (Lens header/subtab style) */
+.nc-pill{font-family:var(--nc-font-head);font-weight:600;font-size:12px;letter-spacing:.3px;
+  padding:6px 14px;border-radius:20px;color:var(--nc-text-m);background:transparent;
+  border:1px solid var(--nc-border);cursor:pointer;transition:all .15s}
+.nc-pill:hover{color:var(--nc-text);border-color:color-mix(in srgb,var(--accent) 40%,var(--nc-border))}
+.nc-pill[aria-selected="true"],.nc-pill.is-active{color:var(--accent);border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+
+/* ---- 9. DATA TABLE ------------------------------------------------------- */
+.nc-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.nc-table th{font-family:var(--nc-font-head);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+  text-align:left;padding:8px 12px;color:var(--nc-text-m);background:rgba(255,255,255,.03);border-bottom:1px solid var(--nc-border)}
+.nc-table td{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:top}
+.nc-table td.num,.nc-table th.num{font-family:var(--nc-font-mono);font-variant-numeric:tabular-nums;text-align:right}
+.nc-table tbody tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+.nc-table tbody tr:hover td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
+
+/* ---- 10. BANNERS + TOASTS ----------------------------------------------- */
+.nc-banner{display:flex;align-items:flex-start;gap:10px;font-size:14px;
+  padding:11px 15px;border-radius:var(--nc-r-md);border:1px solid;margin:10px 0}
+.nc-banner__k{font-family:var(--nc-font-mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:2px}
+.nc-banner--info{color:#bfeef2;background:color-mix(in srgb,var(--nc-info) 8%,transparent);border-color:color-mix(in srgb,var(--nc-info) 35%,transparent)}
+.nc-banner--ok  {color:#c7f2e2;background:color-mix(in srgb,var(--nc-ok) 8%,transparent);  border-color:color-mix(in srgb,var(--nc-ok) 35%,transparent)}
+.nc-banner--warn{color:#fdedc0;background:color-mix(in srgb,var(--nc-warn) 8%,transparent);border-color:color-mix(in srgb,var(--nc-warn) 35%,transparent)}
+.nc-banner--crit{color:#fdd3d3;background:color-mix(in srgb,var(--nc-crit) 9%,transparent);border-color:color-mix(in srgb,var(--nc-crit) 38%,transparent)}
+.nc-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;
+  font-family:var(--nc-font-body);font-size:14px;padding:11px 18px;border-radius:var(--nc-r-md);
+  background:var(--nc-chrome);color:var(--nc-text);border:1px solid var(--accent);box-shadow:var(--nc-shadow)}
+.nc-toast--ok{border-color:var(--nc-ok)} .nc-toast--warn{border-color:var(--nc-warn)} .nc-toast--crit{border-color:var(--nc-crit)}
+
+/* ---- 11. FORM CONTROLS --------------------------------------------------- */
+.nc-input,.nc-select,.nc-textarea{
+  font-family:var(--nc-font-body);font-size:14px;color:var(--nc-text);
+  background:var(--nc-void);border:1px solid var(--nc-border);border-radius:var(--nc-r-sm);
+  padding:8px 10px;min-height:36px;transition:border-color .15s,box-shadow .15s;width:100%}
+.nc-input:focus,.nc-select:focus,.nc-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+.nc-input::placeholder{color:var(--nc-text-d)}
+.nc-field{display:flex;flex-direction:column;gap:5px}
+.nc-check{width:16px;height:16px;accent-color:var(--accent)}
+
+/* ---- 12. MOTIFS + UTILITIES --------------------------------------------- */
+.nc-hexgrid{background-image:linear-gradient(rgba(0,210,180,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,210,180,.04) 1px,transparent 1px);background-size:28px 28px}
+.nc-glow{position:absolute;border-radius:50%;filter:blur(48px);opacity:.14;background:var(--accent);pointer-events:none}
+.nc-divider{height:1px;background:var(--nc-border);border:none;margin:16px 0}
+.nc-stack>*+*{margin-top:var(--nc-sp-3)}
+.nc-row{display:flex;align-items:center;gap:var(--nc-sp-3)}
+.nc-spread{display:flex;align-items:center;justify-content:space-between;gap:var(--nc-sp-3)}
+.nc-muted{color:var(--nc-text-m)} .nc-dim{color:var(--nc-text-d)}
+.nc-accent{color:var(--accent)}
+
+/* end numacore-ui.css */
