@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NumaCore Intake v8.11</title>
+<title>NumaCore Intake v8.12</title>
 <script src="numacore_lib.js"></script>
 <!-- v8.8 FIX-1 (2026-06-10, review P5 Chunk A) — vendored libraries, local-first
      with CDN fallback. SheetJS upgraded 0.18.5 → 0.20.2: cdnjs froze at 0.18.5;
@@ -30,17 +30,19 @@
       : 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   }
 </script>
+<link rel="stylesheet" href="numacore-ui.css">
 <style>
 :root {
-  --gold: #D6A70C; --gold-dim: #8a6d0a;
-  --bg: #0f1117; --bg2: #141820; --bg3: #1a1f2e; --bg4: #232a3b;
-  --border: #2a3347; --border2: #3a4457;
-  --text: #e0e0e0; --text2: #8a9ab5; --text3: #5a6a85;
-  --green: #34c97a; --red: #f05252; --yellow: #f0b429; --blue: #5b9cf6;
+  /* v8.12: repointed to numacore-ui.css design tokens (accent = Intake stone). Old gold theme removed. */
+  --gold: var(--nc-intake); --gold-dim: var(--nc-intake-2);
+  --bg: var(--nc-void); --bg2: var(--nc-surface); --bg3: var(--nc-chrome); --bg4: var(--nc-chrome);
+  --border: var(--nc-border); --border2: var(--nc-border);
+  --text: var(--nc-text); --text2: var(--nc-text-m); --text3: var(--nc-text-d);
+  --green: var(--nc-ok); --red: var(--nc-crit); --yellow: var(--nc-warn); --blue: var(--nc-horizon);
   --tab-h: 44px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', Arial, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 13px; }
+body { font-family: var(--nc-font-body); background: var(--bg); color: var(--text); min-height: 100vh; font-size: 13px; }
 
 /* ── HEADER ── */
 header {
@@ -312,7 +314,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 <!-- v8.8 FEAT-1 — Session JSON banner. Visible whenever an apply has retained a
      result in memory. Shows the chain of operations + downloaded state; offers
      the final download and an explicit discard. -->
-<div id="sessionBanner" style="display:none;margin:10px 24px 0;padding:10px 14px;background:rgba(212,175,55,0.08);border:1px solid var(--gold);border-radius:8px;font-size:12px;color:var(--text2);align-items:center;gap:10px;flex-wrap:wrap">
+<div id="sessionBanner" style="display:none;margin:10px 24px 0;padding:10px 14px;background:color-mix(in srgb,var(--nc-intake) 10%,transparent);border:1px solid var(--gold);border-radius:8px;font-size:12px;color:var(--text2);align-items:center;gap:10px;flex-wrap:wrap">
   <span id="sessionBannerText"></span>
   <span style="flex:1"></span>
   <button class="btn btn-gold btn-sm" onclick="downloadSessionJSON()">⬇ Download session JSON</button>
@@ -535,7 +537,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
         <button id="previewV5Btn"  class="btn btn-outline btn-sm" onclick="setExportPreview('v5')">Preview V18+ (Schema V5) format</button>
       </div>
 
-      <div id="exportPreview" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px;font-size:11px;font-family:'Courier New',monospace;color:var(--text2);max-height:300px;overflow:auto;margin-bottom:14px;white-space:pre;line-height:1.5"></div>
+      <div id="exportPreview" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:14px;font-size:11px;font-family:var(--nc-font-mono);color:var(--text2);max-height:300px;overflow:auto;margin-bottom:14px;white-space:pre;line-height:1.5"></div>
 
       <div class="btn-row">
         <button class="btn btn-gold" onclick="exportJSON('v17')">⬇ Download for Lens V17</button>
@@ -866,7 +868,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.10';
+const VERSION = '8.12';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -5246,7 +5248,7 @@ function _idlingRenderBoxes() {
     html += '<div class="idling-box" data-box="' + k + '" style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#0e0e10' + (enabled ? '' : ';opacity:0.7') + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
         '<div style="font-size:13px;font-weight:700;color:var(--text);letter-spacing:0.5px">' + esc(IDLING_BOX_LABELS[k]) + '</div>' +
-        '<div style="font-size:10px;color:var(--text3);font-family:monospace">writes to: <code style="color:var(--gold)">' + fieldLbl + '</code></div>' +
+        '<div style="font-size:10px;color:var(--text3);font-family:var(--nc-font-mono)">writes to: <code style="color:var(--gold)">' + fieldLbl + '</code></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:center">' +
         '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text3)"><span>Sheet</span>' +
