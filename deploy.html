@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.18 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.19 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -467,6 +467,8 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 #toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
 #toast.success { border-color:var(--green); color:var(--green); }
 #toast.error { border-color:var(--red); color:var(--red); }
+#toast.warn { border-color:var(--amber); color:var(--amber); }   /* v8.19 — warn/info were used but unstyled */
+#toast.info { border-color:var(--blue); }
 
 
 /* ══════════════════════════════════════════════════
@@ -561,7 +563,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 <div id="load-screen">
   <div class="load-card">
     <div class="load-brand">NumaCore <span>Deploy</span></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:20px">Shutdown &amp; Project Manager · v7</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:20px">Shutdown &amp; Project Manager · v8.19</div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fleetIn').click()"
          ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="dzDrop(event)">
       <span class="drop-zone-icon">📂</span>
@@ -999,6 +1001,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
     <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Session snapshot — data lives in browser memory only and is never saved into the fleet JSON.</div>
     <div class="cm-grid" id="invMasterMapGrid"></div>
     <div class="cm-hint" id="invMasterRowCount"></div>
+    <div id="invDataDateBox" style="font-size:11px;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:4px;background:var(--deep)"></div><!-- v8.19 FIX-2 -->
     <div class="m-actions">
       <button class="mbtn secondary" onclick="closeModal('modalInvMasterMap')">Cancel</button>
       <button class="mbtn primary"   onclick="confirmInvMasterImport()">Import Inventory Master →</button>
@@ -1013,6 +1016,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
     <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Fleet-wide IW39 — covers all units. Per-unit filtering happens at render time. Session memory only.</div>
     <div class="cm-grid" id="iw39FleetMapGrid"></div>
     <div class="cm-hint" id="iw39FleetRowCount"></div>
+    <div id="iw39DataDateBox" style="font-size:11px;margin-top:12px;padding:10px 12px;border:1px solid var(--border);border-radius:4px;background:var(--deep)"></div><!-- v8.19 FIX-1 -->
     <div class="m-actions">
       <button class="mbtn secondary" onclick="closeModal('modalIW39FleetMap')">Cancel</button>
       <button class="mbtn primary"   onclick="confirmIW39FleetImport()">Import IW39 →</button>
@@ -1099,7 +1103,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
       <div id="cfgPanelInfo" style="display:none">
         <div class="cfg-section-hdr"><span>About Deploy</span></div>
         <div style="font-size:12px;color:var(--txt2);line-height:1.8">
-          <p style="margin-bottom:10px"><strong>NumaCore Deploy — Shutdown &amp; Project Manager</strong> v7</p>
+          <p style="margin-bottom:10px"><strong>NumaCore Deploy — Shutdown &amp; Project Manager</strong> v8.19</p>
           <p style="margin-bottom:10px">All data is stored inside your <strong>fleet JSON file</strong>.
              Deploy data lives at <code style="color:var(--blue);font-size:11px">workingData.deployData</code>.
              Master data (units, components, fleet dates) is read-only — managed by NumaCore Intake.</p>
@@ -1137,7 +1141,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.18';  // single source of truth for tool version (v8.18 shipped the dual-shape cleanup long reserved as "v8.12")
+const VERSION = '8.19';  // single source of truth for tool version (v8.19: SAP extracts dated from their own data, not the upload time)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1189,6 +1193,9 @@ const WO_FIELDS = [
   // downstream (per Rex's standing protocol — blank beats a guess).
   { key:'basic_start',     label:'Basic Start Date',     required:false },
   { key:'completion_date', label:'Completion / Finish',  required:false },
+  // v8.19 FIX-1 — SAP "Created On" (ERDAT). Not stored per WO; it dates the
+  // file: the newest Created On is the floor of the extract's data date.
+  { key:'created_on',      label:'Created On (dates the file)', required:false },
   // v8.9 FIX-1 (2026-05-12) — sap_material REMOVED from WO_FIELDS. Operator
   // confirmed 2026-05-12: "the IW39 report does not include materials".
   // The v8.8 BOM↔IW39 material-match badge was always going to return zero
@@ -1259,6 +1266,7 @@ const ALIASES = {
   // time; auto-match catches the common SAP IW39 header variants.
   basic_start:     ['basic start','basic start date','bsd','planned start','start date','bas. start dt','sched start'],
   completion_date: ['actual finish','actual finish date','actl. finish','completion date','completed','completion','finish date','act. finish','date complete'],
+  created_on:      ['created on','created_on','erdat','creation date','date created'],   // v8.19 FIX-1 — never bare 'created' (would catch "Created By", a person)
   fleet:        ['fleet','fleet type','equipment type'],
   model:        ['model','machine model','asset model'],
   sn_prefix:    ['s/n prefix','sn prefix','serial prefix','sn pre','prefix'],
@@ -1307,10 +1315,16 @@ let callHorizonMonths = 3;
 // Page reload → re-upload required. Re-upload replaces (no merge).
 let _invMasterByMaterial = null;   // Map<normalisedMaterial, {description, on_hand, on_order_qty, po_flag, location, mov_avg_price, mrp_min, mrp_max, mat_grp, mfg_part_no}>
 let _invMasterByVPN      = null;   // Map<normalisedVPN, same shape> — built from Manufacturer Part No. column
-let _invMasterAsOf       = null;
+let _invMasterAsOf       = null;   // upload time (when this session read the file)
+let _invMasterDataAsOf   = null;   // v8.19 FIX-2 — the stock's own date, YYYY-MM-DD (null = unknown)
+let _invMasterDataMethod = '';     // 'file_name' | 'entered' | 'unknown'
+let _imFileName = '', _imFileModified = 0;
 let _invMasterRowCount   = 0;
 let _fleetWideIW39       = null;   // Array<{wo_number, status, order_type, floc, sap_material, ...}>
-let _iw39AsOf            = null;
+let _iw39AsOf            = null;   // upload time — also the per-load fingerprint for knownWOs re-records
+let _iw39DataAsOf        = null;   // v8.19 FIX-1 — the extract's own data date, YYYY-MM-DD (null = unknown)
+let _iw39DataMethod      = '';     // 'file_name+created_on' | 'created_on' | 'file_name' | 'entered' | 'unknown'
+let _woFileName = '', _woFileModified = 0;
 // v8.10 FIX-1 (2026-05-12 afternoon) — `_iw39YBA2Filter` removed. The
 // hardcoded YBA2 toggle is replaced by a per-fleet, user-editable filter
 // stored in deploy.config.iw39OrderTypes (default 'YBA2'). The status
@@ -1561,6 +1575,8 @@ function startApp() {
   // Restore call horizon from saved deploy data (DOM is ready at this point)
   if (deploy.callHorizonMonths) setCallHorizon(deploy.callHorizonMonths);
   renderSidebar();
+  // v8.19 FIX-3 — header pills reflect this file on every (re)load
+  try { _updateIW39StatusPill(); _updateInvMasterStatusPill(); } catch (e) { console.warn('[v8.19 pills]', e); }
   // v8.16 FIX-3 (2026-06-10, operator-reported) — view preservation on re-ingest.
   // Lens re-pushes the fleet on EVERY Deploy tab re-activation (Mission Control),
   // which re-runs startApp. The unconditional setLandingView('gantt') here
@@ -3526,7 +3542,7 @@ function _dismissClosedWO(projId, woNumber) {
   if (!p.recentlyClosedAcked || typeof p.recentlyClosedAcked !== 'object') p.recentlyClosedAcked = {};
   p.recentlyClosedAcked[String(woNumber)] = new Date().toISOString();
   _markUnsaved();
-  if (selProjId === projId && curTab === 'wo') renderWorkOrders(projId);
+  if (selProjId === projId && curTab === 'workorders') renderWorkOrders(projId);   // v8.19 FIX-4 — tab key is 'workorders' (was 'wo': the list never re-rendered)
 }
 
 // v8.14 — Apply a calendar-day delta (in ms) to every gate's planStart and
@@ -4075,9 +4091,11 @@ function handleInvMasterFile(e) {
   const file = e.target.files[0]; if (!file) return;
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
   toast(`Parsing Inventory Master (${sizeMB} MB)…`, 'info');
+  _imFileName = file.name || ''; _imFileModified = file.lastModified || 0;   // v8.19 FIX-2
   _readExcel(file, (hdrs, raw) => {
     _imHdrs = hdrs; _imRaw = raw;
     buildMapper('im');
+    _renderInvDataDateBox();
   }, msg => toast(msg, 'error'));
   e.target.value = '';
 }
@@ -4115,7 +4133,15 @@ function confirmInvMasterImport() {
   });
   _invMasterByMaterial = byMaterial;
   _invMasterByVPN      = byVPN;
-  _invMasterAsOf       = new Date().toISOString();
+  _invMasterAsOf       = new Date().toISOString();   // upload time
+  // v8.19 FIX-2 — the stock's own date: the file name's, or what the operator
+  // entered; blank = unknown. Never the upload time.
+  {
+    const _entered  = (document.getElementById('invAskDate') || {}).value || '';
+    const _nameDate = _dateFromFileName(_imFileName);
+    _invMasterDataAsOf   = _entered || null;
+    _invMasterDataMethod = !_entered ? 'unknown' : (_entered === _nameDate ? 'file_name' : 'entered');
+  }
   _invMasterRowCount   = _rowsLoaded;
   _imHdrs = []; _imRaw = null;
   closeModal('modalInvMasterMap');
@@ -4144,10 +4170,14 @@ function _updateInvMasterStatusPill() {
   const lbl = document.getElementById('invMasterStatusLbl');
   if (!lbl) return;
   if (_invMasterByMaterial && _invMasterByMaterial.size > 0) {
+    // v8.19 FIX-2 — show the stock's own date, not the upload clock time.
     const t = new Date(_invMasterAsOf);
     const hh = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
-    lbl.textContent = `as of ${hh} · ${_invMasterRowCount.toLocaleString()} mats`;
-    lbl.style.color = 'var(--green)';
+    lbl.textContent = _invMasterDataAsOf
+      ? `stock ${_fmtDataDate(_invMasterDataAsOf)} · ${_invMasterRowCount.toLocaleString()} mats`
+      : `stock date unknown · ${_invMasterRowCount.toLocaleString()} mats`;
+    lbl.style.color = _invMasterDataAsOf ? 'var(--green)' : 'var(--red)';
+    lbl.title = `Stock date: ${_invMasterDataAsOf ? _fmtDataDate(_invMasterDataAsOf) : 'unknown'} (${_dataMethodLabel(_invMasterDataMethod)}) · loaded ${hh}${_imFileName ? ' · ' + _imFileName : ''}`;
   } else {
     lbl.textContent = 'Not loaded';
     lbl.style.color = 'var(--muted)';
@@ -4157,6 +4187,7 @@ function _updateInvMasterStatusPill() {
 // ─── Fleet-wide IW39 (session memory) ───────────────────────────────
 function handleIW39FleetFile(e) {
   const file = e.target.files[0]; if (!file) return;
+  _woFileName = file.name || ''; _woFileModified = file.lastModified || 0;   // v8.19 FIX-1
   _readExcel(file, (hdrs, raw) => {
     _woHdrs = hdrs; _woRaw = raw;
     buildMapper('iw39fleet');
@@ -4188,7 +4219,124 @@ function _xlDateStr(val) {
   }
   return s;
 }
-const _WO_DATE_KEYS = ['basic_start', 'completion_date'];  // v8.16 FIX-2 — IW39 date columns
+const _WO_DATE_KEYS = ['basic_start', 'completion_date', 'created_on'];  // v8.16 FIX-2 — IW39 date columns (v8.19: + created_on)
+
+// ─── v8.19 FIX-1/2 — DATA DATES ─────────────────────────────────────────
+// A SAP extract's date is the date of its DATA, never the moment it was
+// uploaded (v8.9–v8.18 used new Date(), so an April IW39 loaded today passed
+// the Lens Risk Report's 30-day gate as fresh). Rules, from the client drive
+// folder spec §5 (2026-09-25) and the Building Blocks ingest SPEC:
+//   IW39     newest Created On = the floor. A date in the file name that is on,
+//            or up to 4 days after, the floor wins (allows for weekends);
+//            otherwise the floor is used and the mismatch is flagged.
+//            No Created On → the file-name date → ask → 'unknown'.
+//   INV_MSTR no date column exists → the file-name date, or the operator enters
+//            one; blank = 'unknown' (shown red, never guessed).
+// All calendar maths is local-time (no toISOString — that is UTC and shifts
+// the day after 6 pm in Edmonton).
+function _localIsoDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _isoToLocalDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+function _validYmd(y, mo, d) {
+  if (!(y >= 2000 && y <= 2099 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+  const dt = new Date(y, mo - 1, d);
+  return dt.getMonth() === mo - 1 ? _localIsoDate(dt) : null;   // rejects 31 Feb etc.
+}
+const _MON3 = { JAN:1, FEB:2, MAR:3, APR:4, MAY:5, JUN:6, JUL:7, AUG:8, SEP:9, OCT:10, NOV:11, DEC:12 };
+// Full dates only. A month-only name ("IW39 MARCH 26") has no day, so it is not a date.
+function _dateFromFileName(name) {
+  const s = String(name || '').toUpperCase();
+  let m;
+  if ((m = /(20\d\d)[_\-. ](\d\d)[_\-. ](\d\d)/.exec(s))) return _validYmd(+m[1], +m[2], +m[3]);        // 2026_09_22
+  if ((m = /(?:^|\D)(20\d\d)(\d\d)(\d\d)(?:\D|$)/.exec(s))) return _validYmd(+m[1], +m[2], +m[3]);     // 20260922
+  if ((m = /(?:^|[^0-9])(\d{1,2})[ _\-]?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*[ _\-]?(\d{4}|\d{2})(?:\D|$)/.exec(s))) {
+    return _validYmd(m[3].length === 2 ? 2000 + +m[3] : +m[3], _MON3[m[2]], +m[1]);                    // 27APR26
+  }
+  return null;
+}
+// Created On cell → YYYY-MM-DD. Serials via _xlDateStr; text only when
+// unambiguous (ISO, or SAP's dotted DD.MM.YYYY). Slash dates are refused —
+// 03/04/2026 could be either order.
+function _createdOnIso(val) {
+  const v = _xlDateStr(val);
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(v);
+  return m ? _validYmd(+m[3], +m[2], +m[1]) : null;
+}
+function _iw39DataDate(createdOnValues, fileName) {
+  let newest = null, oldest = null, read = 0, unreadable = 0;
+  createdOnValues.forEach(v => {
+    if (String(v ?? '').trim() === '') return;
+    const iso = _createdOnIso(v);
+    if (!iso) { unreadable++; return; }
+    read++;
+    if (!newest || iso > newest) newest = iso;
+    if (!oldest || iso < oldest) oldest = iso;
+  });
+  const nameDate = _dateFromFileName(fileName);
+  let asOf = null, method = 'unknown', warn = '';
+  if (newest) {
+    const gap = nameDate ? Math.round((_isoToLocalDate(nameDate) - _isoToLocalDate(newest)) / 86400000) : null;
+    if (gap !== null && gap >= 0 && gap <= 4) { asOf = nameDate; method = 'file_name+created_on'; }
+    else {
+      asOf = newest; method = 'created_on';
+      if (nameDate) warn = `The file name says ${_fmtDataDate(nameDate)}, but the newest Created On in the file is ${_fmtDataDate(newest)}. Using ${_fmtDataDate(newest)}.`;
+    }
+  } else if (nameDate) { asOf = nameDate; method = 'file_name'; }
+  return { asOf, method, window: oldest ? { from: oldest, to: newest } : null, read, unreadable, nameDate, warn };
+}
+function _fmtDataDate(iso) {
+  const d = _isoToLocalDate(iso);
+  if (!d) return 'date unknown';
+  return d.getDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getFullYear();
+}
+function _dataMethodLabel(method) {
+  return ({
+    'file_name+created_on': 'file name, matching the newest Created On',
+    'created_on':           'newest Created On in the file',
+    'file_name':            'file name',
+    'entered':              'entered at upload',
+    'unknown':              'unknown'
+  })[method] || method || 'unknown';
+}
+// The IW39 mapper's "data date" box — recomputed whenever a column dropdown
+// changes, so the operator sees the date that will be recorded BEFORE import.
+function _renderIW39DataDateBox() {
+  const box = document.getElementById('iw39DataDateBox');
+  if (!box) return;
+  const sel = document.getElementById('wfm_created_on');
+  const col = (sel && sel.value !== '(skip)') ? _woHdrs.indexOf(sel.value) : -1;
+  const vals = (col >= 0 && Array.isArray(_woRaw)) ? _woRaw.map(r => r[col]) : [];
+  const dd = _iw39DataDate(vals, _woFileName);
+  let html;
+  if (dd.asOf) {
+    const win = dd.window ? ` · covers ${_fmtDataDate(dd.window.from)} – ${_fmtDataDate(dd.window.to)}` : '';
+    html = `<div style="color:${dd.warn ? 'var(--amber)' : 'var(--green)'}"><strong>Data date: ${_fmtDataDate(dd.asOf)}</strong> — from the ${esc(_dataMethodLabel(dd.method))}${win}</div>`
+         + (dd.warn ? `<div style="color:var(--amber);margin-top:4px">⚠ ${esc(dd.warn)}</div>` : '')
+         + (dd.unreadable ? `<div style="color:var(--faint);margin-top:4px">${dd.unreadable.toLocaleString()} Created On cell(s) could not be read as dates and were ignored.</div>` : '');
+  } else {
+    html = `<div style="color:var(--amber)"><strong>No data date found.</strong> Map the <em>Created On</em> column above, or enter the date this IW39 was exported:</div>
+      <div style="margin-top:6px"><input type="date" id="iw39AskDate" style="background:var(--deep);border:1px solid var(--border2);color:var(--txt);border-radius:4px;padding:4px 6px;font-size:11px">
+      <span style="color:var(--faint);margin-left:8px">Leave blank to record it as unknown — the Lens Risk Report will then refuse this IW39.</span></div>`;
+  }
+  box.innerHTML = html;
+}
+// The Inventory Master mapper's "stock date" box. INV_MSTR has no date column,
+// so the date is the file name's or the operator's; blank = unknown.
+function _renderInvDataDateBox() {
+  const box = document.getElementById('invDataDateBox');
+  if (!box) return;
+  const nameDate = _dateFromFileName(_imFileName);
+  const saved = _imFileModified ? _localIsoDate(new Date(_imFileModified)) : '';
+  box.innerHTML = `<div style="color:var(--txt2)"><strong>Stock date</strong> — the Inventory Master has no date inside it.
+      ${nameDate ? `Taken from the file name: <strong style="color:var(--green)">${_fmtDataDate(nameDate)}</strong>. Change it if that is wrong.` : `The file name has no date — enter the date this export was taken.`}</div>
+    <div style="margin-top:6px"><input type="date" id="invAskDate" value="${nameDate || ''}" style="background:var(--deep);border:1px solid var(--border2);color:var(--txt);border-radius:4px;padding:4px 6px;font-size:11px">
+      <span style="color:var(--faint);margin-left:8px">${!nameDate && saved ? `The file was last saved on ${_fmtDataDate(saved)} — use that only if nobody opened and re-saved it in Excel. ` : ''}Blank = unknown (stock shows red).</span></div>`;
+}
 
 function confirmIW39FleetImport() {
   const mapping = {};
@@ -4197,7 +4345,7 @@ function confirmIW39FleetImport() {
     if (s && s.value !== '(skip)') mapping[f.key] = _woHdrs.indexOf(s.value);
   });
   if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
-  const wos = _woRaw.map(row => {
+  const _allWos = _woRaw.map(row => {
     const item = {};
     WO_FIELDS.forEach(f => {
       if (mapping[f.key] === undefined) return;
@@ -4208,9 +4356,20 @@ function confirmIW39FleetImport() {
       item[f.key] = _WO_DATE_KEYS.includes(f.key) ? _xlDateStr(raw) : raw;
     });
     return item;
-  }).filter(i => i.wo_number);
+  });
+  const wos = _allWos.filter(i => i.wo_number);
+  const _skippedNoWO = _allWos.length - wos.length;   // v8.19 — counted, never silent
+  // v8.19 FIX-1 — the extract's own data date (see _iw39DataDate). Computed
+  // from the RAW Created On cells so every row counts, including skipped ones.
+  const _dd = _iw39DataDate(mapping.created_on !== undefined ? _woRaw.map(r => r[mapping.created_on]) : [], _woFileName);
+  if (!_dd.asOf) {
+    const _entered = (document.getElementById('iw39AskDate') || {}).value || '';
+    if (_entered) { _dd.asOf = _entered; _dd.method = 'entered'; }
+  }
   _fleetWideIW39 = wos;
-  _iw39AsOf      = new Date().toISOString();
+  _iw39AsOf      = new Date().toISOString();   // upload time (per-load fingerprint)
+  _iw39DataAsOf  = _dd.asOf || null;
+  _iw39DataMethod = _dd.asOf ? _dd.method : 'unknown';
   _woHdrs = []; _woRaw = null;
   // v8.15 FIX-2 (2026-05-17 evening) — Top-level fleet-wide IW39 timestamp
   // on the Deploy slice. Operator-reported the per-project FIX-1 signal was
@@ -4220,7 +4379,16 @@ function confirmIW39FleetImport() {
   // single fact, single source of truth. Lens Risk Report gate reads this
   // first; per-project signals stay as fallback for older JSONs.
   if (deploy) {
-    deploy.fleetWideIW39AsOf = _iw39AsOf;
+    deploy.fleetWideIW39AsOf = _iw39AsOf;   // upload time — kept for files read by Lens ≤ v4.9.2
+    // v8.19 FIX-1 — the data date travels with the file. Lens v4.9.3+ gates
+    // the Risk Report on fleetWideIW39DataAsOf and ignores upload stamps once
+    // it is present. Additive fields; same workingData.deployData slice for
+    // V4 Flat and V5 files (unchanged since v8.18).
+    deploy.fleetWideIW39DataAsOf       = _iw39DataAsOf;          // 'YYYY-MM-DD' or null (unknown)
+    deploy.fleetWideIW39DataAsOfMethod = _iw39DataMethod;
+    deploy.fleetWideIW39Window         = _dd.window;             // {from,to} Created On range, or null
+    deploy.fleetWideIW39UploadedAt     = _iw39AsOf;
+    deploy.fleetWideIW39FileName       = _woFileName || '';
     if (typeof _markUnsaved === 'function') _markUnsaved();
   }
   // v8.16 (2026-05-25, operator-flagged RA scope-extension) — Persist the
@@ -4275,7 +4443,10 @@ function confirmIW39FleetImport() {
   const _saveReminder = (_eagerProjectsTouched > 0 || (_fleetRecord && (_fleetRecord.added > 0 || _fleetRecord.updated > 0)))
     ? ' (⚠ SAVE FILE to persist for Lens Risk Report)'
     : '';
-  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} matching ${matchLbl}${_projSummary}${_fleetSummary}${_saveReminder}`, 'success');
+  const _dateLbl = _iw39DataAsOf ? ` · data ${_fmtDataDate(_iw39DataAsOf)}` : ' · ⚠ data date unknown';
+  const _skipLbl = _skippedNoWO > 0 ? ` · ${_skippedNoWO.toLocaleString()} row${_skippedNoWO === 1 ? '' : 's'} without a WO number skipped` : '';
+  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs${_dateLbl} · ${matchingCount.toLocaleString()} matching ${matchLbl}${_skipLbl}${_projSummary}${_fleetSummary}${_saveReminder}`, _iw39DataAsOf ? 'success' : 'warn');
+  if (_dd.warn) setTimeout(() => toast('IW39: ' + _dd.warn, 'warn'), 4200);   // v8.19 — after the load toast clears
   // v8.14 — Closed-transitions one-shot toast. Aggregates across every Deploy
   // project (unit-filtered per-project) and surfaces a single deferred toast
   // if any previously-open WO has transitioned to CLSD/TECO/CNCL on this load.
@@ -4309,11 +4480,20 @@ function _updateIW39StatusPill(matchingCount) {
         : _fleetWideIW39.filter(w => _ot.includes((w.order_type || '').toUpperCase())).length;
     }
     const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
-    lbl.textContent = `as of ${hh} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} ${matchLbl}`;
-    lbl.style.color = 'var(--green)';
+    // v8.19 FIX-1 — the data date leads; the upload clock time moves to the tooltip.
+    lbl.textContent = `${_iw39DataAsOf ? 'data ' + _fmtDataDate(_iw39DataAsOf) : 'data date unknown'} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} ${matchLbl}`;
+    lbl.style.color = _iw39DataAsOf ? 'var(--green)' : 'var(--red)';
+    lbl.title = `Data date: ${_iw39DataAsOf ? _fmtDataDate(_iw39DataAsOf) : 'unknown'} (${_dataMethodLabel(_iw39DataMethod)}) · loaded ${hh}${_woFileName ? ' · ' + _woFileName : ''}`;
+  } else if (deploy && deploy.fleetWideIW39DataAsOf) {
+    // v8.19 FIX-3 — the pool is session-only, but the file remembers the last
+    // IW39's data date. Say so instead of a bare "Not loaded".
+    lbl.textContent = `not loaded this session · last data ${_fmtDataDate(deploy.fleetWideIW39DataAsOf)}`;
+    lbl.style.color = 'var(--muted)';
+    lbl.title = 'The work-order pool lives in memory only. The fleet file records the last IW39 loaded (' + _fmtDataDate(deploy.fleetWideIW39DataAsOf) + '). Click to load a fresh IW39.';
   } else {
     lbl.textContent = 'Not loaded';
     lbl.style.color = 'var(--muted)';
+    lbl.title = '';
   }
 }
 
@@ -4585,7 +4765,7 @@ function openStockDrillDown(projId, bomIdx) {
       <div style="display:flex;justify-content:space-between;gap:14px;margin-bottom:6px"><span style="color:var(--muted)">Quantity needed</span><span style="color:var(--txt);font-weight:600">${esc(bomRow.qty || '1')}</span></div>
       <div style="display:flex;justify-content:space-between;gap:14px;padding-top:8px;border-top:1px solid var(--border);margin-top:8px"><span style="color:var(--muted)">Stock state</span><span>${stateLabel}</span></div>
       <div style="display:flex;justify-content:space-between;gap:14px;margin-top:6px"><span style="color:var(--muted)">Total on hand · on order (across variants)</span><span style="color:var(--txt);font-weight:600">${status.totalOnHand.toLocaleString()} · ${status.totalOnOrder.toLocaleString()}</span></div>
-      ${_invMasterAsOf ? `<div style="font-size:10px;color:var(--faint);margin-top:6px">Inventory data as of ${new Date(_invMasterAsOf).toLocaleString()}</div>` : '<div style="font-size:10px;color:var(--orange);margin-top:6px">⚠ No Inventory Master loaded — upload from the header pill to populate stock data</div>'}
+      ${_invMasterAsOf ? `<div style="font-size:10px;color:${_invMasterDataAsOf ? 'var(--faint)' : 'var(--red)'};margin-top:6px">${_invMasterDataAsOf ? `Stock as of ${_fmtDataDate(_invMasterDataAsOf)} (${esc(_dataMethodLabel(_invMasterDataMethod))})` : '⚠ Stock date unknown'} · loaded ${new Date(_invMasterAsOf).toLocaleString()}</div>` : '<div style="font-size:10px;color:var(--orange);margin-top:6px">⚠ No Inventory Master loaded — upload from the header pill to populate stock data</div>'}
     </div>`;
   if (status.snapRow && status.variants.length > 0) {
     html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">All variants for component "${esc(status.snapRow.component || '')}"</div>
@@ -4741,6 +4921,7 @@ function renderMapperPreview(type) {
     }
   }
   previewEl.innerHTML = previewHtml;
+  if (type === 'iw39fleet') _renderIW39DataDateBox();   // v8.19 FIX-1
 }
 
 // ─────────────────────────────────────────────

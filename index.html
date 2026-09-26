@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.9.2 — Mission Control</title>
+<title>NumaCore Lens v4.9.3 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1853,7 +1853,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.9.2';
+const VERSION = '4.9.3';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4799,8 +4799,8 @@ function renderVitals() {
 function openFleetConfig() {
   // FIX-1: same protocol-based detection as EMBED_TOOL_URLS — Pages doesn't
   // include 'index.html' in the pathname, so the old regex 404'd.
-  var isLocal = (window.location && window.location.protocol === 'file:');
-  const url = isLocal ? 'FleetConfig v0.1.html' : 'fleetconfig.html';
+  // v4.9.3 FIX-1 — flat name on every protocol (see EMBED_TOOL_URLS).
+  const url = 'fleetconfig.html';
   try { window.open(url, '_blank', 'noopener'); } catch(e) { console.warn('openFleetConfig:', e); }
 }
 
@@ -4837,16 +4837,17 @@ function openFleetConfig() {
 // Pages serves the site at /numacore-lens-suite/ (no index.html in the
 // pathname), so the previous /index\.html?$/ regex fell through to the
 // dev fallback and 404'd on the versioned filenames that aren't in the
-// repo. New rule:
-//   file://         -> versioned filenames (local dev)
-//   http(s)://      -> flat names (GitHub Pages or any server)
-const EMBED_TOOL_URLS = (function() {
-  var isLocal = (typeof window !== 'undefined' && window.location && window.location.protocol === 'file:');
-  return {
-    cadence: isLocal ? 'Cadence v18.html' : 'cadence.html',
-    deploy:  isLocal ? 'Deploy v8.5.html' : 'deploy.html'
-  };
-})();
+// repo.
+// v4.9.3 FIX-1 (2026-09-26): flat names on EVERY protocol. The file:// branch
+// had pointed at 'Cadence v18.html' / 'Deploy v8.5.html' since v4.0, so a
+// local or client-folder copy of Lens silently embedded the MAY builds (or
+// broke). A local copy now needs the same flat-named siblings as the portal
+// (cadence.html, deploy.html, fleetconfig.html, numacore_lib.js,
+// numacore-ui.css, vendor/) — the client drive folder's lens\app layout.
+const EMBED_TOOL_URLS = {
+  cadence: 'cadence.html',
+  deploy:  'deploy.html'
+};
 
 // Allowed slice keys per owner (per V5 Migration Plan §Hard constraints).
 // Crossing slice ownership = data integrity failure → message dropped.
@@ -6068,7 +6069,40 @@ let _rrepCurrentBrief = null;   // captured on open, reused on Done
 // can tune the constant if a different staleness threshold is desired.
 const IW39_FRESHNESS_DAYS = 30;
 
+// v4.9.3 FIX-2 — whole days from a YYYY-MM-DD date to today, in LOCAL time.
+// (Date.parse('2026-09-22') is UTC midnight = the evening before in Edmonton.)
+function _daysSinceLocalIso(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const n = new Date();
+  return Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - d) / 86400000);
+}
+
 function _checkIW39Freshness(brief) {
+  // v4.9.3 FIX-2 (2026-09-26) — gate on the IW39's DATA date. Deploy v8.19+
+  // records deployData.fleetWideIW39DataAsOf (newest Created On, checked
+  // against the file name). Before v8.19 every stamp below was the UPLOAD
+  // time, so an April extract loaded today passed as fresh. Once the data
+  // date exists, the upload stamps are ignored. Result carries `dated` so the
+  // signals panel and the prompt say which kind of date they are showing.
+  const _dd = (typeof lensRawData !== 'undefined' && lensRawData
+               && lensRawData.workingData && lensRawData.workingData.deployData) || null;
+  if (_dd && _dd.fleetWideIW39DataAsOf) {
+    const days = _daysSinceLocalIso(_dd.fleetWideIW39DataAsOf);
+    if (days !== null) {
+      const base = { daysSince: days, asOf: _dd.fleetWideIW39DataAsOf, dated: true, method: _dd.fleetWideIW39DataAsOfMethod || '' };
+      return days > IW39_FRESHNESS_DAYS ? Object.assign({ ok: false, reason: 'stale' }, base)
+                                        : Object.assign({ ok: true,  reason: 'fresh' }, base);
+    }
+  }
+  // Deploy v8.19 loaded an IW39 but nothing dated it (no Created On column,
+  // no date in the file name, none entered). Unknown is never fresh.
+  if (_dd && _dd.fleetWideIW39DataAsOfMethod === 'unknown') {
+    return { ok: false, reason: 'undated', daysSince: null, asOf: null, dated: false };
+  }
+  // Legacy (Deploy ≤ v8.18): upload stamps only. Kept so existing client files
+  // still open the report, but labelled as a load time, not a data date.
   // v4.4 FIX-1 (2026-05-17 evening) — Primary signal is the top-level
   // deployData.fleetWideIW39AsOf field, set by Deploy v8.15 FIX-2 on every
   // fleet-wide IW39 upload. This is a single fact ("operator confirmed a
@@ -6089,16 +6123,16 @@ function _checkIW39Freshness(brief) {
   if (candidates.length === 0) {
     return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
   }
-  // Most recent wins
-  candidates.sort();
-  const newest = candidates[candidates.length - 1];
-  const t = Date.parse(newest);
-  if (isNaN(t)) return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null };
+  // Most recent wins — v4.9.3 FIX-2: by parsed time, not a text sort (mixed
+  // stamp formats could sort the wrong one last).
+  let newest = null, t = NaN;
+  candidates.forEach(c => { const ct = Date.parse(c); if (!isNaN(ct) && (isNaN(t) || ct > t)) { t = ct; newest = new Date(ct).toISOString(); } });   // normalised: labels + parse_prompts.py expect a leading YYYY-MM-DD
+  if (isNaN(t)) return { ok: false, reason: 'no-iw39', daysSince: null, asOf: null, dated: false };
   const daysSince = Math.floor((Date.now() - t) / 86400000);
   if (daysSince > IW39_FRESHNESS_DAYS) {
-    return { ok: false, reason: 'stale', daysSince: daysSince, asOf: newest };
+    return { ok: false, reason: 'stale', daysSince: daysSince, asOf: newest, dated: false };
   }
-  return { ok: true, reason: 'fresh', daysSince: daysSince, asOf: newest };
+  return { ok: true, reason: 'fresh', daysSince: daysSince, asOf: newest, dated: false };
 }
 
 function openRiskReport() {
@@ -6115,6 +6149,12 @@ function openRiskReport() {
     let msg;
     if (freshness.reason === 'no-iw39') {
       msg = 'No IW39 data on file for any project on this unit. Open Deploy, load a fresh fleet-wide IW39, SAVE FILE, then reload Lens before generating the Risk Report.';
+    } else if (freshness.reason === 'undated') {
+      // v4.9.3 FIX-2
+      msg = 'The IW39 in this file has no data date: it had no Created On column, no date in its file name, and none was entered. Open Deploy, load the IW39 again with the Created On column mapped, SAVE FILE, then reload Lens.';
+    } else if (freshness.dated) {
+      // v4.9.3 FIX-2 — the extract itself is old, whenever it was loaded.
+      msg = 'IW39 data is stale: the extract is dated ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + ' days old). Export a fresh IW39 from SAP, load it in Deploy, SAVE FILE, then reload Lens. Threshold: ' + IW39_FRESHNESS_DAYS + ' days.';
     } else {
       msg = 'IW39 data is stale (last recorded ' + freshness.daysSince + ' days ago, on ' + String(freshness.asOf).substring(0, 10) + '). Open Deploy, load a fresh IW39, SAVE FILE, then reload Lens. Threshold: ' + IW39_FRESHNESS_DAYS + ' days.';
     }
@@ -6389,7 +6429,12 @@ function _renderRiskSignals(brief, freshness) {
   const totalOpenWOs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.openWOs : 0), 0);
   const totalPMs = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.pmsCompletedRows.length : 0), 0);
   const totalCnl = brief.projects.reduce((s, p) => s + (p.deploy ? p.deploy.cancelledRows.length : 0), 0);
-  const iw39Label = (freshness && freshness.asOf) ? (String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + 'd ago)') : '—';
+  // v4.9.3 FIX-2 — say whether this is the extract's data date or (legacy) only a load time.
+  const iw39Label = (freshness && freshness.asOf)
+    ? (freshness.dated
+        ? ('data ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + 'd old)')
+        : ('loaded ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + 'd ago) · export date not recorded'))
+    : '—';
   const um = brief.unitMeta || {};
   const fmtSmu  = (um.smu  != null) ? Math.round(um.smu).toLocaleString('en-CA') + ' hrs' : '—';
   const fmtDate = um.smuDate ? String(um.smuDate).substring(0, 10) : '—';
@@ -6497,7 +6542,12 @@ function _renderRiskPrompt(brief, freshness) {
   const _np = _nextUpcomingProject(brief.unit);
   md += '- **Next scheduled PCR:** ' + (_np ? (_np.name + ' on ' + String(_np.start).substring(0, 10)) : 'None scheduled') + '\n';
   if (freshness && freshness.asOf) {
-    md += '- **IW39 last loaded:** ' + String(freshness.asOf).substring(0, 10) + ' (' + freshness.daysSince + ' days ago)\n';
+    // v4.9.3 FIX-2 — label + leading date kept verbatim for parse_prompts.py; the
+    // bracket now says whether the date is the extract's data date or a load time.
+    md += '- **IW39 last loaded:** ' + String(freshness.asOf).substring(0, 10)
+        + (freshness.dated
+            ? ' (data date of the extract, ' + freshness.daysSince + ' days old)\n'
+            : ' (upload time — the extract\'s own date was not recorded; ' + freshness.daysSince + ' days ago)\n');
   }
   md += '\n## Source data (from current fleet JSON)\n\n';
   md += '### Component life vs benchmark\n\n';
