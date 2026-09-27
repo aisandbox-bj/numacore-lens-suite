@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18 — NumaCore Lens Suite</title>
+<title>Cadence v18.12 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -1538,7 +1538,7 @@ function _clearSave() {
 // filter does NOT fire (original_date < today is false).
 function _isTodayClampedOverride(r) {
   if (!r || !r.changeout_date || !r.original_date) return false;
-  const _today = new Date().toISOString().split('T')[0];
+  const _today = _localDs(new Date());   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
   return r.changeout_date === _today && r.original_date < _today;
 }
 
@@ -2295,7 +2295,7 @@ function xToDateFree(x) {
 // "Today" here MUST match the visible TODAY line (todayX() uses TODAY.toISOString),
 // so a clamped bar edge lands exactly on the line. Purely a display + write-guard
 // mechanism: existing stored dates are never rewritten on load (see Approach A).
-function _projTodayDS() { return TODAY.toISOString().split('T')[0]; }
+function _projTodayDS() { return _localDs(TODAY); }   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
 // Clamp a start to >= today, sliding end to preserve the given duration.
 // Returns {start,end,clamped}. Leaves dates untouched when start is already >= today.
 function _clampProjStart(startDs, endDs) {
@@ -2322,6 +2322,16 @@ function _localDateStamp() {
   const g = ty => { const x = p.find(o => o.type === ty); return x ? x.value : '01'; };
   return g('year')+'-'+g('month')+'-'+g('day');
 }
+// v18.12 A (2026-09-26) — the LOCAL calendar date of a given Date, as YYYY-MM-DD.
+// Replaces d.toISOString().split('T')[0] wherever the question is "what day is
+// it here": toISOString is UTC, so from 6 pm (5 pm in winter) in Edmonton it
+// returned tomorrow. The two orphan-guard sites (today-clamp on load, the
+// save-time filter) must agree on "today" or a session crossing 6 pm saves
+// clamped dates as real overrides. Callers keep what they passed before: the
+// live clock (new Date()) or the page-load TODAY.
+function _localDs(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 // v17.1: esc sourced from numacore_lib.js with inline fallback for resilience
 // v18.7 C3 — fallback now escapes single quotes too (5-char parity with the lib;
 // the 4-char divergent twin left single-quoted attr contexts open if the lib failed to load).
@@ -2339,7 +2349,7 @@ function fmtDate(s) {
   return d.toLocaleDateString('en-CA',{timeZone:APP_TZ,year:'numeric',month:'short'});
 }
 function todayX() {
-  const t = TODAY.toISOString().split('T')[0];
+  const t = _localDs(TODAY);   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
   return dateToX(t);
 }
 
@@ -2486,7 +2496,7 @@ function renderTree() {
     }
     // v18.9 \u2014 budget risk badges: UNDATED (no changeout date \u2192 Unscheduled bucket) and OVERDUE (past-due, not rescheduled \u2192 Overdue/Backlog).
     if (row.type === 'component' && rec) {
-      const _tds = new Date().toISOString().split('T')[0];
+      const _tds = _localDs(new Date());   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
       if (!rec.changeout_date) {
         labelInner += ` <span class="undated-warn-badge" title="UNDATED \u2014 no changeout date; lands in the budget's Unscheduled bucket. Set benchmark + util_rate (or a date) at source.">\u25c7</span>`;
       } else if (rec.original_date && rec.original_date < _tds && rec.changeout_date <= _tds) {
@@ -2587,7 +2597,7 @@ function buildTimelineHeaderHtml(tw) {
       const d = new Date(start.getTime() + day * DAY_MS);
       const x = dateToX(d.toISOString().split('T')[0]);
       const lbl = d.toLocaleDateString('en-CA',{timeZone:APP_TZ,month:'short',day:'numeric'});
-      const todayDs = TODAY.toISOString().split('T')[0];
+      const todayDs = _localDs(TODAY);   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
       const wkEnd = new Date(d.getTime() + 7 * DAY_MS).toISOString().split('T')[0];
       const isThisWk = todayDs >= d.toISOString().split('T')[0] && todayDs < wkEnd;
       hh += `<div class="week-hdr${isThisWk?' wk-today':''}" style="left:${x}px;width:${WEEK_W}px">${lbl}</div>`;
@@ -4426,7 +4436,7 @@ document.getElementById('confirmDone').onclick = () => {
 
 function generateExports() {
   trackActivity('export_action');
-  const today = new Date().toISOString().split('T')[0];
+  const today = _localDs(new Date());   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
   // Derive year range dynamically from actual changeout dates in DATA
   const yrs = [...new Set(DATA.map(r =>
     r.changeout_date ? parseInt(r.changeout_date.slice(0,4)) : null
@@ -7406,7 +7416,7 @@ function _initFromJSON(json) {
   //   effectiveDate = userOverride  (already applied above)
   //                ?? (original_date < today ? today : original_date)
   // This is applied in-memory only; original_date in the data is never touched.
-  const _todayDs = new Date().toISOString().split('T')[0];
+  const _todayDs = _localDs(new Date());   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
   DATA.forEach(r => {
     if (!r.original_date) return;
     // Always snap overdue dates to today; componentDates overrides (applied above) restore intentional user-set dates
@@ -7657,7 +7667,7 @@ function processFleetJSON(file) {
           } else if (typeof sv === 'string') {
             if (sv.indexOf('-') !== -1) {
               issues.push('schemaVersion "' + sv + '" is an intermediate migration tag — Cadence will normalise it on next save');
-            } else if (sv !== 'v17' && sv !== 'v18') {
+            } else if (sv !== 'v17' && sv !== 'v18' && !/^v18\.\d+(\.\d+)*$/.test(sv)) {   // v18.12 B: 'v18.7' is Cadence's own save stamp (VERSION feeds it)
               issues.push('schemaVersion "' + sv + '" is unrecognised — Cadence will load it but cannot guarantee correct interpretation');
             }
           } else {
@@ -8850,7 +8860,7 @@ var budgetConfig = {
 
 var _BUDGET_MAX_CYCLES = 60;    // sanity cap per component; excees get flagged
 
-function _budgetTodayDs() { return new Date().toISOString().split('T')[0]; }
+function _budgetTodayDs() { return _localDs(new Date()); }   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
 function _ymd(d) { return d.toISOString().split('T')[0]; }
 function _monthKey(dateStr) { return dateStr.slice(0, 7); }            // 'YYYY-MM'
 function _addMonths(d, n) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
@@ -9623,7 +9633,7 @@ function _bmRiskDownload(){
   const wb=XL.utils.book_new();
   XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rsRows), 'Risk Summary');
   XL.utils.book_append_sheet(wb, XL.utils.aoa_to_sheet(rdRows), 'Risk Detail');
-  try{ XL.writeFile(wb, 'Cadence Risk Report '+(new Date().toISOString().split('T')[0])+'.xlsx'); }catch(e){ alert('Download failed: '+e.message); }
+  try{ XL.writeFile(wb, 'Cadence Risk Report '+_localDs(new Date())+'.xlsx');   /* v18.12 A: local date */ }catch(e){ alert('Download failed: '+e.message); }
 }
 
 // ── Excel export — formatted, auto-filtered ranges (SheetJS; no native tables/charts) ──
@@ -9766,7 +9776,8 @@ function _bmBuildPivotHtml(res, opts){
     zero:(res.zeroCostRows||[]).map(z=>[z.fleet,z.model,String(z.unit),z.component,z.tier,z.nextDue,z.periodCalls,z.reason]),
     overdue:res.overdue.rows.map(o=>{const r=o.r;return [r.fleet,r.model,String(r.unit),r.component,Math.round(o.cost),r.original_date||'',r.changeout_date||''];}) };
   const recon={grand:Math.round(rc.grandTotal),inperiod:Math.round(rc.bandsTotal),overdue:Math.round(rc.overdueTotal),unscheduled:Math.round(rc.unscheduledTotal),base:Math.round(rc.baseGrand),blended:rc.baseGrand>0?Math.round((rc.grandTotal/rc.baseGrand-1)*1000)/10:0};
-  const payload={gen:new Date().toISOString().split('T')[0], range:opts.fromDate+' to '+opts.toDate, fsm:opts.fiscalStartMonth, bands:bandMeta, rows:rows, params:params, risk:risk, recon:recon};
+  const payload={gen:_localDs(new Date()),   /* v18.12 A: local date */
+    range:opts.fromDate+' to '+opts.toDate, fsm:opts.fiscalStartMonth, bands:bandMeta, rows:rows, params:params, risk:risk, recon:recon};
   const json=JSON.stringify(payload).replace(/</g,'\\u003c');
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cadence Budget Report</title>
@@ -10202,7 +10213,7 @@ function _bmExportExcel(res, opts){
   const note=document.getElementById('bmExportNote');
   const wb=_bmBuildWorkbook(res,opts);
   if(!wb){ if(note) note.textContent='Excel library not available.'; return; }
-  const fname='Cadence Budget '+(new Date().toISOString().split('T')[0])+'.xlsx';
+  const fname='Cadence Budget '+_localDs(new Date())+'.xlsx';   // v18.12 A: local date
   try {
     window.XLSX.writeFile(wb, fname);
     if(note) note.innerHTML='&#11015; Excel downloaded: '+fname+' ('+wb.SheetNames.length+' sheets). '+
