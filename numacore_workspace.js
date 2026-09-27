@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.2.0 · 2026-09-27
+   v0.2.1 · 2026-09-27
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -42,6 +42,15 @@
        – A fleet JSON dropped in 1 New files is recognised as a plan: its check card
          files it in lens\plan\ on Publish and offers to open it. A Bench definition
          JSON is recognised and left in place until Bench's before / after review.
+     • v0.2.1 (hotfix, operator on a real OneDrive folder, 2026-09-27: "it moved the file but the
+       warning on screen says it did not move"; then the moved plan and the Bench JSON both showed
+       "could not read"):
+       – Removing the original after a checked copy is retried for ~9 s (OneDrive can hold a file it
+         is still uploading). If it still won't go, the move counts as done, the refresher is told
+         exactly that, the log says so, and the next check tries again.
+       – A file OneDrive still lists after it has gone is skipped, not shown as "could not read".
+       – A new file is read up to three times before its card says it could not be read, and the
+         card then says why and what to do. A plan already filed in lens\plan is not filed twice.
 
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
@@ -65,7 +74,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.2.0';
+  var VERSION = '0.2.1';
   var AGE = { amber: 7, red: 14, refuse: 30 };
   var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans' };   // v0.2.0 + plan / Plans
   var LOG_NAME = 'Refresh log.csv';
@@ -373,7 +382,8 @@
   // ── browser plumbing (skipped in Node) ───────────────────────────────────
   var S = { host: null, cc: '', handle: null, perm: 'none', folderName: '', register: null, loaded: {}, newFiles: [], stripEl: null, busy: false, cards: null, lastError: '',
             mode: 'edit',     // v0.2.0 — 'edit' (the refresher) | 'view' (everyone else). v0.1.0 connections were all edit.
-            pending: null };  // v0.2.0 — a folder opened on the landing page, adopted by the next attach()
+            pending: null,    // v0.2.0 — a folder opened on the landing page, adopted by the next attach()
+            leftovers: [] };  // v0.2.1 — originals whose checked copy is filed but which could not be removed yet
   function toast(msg, sev) { try { if (S.host && S.host.toast) S.host.toast(msg, sev); } catch (e) {} }
   function setState(p) { for (var k in p) S[k] = p[k]; renderStrip(); try { if (S.host && S.host.onState) S.host.onState(publicState()); } catch (e) {} }
   function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded, mode: S.mode, canSavePlan: canSavePlan() }; }
@@ -447,9 +457,53 @@
     }).then(function (dest) {
       return writeFile(toDir, dest, srcFile).then(function () { return toDir.getFileHandle(dest); }).then(function (fh) { return fh.getFile(); }).then(function (copy) {
         if (copy.size !== srcFile.size) throw new Error('copy of ' + name + ' is incomplete (' + copy.size + ' of ' + srcFile.size + ' bytes); the original was left in place');
-        return fromDir.removeEntry(name).then(function () { return dest; });
+        return removeWithRetry(fromDir, name).then(function () { return dest; }, function (e) {
+          S.leftovers.push({ dir: fromDir, where: fromDir.name, name: name, bytes: srcFile.size, dest: toDir.name + '\\' + dest, reason: (e && (e.message || e.name)) || String(e) });
+          return dest;
+        });
       });
     });
+  }
+  // v0.2.1 — on a synced folder the original can be briefly locked right after it is dropped (OneDrive still uploading
+  // it): removing it failed and the whole step was reported as failed although the checked copy was in place.
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function removeWithRetry(d, name) {
+    var waits = [0, 500, 1200, 2500, 5000];
+    function attempt(i) {
+      return sleep(waits[i]).then(function () { return d.removeEntry(name); }).catch(function (e) {
+        if (e && e.name === 'NotFoundError') return;
+        if (i + 1 < waits.length) return attempt(i + 1);
+        throw e;
+      });
+    }
+    return attempt(0);
+  }
+  // the plans already in lens\plan (name -> size), so a leftover original in 1 New files is not filed twice
+  function filedPlans() {
+    S.filed = {};
+    return path([DIR.LENS, DIR.PLAN], false).then(listJson).then(function (fs) {
+      return Promise.all(fs.map(function (e) { return e.getFile().then(function (f) { S.filed[f.name] = f.size; }, function () {}); }));
+    }).catch(function () {});
+  }
+  // tell the refresher about originals that could not be removed (once), and try them again later
+  function leftoverWords(list) { return list.map(function (l) { return l.name + ' (in ' + l.where + ')'; }).join(', '); }
+  function reportLeftovers() {
+    var fresh = S.leftovers.filter(function (l) { return !l.told; }); if (!fresh.length) return '';
+    fresh.forEach(function (l) { l.told = true; });
+    var t = 'Filed and checked, but the original' + (fresh.length > 1 ? 's' : '') + ' could not be removed yet: ' + leftoverWords(fresh) + '. OneDrive may still be uploading ' + (fresh.length > 1 ? 'them' : 'it') + '. Nothing is lost; Lens tries again at the next check.';
+    toast(t, 'warn'); return t;
+  }
+  function tidyLeftovers() {
+    if (!S.leftovers.length || S.mode !== 'edit') return Promise.resolve();
+    var keep = [];
+    return S.leftovers.reduce(function (p, l) {
+      return p.then(function () {
+        return l.dir.getFileHandle(l.name).then(function (fh) { return fh.getFile(); }).then(function (f) {
+          if (f.size !== l.bytes) return;
+          return l.dir.removeEntry(l.name).catch(function () { keep.push(l); });
+        }, function () {});
+      });
+    }, Promise.resolve()).then(function () { S.leftovers = keep; });
   }
   function appendLog(lines) {
     return path([DIR.ARCHIVE], true).then(function (a) {
@@ -563,15 +617,35 @@
       }, Promise.resolve());
     }).catch(function () {});
   }
+  // v0.2.1 — OneDrive can keep listing a file for a moment after it has gone. Each listed file is opened (metadata only)
+  // before it counts: one that is no longer there is skipped, and so is an original whose checked copy Lens has just filed.
   function scanNew() {
     return path([DIR.NEW], false).then(function (d) {
       var out = [], it = d.values();
+      var mine = {}; S.leftovers.forEach(function (l) { if (l.where === DIR.NEW) mine[l.name] = l.bytes; });
       // skips Excel lock files (~$…), temp and OneDrive swap files
-      function step() { return it.next().then(function (r) { if (r.done) return out; var e = r.value; if (e.kind === 'file' && !/^~\$|\.tmp$|\.crswap$|^\./i.test(e.name) && /\.(xlsx|xlsm|xls|xlsb|csv|json)$/i.test(e.name)) out.push(e.name);   /* v0.2.0 + json (plans) */ return step(); }); }
+      function step() {
+        return it.next().then(function (r) {
+          if (r.done) return out;
+          var e = r.value;
+          if (!(e.kind === 'file' && !/^~\$|\.tmp$|\.crswap$|^\./i.test(e.name) && /\.(xlsx|xlsm|xls|xlsb|csv|json)$/i.test(e.name))) return step();
+          return e.getFile().then(function (f) { if (mine[e.name] !== f.size) out.push(e.name); }, function (err) { if (!(err && err.name === 'NotFoundError')) out.push(e.name); }).then(step);
+        });
+      }
       return step();
     }).catch(function () { return []; }).then(function (list) { setState({ newFiles: list }); return list; });
   }
-  function refreshAll() { return loadRegister().then(loadCopies).then(scanNew).then(function () { renderStrip(); }); }
+  // v0.2.1 — read a new file, retrying while OneDrive (or another program) holds it; a file that has gone is reported as gone
+  function readNewFile(d, name, asText) {
+    var waits = [0, 800, 2000];
+    function attempt(i) {
+      return sleep(waits[i]).then(function () { return d.getFileHandle(name); }).then(function (fh) { return fh.getFile(); })
+        .then(function (f) { return (asText ? f.text() : f.arrayBuffer()).then(function (body) { return { f: f, body: body }; }); })
+        .catch(function (e) { if (e && e.name === 'NotFoundError') throw e; if (i + 1 < waits.length) return attempt(i + 1); throw e; });
+    }
+    return attempt(0);
+  }
+  function refreshAll() { return loadRegister().then(loadCopies).then(tidyLeftovers).then(scanNew).then(function () { renderStrip(); }); }   // v0.2.1 + tidyLeftovers
 
   // ── check new files → cards ──────────────────────────────────────────────
   function checkNew() {
@@ -579,15 +653,20 @@
     if (S.mode === 'view') { toast('View only: new files are checked and published by the person who refreshes this folder.', 'info'); return; }   // v0.2.0
     S.busy = true; openCards([], 'Reading the new files…');
     var XLSX, newDir, cards = [];
-    return ensureXLSX().then(function (X) { XLSX = X; return path([DIR.NEW], false); }).then(function (d) {
+    // v0.2.1 — first retry any original left behind by an earlier move, and note the plans already filed in lens\plan
+    return tidyLeftovers().then(scanNew).then(filedPlans).then(ensureXLSX).then(function (X) { XLSX = X; return path([DIR.NEW], false); }).then(function (d) {
       newDir = d;
       return S.newFiles.reduce(function (p, name) {
         return p.then(function () {
           setCardsMsg('Reading ' + name + '…  (a full INV_MSTR takes up to half a minute)');
-          return new Promise(function (r) { setTimeout(r, 60); }).then(function () { return d.getFileHandle(name); }).then(function (fh) { return fh.getFile(); }).then(function (f) {
-            if (/\.json$/i.test(name)) return f.text().then(function (t) { cards.push(assessJson(name, f, t)); });   // v0.2.0
-            return f.arrayBuffer().then(function (buf) { cards.push(assess(XLSX, name, f, buf)); });
-          }).catch(function (e) { cards.push({ name: name, status: 'error', reasons: ['Could not read the file: ' + (e && e.message || e) + '. If OneDrive is still syncing it, wait for the green tick and check again.'] }); });
+          var isJson = /\.json$/i.test(name);
+          return sleep(60).then(function () { return readNewFile(d, name, isJson); }).then(function (r) {
+            if (isJson) cards.push(assessJson(name, r.f, r.body));   // v0.2.0
+            else cards.push(assess(XLSX, name, r.f, r.body));
+          }).catch(function (e) {   // v0.2.1 — a file that has gone is not an error; anything else says what to do
+            if (e && e.name === 'NotFoundError') { cards.push({ name: name, status: 'ignore', reasons: ['It is no longer in 1 New files (moved or deleted while Lens was looking, or OneDrive is finishing a move). Nothing to do.'], warnings: [] }); return; }
+            cards.push({ name: name, status: 'error', reasons: ['Could not read the file (' + ((e && e.name) || 'error') + ': ' + (e && e.message || e) + '). Tried three times. If OneDrive shows it syncing (blue arrows), wait for the green tick; if it is open in another program (Excel, Notepad), close it. Then press CHECK again.'], warnings: [] });
+          });
         });
       }, Promise.resolve());
     }).then(function () {
@@ -604,6 +683,7 @@
         plans.sort(function (a, b) { return String(b.plan.saved || '').localeCompare(String(a.plan.saved || '')); });
         plans.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A more recently saved plan (' + plans[0].name + ') is in the same drop.'); });
       }
+      if (!cards.length) { S.cards = null; S.busy = false; closeCards(); toast('Nothing new to check in 1 New files.', 'info'); return; }   // v0.2.1 — only a leftover was listed
       S.cards = cards; S.busy = false; openCards(cards, '');
     }).catch(function (e) { S.busy = false; setCardsMsg('Could not read the folder: ' + (e && e.message || e)); });
   }
@@ -629,6 +709,7 @@
     }
     if (!pi) { c.status = 'ignore'; c.reasons.push('Not a fleet plan or a Bench definition, so it is left where it is.'); return c; }
     c.src = 'PLAN'; c.label = 'Plan (fleet JSON)'; c.plan = pi; c.text = text;
+    if (S.filed && S.filed[name] === file.size) { c.status = 'refuse'; c.reasons.push('It is already filed in lens\\plan (same name and size): this is the original an earlier move could not remove.'); return c; }   // v0.2.1
     if (pi.cc && S.cc && S.cc !== 'DEFAULT' && pi.cc !== S.cc) { c.status = 'refuse'; c.reasons.push('This plan belongs to ' + pi.cc + ', but the plan open in Lens is ' + S.cc + '\'s.'); return c; }
     if (!pi.cc) c.warnings.push('The plan has no client code inside it.');
     return c;
@@ -738,9 +819,13 @@
         }, Promise.resolve());
       })
       .then(function () { return writeFile(dataDir, REGISTER, toScript(reg, 'register', 'Lens client-folder register · ' + S.cc + ' · written ' + stamp)); })
-      .then(function () { return appendLog(log); })
+      .then(function () {   // v0.2.1 — an original that could not be removed is logged as such (its checked copy is filed)
+        S.leftovers.filter(function (l) { return !l.logged; }).forEach(function (l) { l.logged = true; log.push([stamp, '', l.name, l.dest, '', '', '', '', 'copied + checked; original left in ' + l.where, 'could not remove it yet: ' + l.reason + ' (retried at the next check)', VERSION]); });
+        return appendLog(log);
+      })
       .then(function () {
         S.register = reg; S.busy = false; S.cards = null; closeCards();
+        setTimeout(reportLeftovers, 5200);   /* after the Published toast */
         toast('Published: ' + accepted.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
         if (planPublished && S.host && S.host.onPlan) { try { S.host.onPlan({ fileName: planPublished.fileName, json: JSON.parse(planPublished.text) }); } catch (e) { console.warn('workspace onPlan:', e); } }
         return loadCopies().then(scanNew);
@@ -794,7 +879,7 @@
     return path([DIR.LENS, DIR.PLAN], true).then(function (d) { planDir = d; return freeName(d, fileName); })
       .then(function (nm) { return writeFile(planDir, nm, text).then(function () { return nm; }); })
       .then(function (nm) { return archiveOldPlans(planDir, nm).then(function () { return nm; }); })
-      .then(function (nm) { putMeta({ planFile: nm, planSaved: localStamp(new Date()) }); return { ok: true, where: DIR.LENS + '\\' + DIR.PLAN + '\\', file: nm }; });
+      .then(function (nm) { putMeta({ planFile: nm, planSaved: localStamp(new Date()) }); setTimeout(reportLeftovers, 6200); return { ok: true, where: DIR.LENS + '\\' + DIR.PLAN + '\\', file: nm }; });
   }
   function stampOf(d) { return localIso(d) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()); }
   function planStamp(name) { var m = /(\d{4}-\d{2}-\d{2})[_ T](\d{2})[-:.]?(\d{2})[-:.]?(\d{2})?/.exec(name); return m ? m[1] + 'T' + m[2] + m[3] + (m[4] || '00') : ''; }
@@ -1029,7 +1114,7 @@
       return useHandle(pend.handle, !pend.setUp).then(function (ok) {
         if (!ok) return;
         // a plan opened straight from 1 New files is filed in lens\plan (edit only)
-        var file = pend.planWhere === 'new' && S.mode === 'edit' ? path([DIR.NEW], false).then(function (d) { return placePlan(d, pend.planFile); }).then(function (p) { toast('The plan ' + p + ' was filed in lens\\plan.', 'success'); }) : Promise.resolve();
+        var file = pend.planWhere === 'new' && S.mode === 'edit' ? path([DIR.NEW], false).then(function (d) { return placePlan(d, pend.planFile); }).then(function (p) { if (!reportLeftovers()) toast('The plan ' + p + ' was filed in lens\\plan.', 'success'); }) : Promise.resolve();
         return file.catch(function (e) { toast('The plan stays in 1 New files: ' + (e && e.message || e), 'warn'); }).then(refreshAll);
       }).catch(function (e) { console.warn('workspace adopt:', e); });
     }
