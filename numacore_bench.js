@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.1.1 · 2026-09-27
+   v1.1.2 · 2026-09-27
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -64,6 +64,15 @@
        – "Link file" is gone (the client folder replaced it). With a folder
          connected, "Load INV_MSTR" moves into the ⋯ menu with the definition
          import / export.
+     • v1.1.2 (operator, 2026-09-27, after working through Bench):
+       – The summary page's three group tables share one fixed set of column
+         widths, so every column lines up down the page.
+       – An opened component's SAP detail is now rows of the same table: each
+         number sits under the column it adds up to, a bar in the component's
+         status colour runs from the row down through its detail, and a tree
+         connector ties each detail row to it (it "floated" on wide screens).
+       – V3 sizes: the board is never scaled above its 1520 x 860 design size,
+         and the page is one centred column no wider than V3's (1520 px).
 
    API
      NumaCoreBench.render(containerEl, host)
@@ -75,7 +84,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.1.1';
+  var VERSION = '1.1.2';
   var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -404,6 +413,8 @@
       var dues = cs.map(function (c) { return c.pred_changeout; }).filter(Boolean).map(function (d) { return String(d).slice(0, 10); }).sort();
       var rec = { name: name, n: cs.length, worst: pcts.length ? Math.max.apply(null, pcts) : null, due: dues[0] || null,
                   pn: c0.part_number || '', mm: c0.mm_number || '', how: how, units: cs.map(function (c) { return c.unit; }) };
+      // v1.1.2 — every part number Lens holds for this component, with its units (shown when it doesn't match a pocket)
+      rec.pnc = {}; cs.forEach(function (c) { var k = String(c.part_number || '').trim() || '(none)', e = rec.pnc[k] || (rec.pnc[k] = { n: 0, units: [], mm: {} }); e.n++; e.units.push(c.unit); if (c.mm_number) e.mm[String(c.mm_number).trim()] = 1; });
       if (hit) { hit.lens.push(rec); return; }
       // a name may SUGGEST a pocket (shown as a check, never counted as a match)
       var cs0 = sig(name), cp = posOf(name), best = null, bestScore = 0;
@@ -462,7 +473,7 @@
       '.ncb-mi:hover{background:rgba(255,255,255,.03)}.ncb-mi.on{border-color:rgba(95,168,224,.5);background:rgba(95,168,224,.09)}',
       '.ncb-mi b{font-family:var(--nc-font-head,Rajdhani);font-weight:600;font-size:14.5px;display:flex;justify-content:space-between;align-items:baseline;gap:6px}',
       '.ncb-mi b small{font-family:var(--nc-font-mono);font-size:10px;font-weight:400;color:var(--nc-text-d)}',
-      '.ncb-mi span{display:block;font-size:11.5px;color:var(--nc-text-m,#8B8FA3)}',
+      '.ncb-mi>span{display:block;font-size:11.5px;color:var(--nc-text-m,#8B8FA3)}',   /* v1.1.2 — ">" : the line only; its coloured pieces stay inline (they stacked, with a lone "·" between) */
       '.ncb-bar{display:flex;height:4px;border-radius:2px;overflow:hidden;margin-top:5px;background:rgba(255,255,255,.05)}.ncb-bar i{display:block;height:100%}',
       '.ncb-mi.gap b{color:var(--nc-text-m);font-weight:500;font-size:13.5px}',
       '.ncb-main{flex:1;min-width:0;overflow-y:auto;padding:16px 22px 60px}',
@@ -502,7 +513,20 @@
       '.ncb-net{font-family:var(--nc-font-mono);font-size:13px;font-weight:600}',
       '.ncb-pill{font-family:var(--nc-font-mono);font-size:9.5px;padding:1px 6px;border-radius:3px;margin:0 2px;border:1px solid;display:inline-block}',
       '.ncb-pill.NEW{color:#a7f3d0;border-color:rgba(52,211,153,.4)}.ncb-pill.EXC{color:#fde68a;border-color:rgba(251,191,36,.4)}.ncb-pill.REMAN{color:#c4b5fd;border-color:rgba(155,151,232,.5)}',
-      '.ncb tr.ncb-detail>td{background:rgba(8,12,20,.75);padding:12px 18px 16px 36px;text-align:left}',
+      /* v1.1.2 — the open row and its detail rows: one tint, one status-coloured bar down the left, a tree connector */
+      '.ncb tr.ncb-row.open td{background:rgba(95,168,224,.08);border-bottom-color:transparent}',
+      '.ncb tr.ncb-row.open td:first-child,.ncb tr.ncb-drow td:first-child{box-shadow:inset 3px 0 0 var(--bar,#5FA8E0)}',
+      '.ncb tr.ncb-drow td{background:rgba(95,168,224,.035);padding:5px 8px;font-size:12.5px;border-bottom:1px solid rgba(42,45,58,.35)}',
+      '.ncb tr.ncb-drow td.n{font-family:var(--nc-font-mono);font-size:12.5px}.ncb td.ncb-dim{color:var(--nc-text-m)}',
+      '.ncb-tree{display:inline-block;width:16px;height:12px;margin-left:34px;border-left:1px solid color-mix(in srgb,var(--bar,#5FA8E0) 70%,transparent);border-bottom:1px solid color-mix(in srgb,var(--bar,#5FA8E0) 70%,transparent);vertical-align:4px}',
+      '.ncb-ddesc{color:var(--nc-text-m);font-size:12px}',
+      '.ncb-mis{border:1px solid rgba(249,115,22,.35);background:rgba(249,115,22,.05);border-radius:8px;padding:9px 12px;margin:0 0 10px;font-size:12.5px;max-width:1100px}',
+      '.ncb tr.ncb-dgrp td{font-family:var(--nc-font-mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#9ccbf0;background:rgba(95,168,224,.06)}',
+      '.ncb tr.ncb-dsub td{font-weight:600;color:var(--nc-text)}.ncb tr.ncb-dsub.bind td{color:var(--ncb-accent)}',
+      '.ncb tr.ncb-dnote td{text-align:left;padding:8px 14px 14px 12px;border-bottom:1px solid color-mix(in srgb,var(--bar,#5FA8E0) 45%,transparent)}',
+      '.ncb table.ncb-sumtbl{table-layout:fixed}.ncb table.ncb-sumtbl th{white-space:normal;vertical-align:bottom;line-height:1.25}.ncb table.ncb-sumtbl td{overflow-wrap:anywhere}',
+      /* v1.1.2 — V3 sizes: the board is never scaled above its 1520 px design size, and the page is one centred column */
+      '.ncb-col{max-width:1520px;margin:0 auto}',
       '.ncb-stmt{font-size:14px;margin-bottom:8px}.ncb-stmt b{font-weight:600}',
       '.ncb table.ncb-mats{max-width:1000px}.ncb table.ncb-mats th{font-family:var(--nc-font-mono);font-size:9.5px;letter-spacing:1px;color:var(--nc-text-d)}.ncb table.ncb-mats td{font-size:12.5px;padding:5px 8px}',
       '.ncb-mono{font-family:var(--nc-font-mono);font-size:12px}',
@@ -659,7 +683,8 @@
     var wrap = document.getElementById('ncb-boardwrap'), board = document.getElementById('ncb-board');
     if (!wrap || !board) return;
     var BW = 1520, BH = 860, CARDW = 248, CARDH = 108, MID = 395;
-    var scale = wrap.clientWidth / BW; board.style.transform = 'scale(' + scale + ')'; wrap.style.height = Math.round(BH * scale) + 'px';
+    // v1.1.2 — never above V3's 1:1 size
+    var scale = Math.min(1, wrap.clientWidth / BW); board.style.transform = 'scale(' + scale + ')'; wrap.style.height = Math.round(BH * scale) + 'px';
     var img = new Image();
     img.onload = function () { draw(img.naturalWidth, img.naturalHeight, true); };
     img.onerror = function () { draw(640, 400, false); };
@@ -731,18 +756,58 @@
     var col = st.status === 'spare' ? 'var(--ncb-spare)' : st.status === 'nospare' ? 'var(--ncb-nospare)' : 'var(--ncb-short)';
     return '<span class="ncb-net" style="color:' + col + '">' + signed(st.net) + '</span>';
   }
-  // v1.1.1 — the SAP detail. An assembly's rows come grouped per sub-part group with a subtotal each; the binding
-  // group's subtotal equals the headline. Everything else: the rows add up to the headline.
-  function matsTable(st) {
-    if (!st || !st.detail.length) return '';
-    var head = '<table class="ncb-mats"><thead><tr><th>SAP #</th><th>Type</th><th>VPN</th><th class="l">Description</th><th>On shelf</th><th>On order</th><th>In transit</th><th>Reserved</th></tr></thead><tbody>';
-    var row = function (d) { return '<tr><td class="ncb-mono">' + esc(d.sap) + '</td><td><span class="ncb-pill ' + d.cat + '">' + d.cat + '</span></td><td class="ncb-mono">' + esc(d.vpn) + '</td><td class="l">' + esc(d.desc) + '</td><td class="n">' + d.qoh + '</td><td class="n">' + d.qoo + '</td><td class="n">' + d.qit + '</td><td class="n">' + d.rsrv + '</td></tr>'; };
-    if (!st.assembly) return head + st.detail.map(row).join('') + '</tbody></table>';
-    return head + st.groups.map(function (g) {
-      var rs = st.detail.filter(function (d) { return d.grp === g.i; }), bind = g.i === st.bind;
-      return '<tr class="ncb-grp"><td colspan="8">Sub-part group ' + (g.i + 1) + ' of ' + st.groups.length + ' · ' + esc(g.vpns.join(' / ')) + (g.n ? '' : ' · not set up in SAP') + '</td></tr>' + rs.map(row).join('') +
-        '<tr class="ncb-sub' + (bind ? ' bind' : '') + '"><td colspan="4" class="l">Group ' + (g.i + 1) + ' subtotal · cover ' + signed(g.net) + (bind ? ' · sets the kit count' : '') + '</td><td class="n">' + g.soh + '</td><td class="n">' + g.po + '</td><td class="n">' + g.tr + '</td><td class="n">' + g.res + '</td></tr>';
-    }).join('') + '</tbody></table>';
+  // v1.1.2 — the SAP detail opens as rows of the SAME table, each number directly under the column it adds up to
+  // (operator: the detail "looks like it is floating in the middle of nowhere… need a visual way to link it").
+  // A bar in the component's status colour runs from its row down through its detail rows.
+  // An assembly's rows come grouped per sub-part group with a subtotal each; the binding subtotal equals the headline.
+  function wayCell(o, t) { return (o + t) + (o && t ? '<span class="ncb-kit">order ' + o + ' · transit ' + t + '</span>' : t ? '<span class="ncb-kit">in transit</span>' : ''); }
+  function detailRows(st, bar, notesHtml) {
+    var out = [], tree = '<td><i class="ncb-tree"></i></td>', sty = ' style="--bar:' + bar + '"';
+    var row = function (d, showCover) {
+      return '<tr class="ncb-drow"' + sty + '>' + tree + '<td class="l"><span class="ncb-mono">SAP ' + esc(d.sap) + '</span> <span class="ncb-ddesc">' + esc(d.desc) + '</span></td><td class="l"><span class="ncb-mono">' + esc(d.vpn) + '</span></td><td></td><td></td>' +
+        '<td class="n">' + d.qoh + '</td><td class="n">' + wayCell(d.qoo, d.qit) + '</td><td class="n">' + d.rsrv + '</td><td class="n ncb-dim">' + (showCover ? signed(d.qoh + d.qoo + d.qit - d.rsrv) : '') + '</td><td><span class="ncb-pill ' + d.cat + '">' + d.cat + '</span></td><td></td></tr>';
+    };
+    if (st && st.detail.length) {
+      if (!st.assembly) st.detail.forEach(function (d) { out.push(row(d, true)); });
+      else st.groups.forEach(function (g) {
+        var bind = g.i === st.bind;
+        out.push('<tr class="ncb-drow ncb-dgrp"' + sty + '>' + tree + '<td class="l" colspan="10">Sub-part group ' + (g.i + 1) + ' of ' + st.groups.length + ' · ' + esc(g.vpns.join(' / ')) + (g.n ? '' : ' · not set up in SAP') + '</td></tr>');
+        st.detail.filter(function (d) { return d.grp === g.i; }).forEach(function (d) { out.push(row(d, false)); });
+        out.push('<tr class="ncb-drow ncb-dsub' + (bind ? ' bind' : '') + '"' + sty + '>' + tree + '<td class="l" colspan="4">Group ' + (g.i + 1) + ' subtotal' + (bind ? ' · sets the kit count' : '') + '</td><td class="n">' + g.soh + '</td><td class="n">' + wayCell(g.po, g.tr) + '</td><td class="n">' + g.res + '</td><td class="n">' + signed(g.net) + '</td><td></td><td></td></tr>');
+      });
+    }
+    out.push('<tr class="ncb-drow ncb-dnote"' + sty + '><td></td><td colspan="10">' + notesHtml + '</td></tr>');
+    return out.join('');
+  }
+  // v1.1.2 — operator: "what is this about?? when I click down, there is nothing to see". The row said "part number on
+  // file differs — see below" and pointed at a panel at the page foot. The opened row now shows both part lists side by
+  // side: every part number Lens holds for the component (with its units) against this component's list, marking a
+  // number that does match and one that looks like a typing slip of a listed number (same digits, two swapped).
+  function digitsKey(s) { return String(s || '').replace(/[^0-9A-Z]/gi, '').toUpperCase(); }
+  function swapTypo(a, list) {
+    a = digitsKey(a); if (a.length < 5) return null;
+    for (var i = 0; i < list.length; i++) {
+      var b = digitsKey(list[i]); if (b.length !== a.length || b === a) continue;
+      var diff = []; for (var j = 0; j < a.length; j++) if (a[j] !== b[j]) diff.push(j);
+      if (diff.length === 2 && diff[1] === diff[0] + 1 && a[diff[0]] === b[diff[1]] && a[diff[1]] === b[diff[0]]) return list[i];
+    }
+    return null;
+  }
+  function mismatchNote(x, likely) {
+    var list = x.p.vpns || [];
+    var rows = likely.map(function (u) {
+      return '<div style="margin:4px 0 2px"><b>' + esc(u.name) + '</b> — ' + Object.keys(u.pnc || {}).sort(function (a, b) { return u.pnc[b].n - u.pnc[a].n; }).map(function (pn) {
+        var e = u.pnc[pn], hit = x.keys.has(joinKey(pn)), typo = !hit && swapTypo(pn, list);
+        var mm = Object.keys(e.mm); var units = e.units.slice().sort();
+        return '<span class="ncb-mono" style="color:' + (hit ? 'var(--ncb-spare)' : 'var(--nc-text)') + '">' + esc(pn) + '</span> on ' + e.n + ' ' + (e.n === 1 ? 'unit' : 'units') +
+          ' <span style="color:var(--nc-text-d)">(' + esc(units.length > 4 ? units[0] + '…' + units[units.length - 1] : units.join(', ')) + (mm.length ? '; SAP ' + esc(mm.join(', ')) : '') + ')</span>' +
+          (hit ? ' <span style="color:var(--ncb-spare)">matches this list</span>' : typo ? ' <span style="color:#fdba74">looks like a typing slip of ' + esc(typo) + '</span>' : '');
+      }).join(' · ') + '</div>';
+    }).join('');
+    return '<div class="ncb-mis"><div class="ncb-warn" style="font-size:13px;font-weight:600">Part numbers don\'t match, so these Lens components are not linked here (no life % or due date on this row)</div>' +
+      '<div style="margin-top:4px"><span style="color:var(--nc-text-m)">In Lens:</span>' + rows + '</div>' +
+      '<div style="margin-top:4px"><span style="color:var(--nc-text-m)">This component\'s part list:</span> <span class="ncb-mono">' + esc(list.join(', ')) + '</span></div>' +
+      '<div style="margin-top:6px;color:var(--nc-text-m)">The names say they are the same component, but neither list has the other\'s number. Usually one is an older number that has since been superseded, or a typing slip. Check the part fitted; then correct the Lens component data (Intake) or this part list (Bench definition). They are also listed at the foot of the page.</div></div>';
   }
   function unitChips(units) { return (units || []).map(function (u) { return '<span class="ncb-uchip">' + esc(u) + '</span>'; }).join(''); }
   function tableHtml(v) {
@@ -755,7 +820,7 @@
       var likely = v.unmatched.filter(function (u) { return u.hint === p; });
       var lens = x.lens.length
         ? '<div class="ncb-lens">' + x.lens.map(function (l) { return esc(l.name); }).join(', ') + ' <span style="color:var(--nc-text-d)">· ' + x.lens.reduce(function (s, l) { return s + l.n; }, 0) + ' tracked</span></div><div class="ncb-how">by ' + esc(x.lens[0].how) + '</div>'
-        : likely.length ? '<div class="ncb-warn">' + likely.map(function (u) { return esc(u.name); }).join(', ') + '</div><div class="ncb-how" style="color:#fdba74">part number on file differs — see below</div>'
+        : likely.length ? '<div class="ncb-warn">' + likely.map(function (u) { return esc(u.name); }).join(', ') + '</div><div class="ncb-how" style="color:#fdba74">part numbers don\'t match — open the row</div>'
           : '<div class="ncb-lens" style="color:var(--nc-text-d)">not tracked in Lens</div>';
       var worst = x.lens.length ? x.lens.map(function (l) { return l.worst; }).filter(function (w) { return w != null; }) : [];
       var worstTxt = worst.length ? Math.round(Math.max.apply(null, worst) * 100) + '%' : '—';
@@ -766,19 +831,19 @@
       var q = function (n) { return st && st.status !== 'notsap' ? n : '<span style="color:var(--nc-text-d)">—</span>'; };
       var f = x.fam, cont = f && !f.first;
       var name = (cont ? '<span class="ncb-arrow">↳</span>' : '') + esc(x.label) + (f ? unitChips(f.units) : '') + (f && f.first ? '<span class="ncb-why" title="' + esc(SPLIT_WHY[f.reason] || SPLIT_WHY.multiple) + '">i</span>' : '');
-      h += '<tr class="ncb-row' + (cont ? ' ncb-cont' : '') + (famNext ? ' ncb-fam' : '') + '" data-id="' + esc(p.id) + '"><td>' + badge(k) + '</td><td class="l"><div class="ncb-cname">' + name + '</div><div class="ncb-meta">' + p.tier + (p.location ? ' · ' + esc(p.location) : '') + ' · VPN ' + esc(p.vpn) + (f ? ' · part number ' + f.n + ' of ' + f.of : '') + (st && st.assembly ? ' · assembly · counted in complete kits' : '') + (p.alsoFits ? ' · also fits other models' : '') + '</div></td>' +
+      h += '<tr class="ncb-row' + (cont ? ' ncb-cont' : '') + (famNext ? ' ncb-fam' : '') + (open ? ' open' : '') + '" data-id="' + esc(p.id) + '" style="--bar:' + ST[k].c + '"><td>' + badge(k) + '</td><td class="l"><div class="ncb-cname">' + name + '</div><div class="ncb-meta">' + p.tier + (p.location ? ' · ' + esc(p.location) : '') + ' · VPN ' + esc(p.vpn) + (f ? ' · part number ' + f.n + ' of ' + f.of : '') + (st && st.assembly ? ' · assembly · counted in complete kits' : '') + (p.alsoFits ? ' · also fits other models' : '') + '</div></td>' +
         '<td class="l">' + lens + '</td><td class="n">' + worstTxt + '</td><td class="n" style="font-size:12px">' + dueTxt + '</td>' +
         '<td class="n">' + q(st ? st.soh : 0) + (st && st.assembly && st.status !== 'notsap' ? '<span class="ncb-kit">kits</span>' : '') + '</td><td class="n">' + q(st ? st.po + st.tr : 0) + '</td><td class="n">' + q(st ? st.res : 0) + '</td><td>' + netCell(st) + '</td><td>' + types + '</td><td style="color:var(--nc-text-d)">' + (open ? '▾' : '▸') + '</td></tr>';
       if (open) {
-        var mats = matsTable(st);
         var notes = [];
+        if (!x.lens.length && likely.length) notes.push(mismatchNote(x, likely));
         if (st && st.ambiguous && st.ambiguous.length) notes.push('<span class="ncb-warn">Not counted: part number ' + st.ambiguous.map(function (a) { return '<span class="ncb-mono">' + esc(a) + '</span>'; }).join(', ') + ' is not in the INV_MSTR as written, and with leading zeros ignored it matches more than one different part number. Check which one is right.</span>');
         if (st) notes.push('SAP stock rule (MRP): <span class="ncb-mono">' + esc(st.mrp) + '</span>');
         notes.push('Part numbers in this pocket: <span class="ncb-mono">' + esc((p.vpns || []).join(', ')) + '</span>');
         if (f) notes.push('Split component: part number ' + f.n + ' of ' + f.of + ', fits ' + esc(f.units.join(', ') || 'the model') + '. ' + esc(SPLIT_WHY[f.reason] || SPLIT_WHY.multiple));
         if (p.alsoFits) notes.push('Also fits: ' + p.alsoFits.map(function (a) { return esc(a.model) + ' (' + esc((a.comps || []).join(', ')) + ')'; }).join(' · '));
         if (x.lens.length) notes.push('Lens components on this pocket: ' + x.lens.map(function (l) { return esc(l.name) + ' (' + l.n + ', part ' + esc(l.pn) + (l.mm ? ', SAP ' + esc(l.mm) : '') + (l.worst != null ? ', worst ' + Math.round(l.worst * 100) + '%' : '') + ')'; }).join(' · '));
-        h += '<tr class="ncb-detail"><td colspan="11"><div class="ncb-stmt">' + statement(st) + '</div>' + mats + notes.map(function (n) { return '<div class="ncb-note">' + n + '</div>'; }).join('') + '</td></tr>';
+        h += detailRows(st, ST[k].c, '<div class="ncb-stmt">' + statement(st) + '</div>' + notes.map(function (n) { return '<div class="ncb-note">' + n + '</div>'; }).join(''));
       }
     });
     return h + '</tbody></table></div>';
@@ -793,7 +858,8 @@
     var h = '<h1 class="ncb-h">Fleet spares cover</h1><div class="ncb-sub">Every critical component per model, judged on <b>cover after inbound</b> (on the shelf + on the way − reserved). Click a model for its board and table.</div>';
     ['OP', 'UG', 'REF'].forEach(function (g) {
       var ms = def.models.filter(function (m) { return m.group === g; }); if (!ms.length) return;
-      h += '<h3 style="font-family:var(--nc-font-head);margin:18px 0 6px">' + GROUP_NAME[g] + (g === 'REF' ? ' <small style="font-weight:400;color:var(--nc-text-m)">· tables only, no machine board</small>' : '') + '</h3><table><thead><tr><th class="l">Model</th><th>Units</th><th>Pockets</th><th>Spare</th><th>No spare</th><th>Short</th><th>Not in SAP</th><th>Lens components not matched</th></tr></thead><tbody>';
+      // v1.1.2 — the three group tables share one fixed set of column widths, so every column lines up down the page
+      h += '<h3 style="font-family:var(--nc-font-head);margin:18px 0 6px">' + GROUP_NAME[g] + (g === 'REF' ? ' <small style="font-weight:400;color:var(--nc-text-m)">· tables only, no machine board</small>' : '') + '</h3><table class="ncb-sumtbl"><colgroup><col style="width:30%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:16%"></colgroup><thead><tr><th class="l">Model</th><th>Units</th><th>Pockets</th><th>Spare</th><th>No spare</th><th>Short</th><th>Not in SAP</th><th>Lens components not matched</th></tr></thead><tbody>';
       ms.forEach(function (m) {
         var v = views[m.key], s = modelSummary(v), d = function (n, k) { return S.idx ? '<span style="color:' + (n ? ST[k].c : 'var(--nc-text-d)') + '">' + n + '</span>' : '—'; };
         h += '<tr class="ncb-row" data-model="' + esc(m.key) + '"><td class="l"><div class="ncb-cname">' + esc(m.lens.model) + '</div><div class="ncb-meta">' + esc(m.class) + (m.lens.units ? ' · ' + esc(m.lens.units.join(', ')) : '') + '</div></td><td class="n">' + v.units.length + '</td><td class="n">' + v.pockets.length + '</td><td class="n">' + d(s.c.spare, 'spare') + '</td><td class="n">' + d(s.c.nospare, 'nospare') + '</td><td class="n">' + d(s.c.short, 'short') + '</td><td class="n">' + d(s.c.notsap, 'notsap') + '</td><td class="n">' + s.unmatched + '</td></tr>';
@@ -847,7 +913,7 @@
     // keep the reader where they were: a re-render (opening a row, a filter) must not jump to the top
     var pm = el.querySelector('.ncb-main'), pl = el.querySelector('.ncb-list');
     var keepMain = pm ? pm.scrollTop : 0, keepList = pl ? pl.scrollTop : 0;
-    el.innerHTML = '<div class="ncb">' + (def ? '<aside class="ncb-list"><div class="ncb-mi' + (!S.model ? ' on' : '') + '" data-model=""><b>Fleet summary</b><span>' + def.models.length + ' models in the spares review</span></div>' + listHtml(def, views) + '</aside>' : '') + '<div class="ncb-main">' + main + '</div></div>';
+    el.innerHTML = '<div class="ncb">' + (def ? '<aside class="ncb-list"><div class="ncb-mi' + (!S.model ? ' on' : '') + '" data-model=""><b>Fleet summary</b><span>' + def.models.length + ' models in the spares review</span></div>' + listHtml(def, views) + '</aside>' : '') + '<div class="ncb-main"><div class="ncb-col">' + main + '</div></div></div>';
     wire(el, views);
     if (S.model && views[S.model]) layoutBoard(views[S.model]);   // sets the board height synchronously, so the scroll below lands right
     var nm = el.querySelector('.ncb-main'), nl = el.querySelector('.ncb-list');
