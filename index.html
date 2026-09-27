@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.9.3 — Mission Control</title>
+<title>NumaCore Lens v4.10 — Mission Control</title>
 <script src="numacore_lib.js"></script>
+<script src="numacore_bench.js"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -820,6 +821,7 @@ body { background: #030f0c; }
 .strip-btn[data-panel="pulse"].strip-active    { border-left-color:#e24b4a; color:#e24b4a; background:rgba(226,75,74,0.08); }
 .strip-btn[data-panel="vitals"].strip-active   { border-left-color:#1d9e75; color:#1d9e75; background:rgba(29,158,117,0.08); }
 .strip-btn[data-panel="horizon"].strip-active  { border-left-color:#378add; color:#378add; background:rgba(55,138,221,0.08); }
+.strip-btn[data-panel="bench"].strip-active    { border-left-color:#5fa8e0; color:#5fa8e0; background:rgba(95,168,224,0.08); } /* v4.10 — Bench accent = Stride blue (operator 2026-09-26) */
 .strip-btn[data-panel="cadence"].strip-active  { border-left-color:#ba7517; color:#ba7517; background:rgba(186,117,23,0.08); }
 .strip-btn[data-panel="deploy"].strip-active   { border-left-color:#9b97e8; color:#9b97e8; background:rgba(155,151,232,0.08); }
 .strip-btn[data-panel="settings"].strip-active { border-left-color:#b8ede0; color:#b8ede0; background:rgba(122,184,232,0.08); }
@@ -827,6 +829,7 @@ body { background: #030f0c; }
 .strip-btn[data-panel="pulse"]:hover    { color:rgba(226,75,74,0.7); }
 .strip-btn[data-panel="vitals"]:hover   { color:rgba(29,158,117,0.7); }
 .strip-btn[data-panel="horizon"]:hover  { color:rgba(55,138,221,0.7); }
+.strip-btn[data-panel="bench"]:hover    { color:rgba(95,168,224,0.7); }
 .strip-btn[data-panel="cadence"]:hover  { color:rgba(186,117,23,0.7); }
 .strip-btn[data-panel="deploy"]:hover   { color:rgba(155,151,232,0.7); }
 .strip-btn[data-panel="settings"]:hover { color:rgba(122,184,232,0.7); }
@@ -1599,6 +1602,11 @@ body { background: #030f0c; }
         <svg class="strip-icon" viewBox="0 0 44 44" fill="none"><line x1="4" y1="28" x2="40" y2="28" stroke="#378add" stroke-width="1" opacity="0.5"/><path d="M10 28 A12 12 0 0 1 34 28" fill="none" stroke="#378add" stroke-width="1.4" stroke-linecap="round"/><line x1="22" y1="10" x2="22" y2="15" stroke="#85b7eb" stroke-width="1" stroke-linecap="round" opacity="0.7"/><line x1="30" y1="13" x2="28" y2="17" stroke="#85b7eb" stroke-width="1" stroke-linecap="round" opacity="0.7"/><line x1="14" y1="13" x2="16" y2="17" stroke="#85b7eb" stroke-width="1" stroke-linecap="round" opacity="0.7"/></svg>
         <span class="strip-label">Horizon</span>
       </button>
+      <!-- v4.10 FEAT-1 — Bench (critical spares): native Lens panel, rendered by numacore_bench.js -->
+      <button class="strip-btn" data-panel="bench" onclick="switchTab('bench')">
+        <svg class="strip-icon" viewBox="0 0 44 44" fill="none"><rect x="8" y="8" width="28" height="7" rx="1.5" fill="none" stroke="#5fa8e0" stroke-width="1.2"/><rect x="8" y="19" width="28" height="7" rx="1.5" fill="none" stroke="#5fa8e0" stroke-width="1.2"/><rect x="8" y="30" width="28" height="6" rx="1.5" fill="#1e6fac" opacity="0.25" stroke="#5fa8e0" stroke-width="1"/><circle cx="14" cy="11.5" r="1.5" fill="#9ccbf0"/><circle cx="20" cy="22.5" r="1.5" fill="#9ccbf0"/><circle cx="26" cy="22.5" r="1.5" fill="#9ccbf0"/></svg>
+        <span class="strip-label">Bench</span>
+      </button>
       <button class="strip-btn" data-panel="cadence" onclick="switchTab('cadence')">
         <svg class="strip-icon" viewBox="0 0 44 44" fill="none"><polygon points="22,6 36,38 8,38" fill="none" stroke="#ba7517" stroke-width="1.2"/><polygon points="22,6 36,38 8,38" fill="#854f0b" opacity="0.15"/><line x1="22" y1="38" x2="30" y2="16" stroke="#ef9f27" stroke-width="1.4" stroke-linecap="round"/><circle cx="30" cy="15" r="2.5" fill="#ef9f27"/><rect x="14" y="36" width="16" height="4" rx="2" fill="#ba7517" opacity="0.5"/></svg>
         <span class="strip-label">Cadence</span>
@@ -1807,6 +1815,8 @@ body { background: #030f0c; }
       </div>
       <div style="margin-top:14px;font-size:11px;color:#5dcaa5;opacity:0.6">v4-alpha scaffold &mdash; populated chart logic ships in Chunk 10.</div>
     </div>
+    <!-- BENCH PANEL — critical spares (v4.10 FEAT-1). Content is rendered by numacore_bench.js. -->
+    <div id="tab-bench" class="tab-page" style="flex-direction:row;overflow:hidden"></div>
     <!-- CADENCE PANEL — iframe host (v4.0 Mission Control, Chunk 6) -->
     <div id="tab-cadence" class="tab-page" style="flex-direction:column">
       <div id="embed-status-cadence" style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(186,117,23,0.15);background:rgba(133,79,11,0.05);font-size:11px;color:#ef9f27;letter-spacing:0.06em">
@@ -1853,7 +1863,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.9.3';
+const VERSION = '4.10';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2023,8 +2033,30 @@ function _updateUnsavedDot() {
   if (!dot) return;
   dot.style.display = _lensAutosaveDirty ? 'inline-block' : 'none';
   dot.title = _lensAutosaveDirty
-    ? 'You have unsaved visibility changes — click SAVE FILE to persist them to the JSON'
+    ? 'You have unsaved changes (visibility settings or a Bench definition) — click SAVE FILE to write them into the fleet JSON'
     : '';
+}
+
+// ── v4.10 FEAT-1 — BENCH host bridge ─────────────────────────────────────────
+// numacore_bench.js renders the panel. Lens hands it the loaded file, the
+// per-unit component rows it already computes (FLEET_DATA: life %, override-
+// aware next due, part / SAP numbers) and the image base. The Bench definition
+// is the file's top-level `bench` section (Lens-owned; exportFleetJSON saves it
+// with the rest of the file). Stock is never written to the file.
+function _renderBench() {
+  var el = document.getElementById('tab-bench');
+  if (!el) return;
+  if (!window.NumaCoreBench) { el.innerHTML = '<div style="padding:40px;color:#b8ede0">Bench could not load (numacore_bench.js missing beside this page).</div>'; return; }
+  if (!lensRawData) { el.innerHTML = '<div style="padding:40px;color:#b8ede0;font-size:14px">Load a fleet file first (LOAD FILE), then open Bench.</div>'; return; }
+  window.NumaCoreBench.render(el, {
+    raw:        lensRawData,
+    fleetData:  FLEET_DATA,
+    imageBase:  IMAGE_BASE,
+    planSaved:  (lensRawData.meta && lensRawData.meta.lastSaved) || '',
+    clientCode: (lensMeta && lensMeta.clientCode) || (lensRawData.meta && lensRawData.meta.clientCode) || 'DEFAULT',
+    markUnsaved: function () { _lensAutosaveDirty = true; _updateUnsavedDot(); },
+    toast:      function (msg, sev) { try { showToast(msg, sev || 'info', 4200); } catch (e) {} }
+  });
 }
 
 function buildUISettings() {
@@ -3277,16 +3309,17 @@ const MODEL_IMAGE = {
   // ── UG Drills (mapped under both DRILL and UG DRILL) ─────────────────────
   "DRILL|DD422I":   "drill-ug-jumbo.png",
   "DRILL|DD422IE":  "drill-ug-jumbo.png",
-  "DRILL|DS422I":   "drill-ug-jumbo.png",
-  "DRILL|DS422IE":  "drill-ug-jumbo.png",
-  "DRILL|DL422I":   "drill-ug-jumbo.png",
-  "DRILL|DL422IE":  "drill-ug-jumbo.png",
+  "DRILL|DS422I":   "drill-ug-longhole-bolter.png",   // v4.10 — Bench picture; was the single-boom jumbo
+  "DRILL|DS422IE":  "drill-ug-longhole-bolter.png",
+  "DRILL|DL422I":   "drill-ug-longhole-bolter.png",
+  "DRILL|DL422IE":  "drill-ug-longhole-bolter.png",
   "UG DRILL|DD422I":  "drill-ug-jumbo.png",
   "UG DRILL|DD422IE": "drill-ug-jumbo.png",
-  "UG DRILL|DS422I":  "drill-ug-jumbo.png",
-  "UG DRILL|DS422IE": "drill-ug-jumbo.png",
-  "UG DRILL|DL422I":  "drill-ug-jumbo.png",
-  "UG DRILL|DL422IE": "drill-ug-jumbo.png",
+  "UG DRILL|DS422I":  "drill-ug-longhole-bolter.png",
+  "UG DRILL|DS422IE": "drill-ug-longhole-bolter.png",
+  "UG DRILL|DL422I":  "drill-ug-longhole-bolter.png",
+  "UG DRILL|DL422IE": "drill-ug-longhole-bolter.png",
+  "UG BOLTER|DS422I": "drill-ug-longhole-bolter.png",   // v4.10 — the DS422i is filed under UG BOLTER in client files
   // ── Excavators ───────────────────────────────────────────────────────────
   "EXCAVATOR|349E":     "excavator-standard.png",
   "EXCAVATOR|390F":     "excavator-standard.png",
@@ -3414,6 +3447,7 @@ function switchTab(tab){
   if(tab==='pulse') { if(typeof renderPulse==='function') renderPulse(); }
   if(tab==='vitals') { if(typeof switchVtTab==='function') switchVtTab(typeof vtSubTabCurrent!=='undefined'?vtSubTabCurrent:'overview'); }
   if(tab==='horizon') { if(typeof renderHorizon==='function') renderHorizon(); }
+  if(tab==='bench') { _renderBench(); }   // v4.10 FEAT-1
   if(tab==='cadence' || tab==='deploy') { if(typeof switchToEmbedded==='function') switchToEmbedded(tab); }
   // v3.1 TWEAK-3 — ensure the global fleet-col is restored when leaving
   // Vitals so a prior Heat Map sub-tab does not leave it hidden.
@@ -3436,7 +3470,9 @@ function _applyEmbedChrome(tab) {
   var fc = document.getElementById('fleet-col');
   var loadBtn = document.getElementById('lens-reload-btn');
   var saveBtn = document.getElementById('lens-save-btn');
-  if (fc)      fc.style.display      = inEmbed ? 'none' : '';
+  // v4.10 — Bench carries its own model list, so the fleet column steps aside;
+  // LOAD / SAVE FILE stay (a Bench definition import is saved with SAVE FILE).
+  if (fc)      fc.style.display      = (inEmbed || tab === 'bench') ? 'none' : '';
   if (loadBtn) loadBtn.style.display = inEmbed ? 'none' : '';
   if (saveBtn) saveBtn.style.display = inEmbed ? 'none' : '';
 }

@@ -25,7 +25,7 @@ Every tool is a **single HTML file**. No build step. No `node_modules`. Open it 
 
 | Tool | File | What it does |
 |---|---|---|
-| 🩺 **Lens** (Pulse · Vitals · Horizon) | [`index.html`](https://aisandbox-bj.github.io/numacore-lens-suite/) | Day-to-day glance. Fleet health summary, component KPIs, condition-monitoring heatmap (oil + coolant), unit drill-down with coolant chemistry and OPC wear-particle detail, utilisation profiles, capital plan. An engine with clean oil but no current coolant sample reads **grey — unmonitored**, never green. |
+| 🩺 **Lens** (Pulse · Vitals · Horizon · Bench) | [`index.html`](https://aisandbox-bj.github.io/numacore-lens-suite/) | Day-to-day glance. Fleet health summary, component KPIs, condition-monitoring heatmap (oil + coolant), unit drill-down with coolant chemistry and OPC wear-particle detail, utilisation profiles, capital plan, and **Bench**: critical spares by model, with on the shelf / on the way / reserved and cover after inbound. An engine with clean oil but no current coolant sample reads **grey — unmonitored**, never green. |
 | 📅 **Cadence** | [`cadence.html`](https://aisandbox-bj.github.io/numacore-lens-suite/cadence.html) | The PCR scheduling tool. Gantt timeline of every component's planned replacement date, Auto-Build clusters, optimiser, resource loading, project list, and a **life-of-fleet Budget** (multi-cycle costing + BAF, Excel + an interactive HTML Budget Report). The oldest and most vital tool in the suite. |
 | 📦 **Deploy** | [`deploy.html`](https://aisandbox-bj.github.io/numacore-lens-suite/deploy.html) | Project / shutdown / outage execution. Gates, tasks, work orders, bill of materials, project Gantt with anchored TODAY line, Recently-Closed WO bucket. |
 | 📥 **Intake** | [`intake.html`](https://aisandbox-bj.github.io/numacore-lens-suite/intake.html) | Data ingestion. Builds a fleet JSON from XLSX exports (SMU readings, IW39 work-order history, material master). Ingests FluidLife lab PDFs — a single report or a full bulk export, auto-detected — extracting oil rank, OPC particle classification and coolant chemistry, and reporting how many reports are new vs already imported. Monthly UPDATE flow preserves the advisor's planning work. |
@@ -35,8 +35,9 @@ Plus three supporting artefacts:
 
 | File | Purpose |
 |---|---|
-| [`manual.html`](https://aisandbox-bj.github.io/numacore-lens-suite/manual.html) | Full user manual — 16 tabs covering every feature, every data flow, every design decision. Updated every release. |
+| [`manual.html`](https://aisandbox-bj.github.io/numacore-lens-suite/manual.html) | Full user manual — 17 tabs covering every feature, every data flow, every design decision. Updated every release. |
 | [`numacore_lib.js`](https://aisandbox-bj.github.io/numacore-lens-suite/numacore_lib.js) | Small shared library (~1k lines). Toast UI, category canonicalisation, sort-field normalisation, a few cross-tool utilities. |
+| [`numacore_bench.js`](https://aisandbox-bj.github.io/numacore-lens-suite/numacore_bench.js) | The Lens Bench tab (critical spares): reads the SAP Inventory Master in the browser and draws each model's board and table. No data is stored in it; the spares definition lives in the fleet file. |
 | [`migrate.html`](https://aisandbox-bj.github.io/numacore-lens-suite/migrate.html) | One-time V4 → V5 schema migrator. |
 
 ---
@@ -134,14 +135,15 @@ The cost is that some patterns are awkward — there's no module system, no off-
 This repo is the GitHub Pages deployment target. The build outputs land here flat:
 
 ```
-index.html        ← Lens (Pulse · Vitals · Horizon panels)
+index.html        ← Lens (Pulse · Vitals · Horizon · Bench panels)
 cadence.html      ← Cadence (PCR scheduling)
 deploy.html       ← Deploy (project execution)
 intake.html       ← Intake (data ingestion)
 fleetconfig.html  ← FleetConfig
-manual.html       ← User manual (14 tabs)
+manual.html       ← User manual (17 tabs)
 migrate.html      ← V4 → V5 schema migrator
 numacore_lib.js   ← Shared library (~1k lines)
+numacore_bench.js ← Bench tab (critical spares)
 images/           ← Equipment illustrations used by the tools
 README.md         ← You are here
 ```
@@ -164,7 +166,7 @@ Pushes to `main` are auto-deployed by GitHub Pages within ~30 seconds.
 
 **Early-adopter use.** One operator-owner, one active client engagement. The suite is not a commercial product — it's the advisor's internal delivery infrastructure. This repo is public so collaborators (and the occasional curious dev friend) can read the code.
 
-Current live versions: **Lens v4.9.3 · Cadence v18.12 · Deploy v8.19 · Intake v8.12 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0**. Most recent builds: **Cadence v18.12** — "today" worked out in local time (from 5 pm Pacific / 6 pm Mountain it had read tomorrow, which could save auto-moved dates as orphan overrides) — and **Deploy v8.19 + Lens v4.9.3 — SAP extracts dated from their own data**. An IW39 now carries the date of its data (newest *Created On*, checked against the date in the file name), an Inventory Master carries its file-name or entered date, and the Lens Risk Report's 30-day gate reads that data date instead of the upload time. Lens also embeds Cadence / Deploy / FleetConfig by their flat file names on every protocol, so a folder copy of the suite loads the current tools.
+Current live versions: **Lens v4.10 · numacore_bench v1.0.0 · Cadence v18.12 · Deploy v8.19 · Intake v8.12 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0**. Most recent builds: **Lens v4.10 — the Bench tab**: critical spares inside Lens, by model, with on the shelf / on the way / reserved and cover after inbound, linked to the plan (the same numbers as the standalone Critical Spares Review); **Cadence v18.12** — "today" worked out in local time (from 5 pm Pacific / 6 pm Mountain it had read tomorrow, which could save auto-moved dates as orphan overrides) — and **Deploy v8.19 + Lens v4.9.3 — SAP extracts dated from their own data**. An IW39 now carries the date of its data (newest *Created On*, checked against the date in the file name), an Inventory Master carries its file-name or entered date, and the Lens Risk Report's 30-day gate reads that data date instead of the upload time. Lens also embeds Cadence / Deploy / FleetConfig by their flat file names on every protocol, so a folder copy of the suite loads the current tools.
 
 If you found your way here and you're a fleet-management or mining-tech person interested in talking about PCR methodology, get in touch via the repo owner.
 
