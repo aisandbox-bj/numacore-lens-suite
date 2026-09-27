@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.12 — NumaCore Lens Suite</title>
+<title>Cadence v18.13 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -7751,6 +7751,12 @@ if (_inShell) {
     const overlay = document.getElementById('ndsOverlay');
     if (overlay) overlay.style.display = 'none';
   } catch(_) {}
+  // v18.13 (operator consent 2026-09-26) — one Save inside Lens: Lens's SAVE FILE / Meeting record
+  // saves everything, so Cadence's own header Save File button is hidden when embedded. Export stays.
+  try {
+    const _hdrSave = document.querySelector('#app-header .btn-save');
+    if (_hdrSave) _hdrSave.style.display = 'none';
+  } catch(_) {}
 
   // After auto-save completes, also notify the parent of the latest slice
   // so heatmaps / pulse panels in Lens reflect the drag immediately.
@@ -7776,6 +7782,13 @@ if (_inShell) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'load-fleet' && m.fleet) {
       try { _initFromJSON(m.fleet); } catch(e) { console.warn('shell load-fleet:', e); }
+      return;
+    }
+    // v18.13 — Lens asks for the latest changes before it saves: run the pending autosave now (its shell
+    // wrapper posts 'fleet-updated' with the owned slice), then acknowledge so Lens knows it has everything.
+    if (m.type === 'flush') {
+      try { clearTimeout(_saveTimer); _doSave(); } catch(e) { console.warn('shell flush:', e); }
+      try { window.parent.postMessage({ type: 'flushed', tool: 'cadence', id: m.id }, _msgTarget()); } catch(e) { console.warn('post flushed:', e); }
       return;
     }
   }, false);

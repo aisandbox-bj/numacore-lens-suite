@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.10 — Mission Control</title>
+<title>NumaCore Lens v4.11 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_workspace.js"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1544,6 +1545,12 @@ body { background: #030f0c; }
 
 </style>
 <link rel="stylesheet" href="numacore-ui.css">
+<style>/* v4.11 — header room for the client-folder strip: the clock, then the saved date, then the unit count step aside on narrower screens; the client code never shrinks */
+#lens-client-code{white-space:nowrap;flex-shrink:0}
+@media (max-width:1600px){#clock{display:none}}
+@media (max-width:1450px){#lens-last-saved{display:none}}
+@media (max-width:1200px){#lens-comp-count{display:none}}
+</style>
 </head>
 <body>
 
@@ -1579,8 +1586,9 @@ body { background: #030f0c; }
     <span id="lens-last-saved" style="font-size:0.59rem;color:#1a5a3a;margin-left:8px;"></span>
   </div>
   <div id="banner-right">
+    <span id="lens-ws-strip" style="margin-right:10px"></span><!-- v4.11 — client folder: source ages + new files (numacore_workspace) -->
     <div id="clock"></div>
-    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save fleet file with current ui_settings">&#x2B07; SAVE FILE</button><!-- v4.3.5: unsaved-changes dot, lit when localStorage ui_settings is newer than the JSON file --><span id="lens-unsaved-dot" class="lens-unsaved-dot" style="display:none" title=""></span>
+    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save the fleet file. Cadence's and Deploy's latest changes are collected first (one Save for the whole suite)">&#x2B07; SAVE FILE</button><button id="lens-meeting-btn" onclick="lensMeetingRecord()" style="margin-left:6px;background:transparent;border:1px solid rgba(251,191,36,0.45);color:#FBBF24;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Meeting record: saves the plan (every tool's latest changes first), then writes the saved JSON and a 'What was in use' note to the client folder's 3 Archive\Meetings\&lt;date&gt;. Never the SAP files.">&#x1F4DD; MEETING RECORD</button><!-- v4.3.5: unsaved-changes dot, lit when localStorage ui_settings is newer than the JSON file --><span id="lens-unsaved-dot" class="lens-unsaved-dot" style="display:none" title=""></span>
   </div>
 </div>
 
@@ -1863,7 +1871,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.10';
+const VERSION = '4.11';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -3473,8 +3481,11 @@ function _applyEmbedChrome(tab) {
   // v4.10 — Bench carries its own model list, so the fleet column steps aside;
   // LOAD / SAVE FILE stay (a Bench definition import is saved with SAVE FILE).
   if (fc)      fc.style.display      = (inEmbed || tab === 'bench') ? 'none' : '';
-  if (loadBtn) loadBtn.style.display = inEmbed ? 'none' : '';
-  if (saveBtn) saveBtn.style.display = inEmbed ? 'none' : '';
+  // v4.11 — one Save (operator 2026-09-26: "we have to save to json in Deploy and Cadence — that needs to
+  // disappear"). Lens's LOAD / SAVE FILE / MEETING RECORD stay on every tab; the embedded tools hide their own
+  // Save (Cadence v18.13, Deploy v8.20) and hand over their latest changes when Lens saves.
+  if (loadBtn) loadBtn.style.display = '';
+  if (saveBtn) saveBtn.style.display = '';
 }
 
 // ═══════════════════════════════════════════════
@@ -4251,16 +4262,103 @@ function loadLensJSON(json) {
   // working slices into B's file (2026-06-10 review: the cross-client
   // contamination path in Mission Control).
   Object.keys(embedReady).forEach(function(tool) {
-    if (embedReady[tool]) _postToEmbed(tool, { type: 'load-fleet', fleet: lensRawData });
+    if (embedReady[tool]) _pushFleetToEmbed(tool);
   });
+
+  // v4.11 FEAT-1 — the client folder (numacore_workspace). A different client's plan starts clean: no folder data,
+  // no stock in Bench, and a fresh Deploy (its session pools would otherwise still hold the last client's SAP data).
+  const _ccNow = lensMeta.clientCode || 'DEFAULT';
+  if (_wsClient !== null && _wsClient !== _ccNow) {
+    _embedWorkspace = {};
+    try { if (window.NumaCoreBench && NumaCoreBench.clearStock) NumaCoreBench.clearStock(); } catch(_) {}
+    const _df = document.getElementById('embedFrame-deploy');
+    if (_df && _df.src && _df.src !== window.location.href) { embedReady.deploy = false; _df.src = ''; if (currentTab === 'deploy') switchToEmbedded('deploy'); }
+  }
+  _wsClient = _ccNow;
+  if (window.NumaCoreWorkspace) {
+    try {
+      NumaCoreWorkspace.mountStrip(document.getElementById('lens-ws-strip'));
+      NumaCoreWorkspace.attach({ clientCode: _ccNow, clientName: cn, planUnits: Array.from(unitSet), lensVersion: 'v' + VERSION,
+        toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData });
+    } catch (e) { console.warn('workspace attach:', e); }
+  }
+}
+
+// v4.11 FEAT-1 — client-folder data arrives here (one call per source, on every plan open and after each Publish).
+//   INV_MSTR → Bench (stock) + Deploy (Inventory Master) · IW39 → Deploy (fleet-wide work orders; its data date then
+//   reaches deployData, which the Risk Report gate reads). Deploy is loaded in the background if its tab was never opened.
+let _embedWorkspace = {};   // source → the latest 'workspace-data' message for Deploy
+let _wsClient = null;
+function _wsOnData(p) {
+  if (p.source === 'INV_MSTR') {
+    try { if (window.NumaCoreBench && NumaCoreBench.setStock) NumaCoreBench.setStock(NumaCoreWorkspace.forBench(p.digest), { fileName: p.fileName, dataAsOf: p.dataAsOf, method: p.methodWords, clientCode: p.clientCode }); }
+    catch (e) { console.warn('workspace → Bench:', e); showToast('Bench could not use the folder stock: ' + e.message, 'error', 5000); }
+  }
+  _embedWorkspace[p.source] = { type: 'workspace-data', source: p.source, clientCode: p.clientCode, fileName: p.fileName, dataAsOf: p.dataAsOf,
+    method: p.method, window: p.window, rows: NumaCoreWorkspace.forDeploy(p.digest) };
+  if (embedReady.deploy) _postToEmbed('deploy', _embedWorkspace[p.source]);
+  else _preloadEmbed('deploy');
+}
+function _preloadEmbed(tool) {
+  const frame = document.getElementById('embedFrame-' + tool);
+  if (!frame || !lensRawData) return;
+  if (!frame.src || frame.src === '' || frame.src === window.location.href) { embedReady[tool] = false; frame.src = EMBED_TOOL_URLS[tool] || (tool + '.html'); }
+}
+function _pushFleetToEmbed(tool) {
+  _postToEmbed(tool, { type: 'load-fleet', fleet: lensRawData });
+  if (tool === 'deploy') Object.keys(_embedWorkspace).forEach(function (src) { _postToEmbed('deploy', _embedWorkspace[src]); });
 }
 
 // ── SAVE TO DISK (v3.5 sub3 / v4 Chunk 5) ──────────────────────────────────
 // Lens slice ownership: writes only `ui_settings` and `meta.lastSaved`.
 // Foreign slices (masterData, workingData, oil_samples, ...) are preserved
 // by deep-cloning the loaded JSON. V5 in → V5 out; V4 Flat in → V4 Flat out.
+// v4.11 — one Save. Every loaded tool (Cadence v18.13+, Deploy v8.20+) is asked for its latest changes first and
+// Lens waits for each 'flushed' (up to 1.5 s). A tool that doesn't answer (an older build) is saved with its last
+// update, and the toast says so.
+const _flushWaiters = {};
+function _flushEmbeds() {
+  const tools = Object.keys(embedReady).filter(function (t) { return embedReady[t]; });
+  if (!tools.length) return Promise.resolve({ late: [] });
+  const id = 'f' + Date.now();
+  return Promise.all(tools.map(function (t) {
+    return new Promise(function (res) {
+      const key = t + '|' + id;
+      const timer = setTimeout(function () { delete _flushWaiters[key]; res(t); }, 1500);
+      _flushWaiters[key] = function () { clearTimeout(timer); delete _flushWaiters[key]; res(null); };
+      _postToEmbed(t, { type: 'flush', id: id });
+    });
+  })).then(function (late) { return { late: late.filter(Boolean) }; });
+}
 function exportFleetJSON() {
+  if (!lensRawData) { showToast('No fleet file loaded.', 'warn'); return Promise.resolve(null); }
+  return _flushEmbeds().then(function (r) {
+    const saved = _exportFleetJSONNow();
+    if (r.late.length) showToast('Saved. ' + r.late.map(function (t) { return t.charAt(0).toUpperCase() + t.slice(1); }).join(' and ') + ' did not confirm its last changes in time, so the file has its most recent update.', 'warn', 6000);
+    return saved;
+  });
+}
+// v4.11 — Meeting record (operator 2026-09-26: "the meeting button needs to spit out the saved json as well — ensure
+// that it is saved before you dump it out"; no SAP data). Save first (every tool flushed), then write that saved file
+// and "What was in use.txt" to the client folder's 3 Archive\Meetings\<date>\.
+function lensMeetingRecord() {
   if (!lensRawData) { showToast('No fleet file loaded.', 'warn'); return; }
+  exportFleetJSON().then(function (saved) {
+    if (!saved) return;
+    if (!window.NumaCoreWorkspace) { showToast('Saved as ' + saved.fname + '. The folder reader is not loaded, so no meeting record was written.', 'warn', 6000); return; }
+    return NumaCoreWorkspace.meetingRecord({ json: saved.text, fileName: saved.fname }).then(function (res) {
+      if (res.ok) { showToast('Meeting record written to ' + res.where + ' (' + res.file + ' + ' + res.txtFile + '). The plan was saved as ' + saved.fname + '.', 'success', 7000); return; }
+      _downloadText(res.txt, saved.fname.replace(/\.json$/i, '') + ' - What was in use.txt');
+      showToast('Saved as ' + saved.fname + '. No client folder is connected, so the "What was in use" note was downloaded next to it.', 'warn', 7000);
+    });
+  }).catch(function (e) { showToast('Meeting record not written: ' + (e && e.message || e), 'error', 7000); });
+}
+function _downloadText(txt, name) {
+  const url = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+function _exportFleetJSONNow() {
   const out = JSON.parse(JSON.stringify(lensRawData));  // deep clone; preserves loaded shape
   // v4.7 FIX — strip the V5→V4 compat backfills that buildFleetData wrote onto
   // the master records (fleet/unit/component name mirrors + the marker field).
@@ -4286,7 +4384,8 @@ function exportFleetJSON() {
   const fname = (window.NumaCoreLib && typeof window.NumaCoreLib.buildSaveFilename === 'function')
     ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: out })
     : (cc + '_fleet.json');
-  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const text = JSON.stringify(out, null, 2);
+  const blob = new Blob([text], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -4314,6 +4413,7 @@ function exportFleetJSON() {
     }));
   } catch (e) { console.warn('[lens v4.3.6] post-save localStorage sync failed:', e); }
   _updateUnsavedDot();
+  return { out: out, fname: fname, text: text };   // v4.11 — the saved file, for the Meeting record
 }
 
 document.addEventListener('DOMContentLoaded', function initLoadScreen() {
@@ -4930,7 +5030,7 @@ function switchToEmbedded(tool) {
     frame.src = EMBED_TOOL_URLS[tool] || (tool + '.html');
   } else if (embedReady[tool]) {
     // Already ready — re-push fleet so any external mutations propagate.
-    _postToEmbed(tool, { type: 'load-fleet', fleet: lensRawData });
+    _pushFleetToEmbed(tool);
   }
 }
 
@@ -5013,7 +5113,11 @@ window.addEventListener('message', function onEmbedMessage(ev) {
   if (!m || typeof m !== 'object' || !m.type) return;
   if (m.type === 'tool-ready') {
     embedReady[knownTool] = true;
-    _postToEmbed(knownTool, { type: 'load-fleet', fleet: lensRawData });
+    _pushFleetToEmbed(knownTool);
+    return;
+  }
+  if (m.type === 'flushed') {   // v4.11 — a tool confirms it has sent its latest changes (see _flushEmbeds)
+    const w = _flushWaiters[knownTool + '|' + m.id]; if (w) w();
     return;
   }
   if (m.type === 'fleet-updated') {

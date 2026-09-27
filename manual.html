@@ -264,9 +264,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
-  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-09-26 — covers <strong>Lens v4.10 · numacore_bench.js v1.0.1 · Cadence v18.12 · Deploy v8.19 · Intake v8.12 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-09-26 — covers <strong>Lens v4.11 · numacore_workspace.js v0.1.0 · numacore_bench.js v1.1.0 · Cadence v18.13 · Deploy v8.20 · Intake v8.12 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
   <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-09-26.</div>
   <div style="max-width:880px;margin:10px auto 0;background:rgba(61,201,160,0.06);border:1px solid rgba(61,201,160,0.25);border-radius:8px;padding:10px 16px;font-size:11.5px;color:var(--text-sec,#b8c4cc);line-height:1.6">
+    <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-26, late — the client folder, one Save, the Meeting record):</b> <b>Lens v4.11</b> reads SAP exports from the client's synced folder. You drop IW39 and INV_MSTR in <code>1 New files</code> and press CHECK. Lens dates each file from its data and checks it: amber after 7 days, red after 14, nothing older than 30 days loaded. Then press Publish. Bench and Deploy get the data by themselves (see <a href="#" data-jump="setup">Setup → The client folder</a>). <b>One Save</b>: SAVE FILE now collects Cadence's and Deploy's latest changes first, and their own Save buttons are gone inside Lens (<b>Cadence v18.13</b>, <b>Deploy v8.20</b>). The new <b>MEETING RECORD</b> button saves, then writes the saved plan and a "What was in use" note into the folder. <b>Bench v1.1.0</b> adds the Older / Other Sandvik models (tables only) and the 30-day rule.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-26, later — Bench):</b> <b>Lens v4.10</b> adds the <a href="#" data-jump="bench">Bench</a> tab, critical spares inside Lens, drawn by the new shared file <code>numacore_bench.js</code> v1.0.0. For every critical component on the 14 models in the spares review (majors and minors) it shows on the shelf, on the way, reserved and <em>cover after inbound</em>, and links each one to the plan's components. It gives the same numbers as the standalone Critical Spares Review V3, which it replaces. The definition is imported once and saved in the fleet JSON; stock is read from the INV_MSTR each session and never saved. Lens now hosts six panels. <b>numacore_bench.js v1.0.1</b> sets your status rule: zero stock with no demand is <em>No spare</em>; <em>Short</em> means demand the shelf and inbound can't meet.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-26 — dates you can trust):</b> SAP extracts now carry the date of their <em>data</em>, not the moment you uploaded them. <b>Deploy v8.19</b> dates the fleet-wide IW39 from its newest <em>Created On</em> (checked against a date in the file name; asked if neither) and the Inventory Master from its file name or a date you enter — shown before you import, in the column-mapping screen. <b>Lens v4.9.3</b> runs the Risk Report's 30-day IW39 check on that data date, so an old extract loaded today is refused; files saved before v8.19 still work, labelled "upload time". A copy of Lens opened from a folder now embeds <code>cadence.html</code> / <code>deploy.html</code> / <code>fleetconfig.html</code>, like the portal. <b>Cadence v18.12</b> works out "today" in local time — before, it read tomorrow's date from 5 pm (Pacific) / 6 pm (Mountain), and a session crossing that hour could save auto-moved dates as orphan overrides — and no longer warns about files it saved itself. Since the last revision: the shared design system <b>numacore-ui.css v1.0</b> with locally bundled brand fonts (FleetConfig v0.2, Lens v4.9.2, Intake v8.12), <b>Intake v8.11</b> reduced-hours review on UPDATE, and <b>Cadence v18.11</b> Budget Report drill-down.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-08-19 — Cadence Budget):</b> the headline change since the ConMon window is the <b>Cadence life-of-fleet Budget</b> (Cadence <b>v18.8 → v18.10.4</b>). Cadence now costs the <em>whole</em> replacement schedule, not just the next-due change. A <b>Generate Budget</b> pop-up runs a multi-cycle costing engine — each component replaced at its next-due date, then every <code>benchmark ÷ util_rate</code> to the horizon — over a fiscal-anchored monthly→quarterly→annual taper, with a cost-weighted <b>Budget Adjustment Factor (BAF)</b> for parts/labour uplift (Fleet→Model→Unit→Component % tree, inherit-with-override; the uplift is baked into component cost, never a separate strippable line). It produces an <b>11-sheet Excel</b> workbook and a self-contained <b>interactive HTML Budget Report</b> — four tabs (Parameters · Risk items · Budget graphs · Data table) with a click-through donut, a stacked bar over time, an adaptive heat-map and per-view Excel export. All amounts are today's money (the client adds inflation on top). Validated against an independent hand-calc; see the Record of Change for the full v18.8–v18.10.4 ledger.<br><br>
@@ -467,15 +468,16 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 
   <h3>File layout on disk</h3>
 <pre>4 - Build Output/
-├── Lens v4.10.html             ← host app (Mission Control) — ConMon, Risk Report on the IW39 data date, Bench tab
-├── Cadence v18.12.html         ← standalone scheduler (+ life-of-fleet Budget; local "today")
-├── Deploy v8.19.html           ← standalone execution — SAP extracts dated from their own data
+├── Lens v4.11.html             ← host app (Mission Control) — ConMon, Risk Report, Bench tab, the client folder, one Save, Meeting record
+├── Cadence v18.13.html         ← standalone scheduler (+ life-of-fleet Budget; local "today"; one Save inside Lens)
+├── Deploy v8.20.html           ← standalone execution — SAP extracts dated from their data; takes the client folder's IW39 / INV_MSTR from Lens
 ├── Intake v8.12.html           ← data ingestion — OPC/coolant extract, bulk PDF import, design system
 ├── FleetConfig v0.2.html       ← fleet/model/unit editor (design system)
 ├── migrate.html                ← V4 Flat → V5 migrator (GATED — see Migrate tab)
 ├── numacore_lib.js             ← shared library (v1.5.1) — esc, parseDate, makeComponentId,
 │                                  V5 validator, showToast (top-clearance applied), fmtDate
-├── numacore_bench.js           ← Bench tab (v1.0.1) — critical spares; INV_MSTR reader ported from Critical Spares V3
+├── numacore_bench.js           ← Bench tab (v1.1.0) — critical spares; INV_MSTR reader ported from Critical Spares V3
+├── numacore_workspace.js       ← the client-folder reader (v0.1.0) — reads, dates and checks SAP exports; Meeting record
 ├── numacore-ui.css             ← shared design system v1.0 (tokens, components, @font-face)
 ├── vendor/                     ← vendored libraries (v8.18-era P5 ship)
 │   ├── fonts/                  ← the four brand typefaces, 14 woff2, no CDN
@@ -514,8 +516,37 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
     <li>Open <code>Lens v4.10.html</code> (or the suite's <code>index.html</code> on GitHub Pages) in a browser.</li>
     <li>Click <b>Load Fleet</b> → pick <code>[ClientCode]_fleet.json</code>.</li>
     <li>Work across Pulse / Vitals / Horizon / Bench / Cadence / Deploy panels. Cadence and Deploy autosave their slices into <code>lensRawData</code> via postMessage.</li>
-    <li>Click <b>Save Final</b> at meeting end → browser download writes the updated JSON. Replace the file on disk.</li>
+    <li>Click <b>SAVE FILE</b> at meeting end (it collects Cadence's and Deploy's latest changes first) → browser download writes the updated JSON. Or click <b>MEETING RECORD</b>: the same save, plus a copy in the client folder's <code>3 Archive\Meetings\&lt;date&gt;</code>.</li>
   </ol>
+
+  <h3>The client folder (Lens v4.11)</h3>
+  <p class="note">Press the <b>?</b> next to <b>📁 CONNECT FOLDER</b> in Lens's header at any time. It shows this layout, where to put each file (with the client's code in the example names) and the rules.</p>
+  <p>SAP exports come from the client's synced OneDrive folder instead of being loaded by hand. Lens reads each new file once, dates it from its <em>data</em>, keeps a small dated copy and passes it to Bench and Deploy. The folder layout and the procedure are in <code>Review docs/Client drive folder - structure + update procedure - 2026-09-25.md</code>.</p>
+  <ol>
+    <li><b>Connect once.</b> With the client's plan loaded, press <b>📁 CONNECT FOLDER</b> in the header (Edge or Chrome) and pick the client folder, not a folder inside it. The first time, Lens creates <code>1 New files</code>, <code>2 In use</code>, <code>3 Archive</code> and <code>lens</code>; nothing already there is changed. Lens remembers the folder for that client. After a restart the browser asks for one "Allow" (<b>📁 ALLOW …</b>).</li>
+    <li><b>Drop.</b> Save fresh SAP exports (IW39, INV_MSTR) into <code>1 New files</code>. Name them <code>&lt;SOURCE&gt; &lt;CLIENT&gt; &lt;YYYY_MM_DD&gt;.xlsx</code>; the date matters most for INV_MSTR, which has no date inside it.</li>
+    <li><b>Check.</b> The header shows <b>N NEW FILES: CHECK</b>. Press it and Lens reads each file (a full INV_MSTR takes up to half a minute) and shows a card:
+      <ul>
+        <li><b>Will be used</b>: with its data date, how it was dated, the date range it covers and the rows kept.</li>
+        <li><b>Not used</b>: missing columns, older than 30 days, a date in the future, another client's units or plant, the same file as the one in use, or a newer file of the same kind in the same drop.</li>
+        <li><b>Older than in use</b>: held back. Tick "Use it anyway" to override; the override is logged.</li>
+        <li><b>Question</b>: an INV_MSTR with no date in its name. Enter the export date, or "Don't know", which makes stock show red until a dated export replaces it.</li>
+        <li><b>Left in place</b>: MB51 and Component Snapshots (not read yet) and files Lens doesn't recognise.</li>
+      </ul>
+      Warnings (re-saved in Excel, a row count far from the file in use, a file name that disagrees with the data) don't stop a file.</li>
+    <li><b>Publish.</b> Lens writes the dated copy to <code>lens\data</code>, moves the file in use to <code>3 Archive\&lt;source&gt;</code> and files the new one in <code>2 In use</code> under its standard name. Refused files go to <code>1 New files\Not used</code>, and <code>3 Archive\Refresh log.csv</code> gets one line per file. <b>Nothing is ever deleted.</b></li>
+  </ol>
+  <table>
+    <thead><tr><th>Header strip</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Work orders 24 Sep · 2 d</td><td>The IW39 in use: its data date and age. Hover for the file, how it was dated and the range it covers.</td></tr>
+      <tr><td>Green / amber / red</td><td>Up to 7 days / 8–14 days / over 14 days old, the same limits for every SAP source.</td></tr>
+      <tr><td>expired, refresh</td><td>Over 30 days old: still shown, but out of date everywhere, and the Risk Report blocks. Refresh with a fresh export.</td></tr>
+    </tbody>
+  </table>
+  <p><b>Where the data goes.</b> INV_MSTR goes to Bench (the stock chip says "folder") and to Deploy's Inventory Master. IW39 goes to Deploy's fleet-wide work orders. Deploy loads in the background so the Risk Report sees the IW39's date without the Deploy tab being opened. Its pills say "from the client folder (Lens)". Deploy's own upload pills still work as a fallback, with the same 30-day rule.</p>
+  <p><b>Meeting record.</b> At the end of a meeting press <b>📝 MEETING RECORD</b>. It saves the plan exactly like SAVE FILE, every tool's latest changes first, then writes that saved JSON and <code>What was in use.txt</code> into <code>3 Archive\Meetings\&lt;date&gt;</code>. The note lists each SAP source with its data date, age and file. The SAP files themselves are not copied; they are already in <code>2 In use</code> or <code>3 Archive</code>. With no folder connected, the note is downloaded next to the plan.</p>
+  <p><b>Another client.</b> Loading another client's plan disconnects the folder and clears Bench's stock and Deploy's SAP data. Nothing carries over between clients.</p>
 
   <h3>Standalone tool use</h3>
   <p>Any of the four tools (Cadence, Deploy, Intake, FleetConfig) opens directly from disk and works without Lens. Detection is automatic: <code>window.parent === window</code> means standalone, otherwise embedded.</p>
@@ -565,7 +596,7 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
   <p>When the active tab is an iframe-embedded child (Cadence, Deploy):</p>
   <ul>
     <li>Left fleet-filter column hides — belongs to the host, not the child.</li>
-    <li>Header <b>Load File</b> / <b>Save File</b> buttons hide — Lens manages I/O; child requests via <code>request-save</code>.</li>
+    <li>Header <b>LOAD FILE</b> / <b>SAVE FILE</b> / <b>MEETING RECORD</b> stay visible on every tab (v4.11, <b>one Save</b>). Cadence (v18.13) and Deploy (v8.20) hide their own Save inside Lens. When you save, Lens sends each loaded tool a <code>flush</code> and waits up to 1.5 s for its <code>flushed</code>, so the file carries their latest changes. A tool that doesn't answer is saved with its last update, and the toast says so.</li>
     <li>Strip nav stays visible — that's how you switch back. Switching to a native panel (Pulse / Vitals / Horizon) restores the host chrome. Bench is native too, but hides the fleet column because it has its own model list; Load / Save stay.</li>
   </ul>
 
@@ -794,10 +825,12 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 
   <h3>Every session: give it stock</h3>
   <ul>
+    <li><b>From the client folder</b> (Lens v4.11): with the folder connected, stock arrives by itself, and the chip says <b>folder</b>. The buttons below are the fallback.</li>
     <li><b>⬆ Load INV_MSTR</b>: pick the SAP Inventory Master export. A full export takes up to half a minute to read. It is held for this session only; stock is never saved in the fleet file.</li>
     <li><b>Link file</b> (Edge / Chrome): link the INV_MSTR once, for example in the client folder, and Lens remembers it for that client. Next session, one click on <b>Re-read linked INV_MSTR</b>; the browser asks permission again once per session.</li>
     <li><b>Stock date.</b> The INV_MSTR has no date inside it, so Bench takes it from the file name (e.g. <code>INV_MSTR P1120 2026_09_22.xlsx</code>). With no date in the name it asks: enter the date the export was taken, or carry on and every number is marked "stock date unknown" in red. The Stock chip in the top bar turns amber after 7 days and red after 14.</li>
-    <li>Bench reads its own copy. An INV_MSTR loaded in Deploy does not feed Bench; both will read the client folder once the folder reader lands.</li>
+    <li><b>Nothing older than 30 days is loaded</b> (v1.1.0), from the file name or from an entered date; the previous stock is kept. Past 30 days in use, a red "expired" banner shows.</li>
+    <li>An INV_MSTR loaded by hand in Deploy does not feed Bench. The client folder feeds both.</li>
   </ul>
 
   <h3>The status words</h3>
@@ -840,6 +873,7 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
       <tr><td>Red <em>Stock date unknown</em></td><td>No date in the file name and none entered</td><td>Enter the export date in the banner</td></tr>
       <tr><td><em>Linking a file needs Edge or Chrome</em></td><td>This browser cannot keep a file link</td><td>Use Load INV_MSTR</td></tr>
       <tr><td>Far more <em>No spare</em> than Critical Spares V3 showed</td><td>V3 called zero stock with nothing reserved Short; Bench calls it No spare (your rule, v1.0.1)</td><td>Nothing, by design. Short is kept for real unmet demand</td></tr>
+      <tr><td>Models under "Older / other Sandvik (reference)" have no board</td><td>The Critical Spares V3 reference set (DX800, DX800R, Di550, TH551 TU301, LH517, LH514, LH410) is tables only</td><td>Nothing, by design. Import <code>bench_definition_…_with-older-sandvik.json</code> to add them</td></tr>
       <tr><td>Board cards are small</td><td>The board scales down to fit a narrow window</td><td>Widen the window; the table below has the same numbers</td></tr>
     </tbody>
   </table>
@@ -851,6 +885,8 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 <section id="tab-cadence" class="tab-panel">
   <h2><span class="panel-num">8</span>Cadence <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— the PCR scheduler</span></h2>
   <p class="lede">The biggest panel. Builds the rolling component-replacement schedule, runs the Project Optimiser, lays out resource loading, and exports to Excel. Standalone <code>Cadence v18.html</code> and embedded inside Lens via <code>tools/cadence.html</code> share the same code path — embed mode activates when <code>window.parent !== window</code>.</p>
+
+  <div class="callout tip"><div class="callout-title">v18.13: one Save inside Lens</div><p>Inside Lens, Cadence's own "Save File" button is hidden. Lens's SAVE FILE and MEETING RECORD ask Cadence for its latest changes first, including a drag made a moment before, then save. Export (Excel / reports) is unchanged, and standalone Cadence still has Save File.</p></div>
 
   <h3>What you use it for</h3>
   <ul>
@@ -964,6 +1000,7 @@ EOL_hrs       = max(0, horizonHrs − smu)</pre>
 <section id="tab-deploy" class="tab-panel">
   <h2><span class="panel-num">9</span>Deploy <span style="font-size:13px;color:var(--text-dim);font-weight:400;margin-left:8px">— project / shutdown / outage execution</span></h2>
   <p class="lede">Execution layer for confirmed Cadence projects. Tracks gates, materials, work orders, actions, and notes per project. Hosted by Lens via iframe; runs standalone too.</p>
+  <div class="callout tip"><div class="callout-title">v8.20: the client folder and one Save</div><p>Inside Lens v4.11, the fleet-wide IW39 and the Inventory Master arrive from the client folder, and the pills say "from the client folder (Lens)". The pills colour amber after 7 days and red after 14. Uploads through the pills still work, but refuse data older than 30 days. Deploy's own "Save Fleet JSON" is hidden inside Lens: use Lens's SAVE FILE, which collects Deploy's changes first. Standalone Deploy is unchanged.</p></div>
 
   <h3>Sub-tabs</h3>
   <ul class="subtab-list">
@@ -2063,7 +2100,7 @@ Gate completion state is preserved either way.</pre>
 
   <h3>Coming Soon — by chunk</h3>
 
-  <h4>Workspace — the client-folder reader <span class="badge wip">Next · target Tue 2026-09-29</span></h4>
+  <h4>Workspace — the client-folder reader <span class="badge done">Live 2026-09-27 · your runtime check owed</span></h4>
   <ul>
     <li>IW39, INV_MSTR, the Component Snapshots and MB51 come from live files in the client's OneDrive folder (<code>lens\data</code>), not from loading them by hand. Each file is read once, dated from its own data, and flagged when stale.</li>
     <li>Feeds Bench (stock and part lists) and Deploy (IW39, Inventory Master). Deploy's own uploads stay as the fallback.</li>
@@ -2170,6 +2207,9 @@ Gate completion state is preserved either way.</pre>
     <dt>ConMon (Condition Monitoring)</dt>
     <dd>Oil-analysis data ingested by Intake from FluidLife PDFs. Produces <code>oil_samples[]</code> records at JSON root. Each sample carries <code>sample_rank</code> (0–10), <code>condition_band</code>, <code>concern_categories</code>, <code>flagged_tests[]</code>, wear metals, narrative finding.</dd>
 
+    <dt>Client folder</dt>
+    <dd>The client's synced OneDrive folder: <code>1 New files</code> (drop exports here), <code>2 In use</code>, <code>3 Archive</code> (replaced files, meeting records, the refresh log) and <code>lens</code> (dated copies + <code>register.js</code>). Read by <code>numacore_workspace.js</code> (Lens v4.11+). See <a href="#" data-jump="setup">Setup</a>.</dd>
+
     <dt>Component pocket</dt>
     <dd>A configured slot on a unit where a specific component installs. Defined in <code>componentPockets[]</code> per fleet/model/variant. Drives expected component complement on a unit. Editor pending (FleetConfig M2).</dd>
 
@@ -2184,6 +2224,9 @@ Gate completion state is preserved either way.</pre>
 
     <dt>Intake</dt>
     <dd>Standalone data ingestion tool. Three modes: BUILD (fresh client), UPDATE (merge), CONMON (oil samples). NOT a Lens panel.</dd>
+
+    <dt>Meeting record</dt>
+    <dd>Lens v4.11's MEETING RECORD button: saves the plan (every tool flushed first), then writes that saved JSON and <code>What was in use.txt</code> to <code>3 Archive\Meetings\&lt;date&gt;</code>. Never the SAP files.</dd>
 
     <dt>Mission Control</dt>
     <dd>The in-meeting workflow: Lens hosts Cadence and Deploy as iframes. One JSON in at start, one JSON out at end. State sync via postMessage.</dd>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.19 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.20 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -563,7 +563,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 <div id="load-screen">
   <div class="load-card">
     <div class="load-brand">NumaCore <span>Deploy</span></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:20px">Shutdown &amp; Project Manager · v8.19</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:20px">Shutdown &amp; Project Manager · v8.20</div>
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fleetIn').click()"
          ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="dzDrop(event)">
       <span class="drop-zone-icon">📂</span>
@@ -1103,7 +1103,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
       <div id="cfgPanelInfo" style="display:none">
         <div class="cfg-section-hdr"><span>About Deploy</span></div>
         <div style="font-size:12px;color:var(--txt2);line-height:1.8">
-          <p style="margin-bottom:10px"><strong>NumaCore Deploy — Shutdown &amp; Project Manager</strong> v8.19</p>
+          <p style="margin-bottom:10px"><strong>NumaCore Deploy — Shutdown &amp; Project Manager</strong> v8.20</p>
           <p style="margin-bottom:10px">All data is stored inside your <strong>fleet JSON file</strong>.
              Deploy data lives at <code style="color:var(--blue);font-size:11px">workingData.deployData</code>.
              Master data (units, components, fleet dates) is read-only — managed by NumaCore Intake.</p>
@@ -1141,7 +1141,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.19';  // single source of truth for tool version (v8.19: SAP extracts dated from their own data, not the upload time)
+const VERSION = '8.20';  // single source of truth for tool version (v8.20: IW39 / Inventory Master from the client folder via Lens; one Save inside Lens; nothing older than 30 days loaded)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1323,6 +1323,8 @@ let _invMasterRowCount   = 0;
 let _fleetWideIW39       = null;   // Array<{wo_number, status, order_type, floc, sap_material, ...}>
 let _iw39AsOf            = null;   // upload time — also the per-load fingerprint for knownWOs re-records
 let _iw39DataAsOf        = null;   // v8.19 FIX-1 — the extract's own data date, YYYY-MM-DD (null = unknown)
+let _iw39Via             = 'upload';   // v8.20 — 'upload' (this tool's mapper) or 'folder' (pushed by Lens from the client folder)
+let _invMasterVia        = 'upload';   // v8.20 — same, for the Inventory Master
 let _iw39DataMethod      = '';     // 'file_name+created_on' | 'created_on' | 'file_name' | 'entered' | 'unknown'
 let _woFileName = '', _woFileModified = 0;
 // v8.10 FIX-1 (2026-05-12 afternoon) — `_iw39YBA2Filter` removed. The
@@ -4107,25 +4109,33 @@ function confirmInvMasterImport() {
     if (s && s.value !== '(skip)') mapping[f.key] = _imHdrs.indexOf(s.value);
   });
   if (mapping.material === undefined) { toast('Material (SAP No.) column is required', 'error'); return; }
+  // v8.19 FIX-2 — the stock's own date: the file name's, or what the operator
+  // entered; blank = unknown. Never the upload time.
+  const _entered  = (document.getElementById('invAskDate') || {}).value || '';
+  const _nameDate = _dateFromFileName(_imFileName);
+  const _asOf     = _entered || null;
+  const _method   = !_entered ? 'unknown' : (_entered === _nameDate ? 'file_name' : 'entered');
+  // v8.20 — nothing older than 30 days is loaded (operator 2026-09-26)
+  if (_asOf && _ageDays(_asOf) > _MAX_DATA_AGE_DAYS) {
+    toast(`This Inventory Master is dated ${_fmtDataDate(_asOf)}, ${_ageDays(_asOf)} days old. Nothing older than ${_MAX_DATA_AGE_DAYS} days is loaded: export a fresh one.`, 'error');
+    return;
+  }
+  const entries = _imRaw.map(row => _invEntry(k => mapping[k] !== undefined ? (row[mapping[k]] ?? '') : undefined));
+  const _fn = _imFileName;
+  _imHdrs = []; _imRaw = null;
+  closeModal('modalInvMasterMap');
+  _commitInvMaster(entries, _asOf, _method, _fn, 'upload');
+}
+
+// v8.20 — the commit half of the Inventory Master import, shared by the upload mapper and the
+// client-folder push from Lens (via = 'folder'). entries: from _invEntry. Session memory only (unchanged rule).
+function _commitInvMaster(entries, dataAsOf, method, fileName, via) {
   const byMaterial = new Map();
   const byVPN      = new Map();
   let _rowsLoaded = 0, _vpnEntries = 0;
-  _imRaw.forEach(row => {
-    const material = _normVPN(row[mapping.material]);
+  entries.forEach(entry => {
+    const material = _normVPN(entry.material_raw);
     if (!material) return;
-    const entry = {
-      material_raw:  String(row[mapping.material] ?? '').trim(),
-      description:   mapping.description    !== undefined ? String(row[mapping.description]    ?? '').trim() : '',
-      mfg_part_no:   mapping.mfg_part_no    !== undefined ? String(row[mapping.mfg_part_no]    ?? '').trim() : '',
-      open_po:       _toNumOrZero(mapping.open_po     !== undefined ? row[mapping.open_po]     : 0),
-      po_flag:       (mapping.po_flag        !== undefined ? String(row[mapping.po_flag]        ?? '').trim().toUpperCase() : ''),
-      tot_qty_oh:    _toNumOrZero(mapping.tot_qty_oh  !== undefined ? row[mapping.tot_qty_oh]  : 0),
-      mov_ave_price: _toNumOrZero(mapping.mov_ave_price!== undefined ? row[mapping.mov_ave_price]: 0),
-      onhand_loc:    mapping.onhand_loc     !== undefined ? String(row[mapping.onhand_loc]     ?? '').trim() : '',
-      mrp_min:       _toNumOrZero(mapping.mrp_min     !== undefined ? row[mapping.mrp_min]     : 0),
-      mrp_max:       _toNumOrZero(mapping.mrp_max     !== undefined ? row[mapping.mrp_max]     : 0),
-      mat_grp_descr: mapping.mat_grp_descr  !== undefined ? String(row[mapping.mat_grp_descr]  ?? '').trim() : '',
-    };
     byMaterial.set(material, entry);
     const vpn = _normVPN(entry.mfg_part_no);
     if (vpn && !byVPN.has(vpn)) { byVPN.set(vpn, entry); _vpnEntries++; }
@@ -4134,19 +4144,13 @@ function confirmInvMasterImport() {
   _invMasterByMaterial = byMaterial;
   _invMasterByVPN      = byVPN;
   _invMasterAsOf       = new Date().toISOString();   // upload time
-  // v8.19 FIX-2 — the stock's own date: the file name's, or what the operator
-  // entered; blank = unknown. Never the upload time.
-  {
-    const _entered  = (document.getElementById('invAskDate') || {}).value || '';
-    const _nameDate = _dateFromFileName(_imFileName);
-    _invMasterDataAsOf   = _entered || null;
-    _invMasterDataMethod = !_entered ? 'unknown' : (_entered === _nameDate ? 'file_name' : 'entered');
-  }
+  _invMasterDataAsOf   = dataAsOf || null;
+  _invMasterDataMethod = dataAsOf ? (method || 'entered') : 'unknown';
   _invMasterRowCount   = _rowsLoaded;
-  _imHdrs = []; _imRaw = null;
-  closeModal('modalInvMasterMap');
+  _imFileName          = fileName || '';
+  _invMasterVia        = via || 'upload';
   _updateInvMasterStatusPill();
-  toast(`Inventory Master loaded — ${_rowsLoaded.toLocaleString()} materials · ${_vpnEntries.toLocaleString()} VPN-indexed (session memory)`, 'success');
+  toast(`${via === 'folder' ? 'Inventory Master from the client folder' : 'Inventory Master loaded'} — ${_rowsLoaded.toLocaleString()} materials · ${_vpnEntries.toLocaleString()} VPN-indexed (session memory)`, 'success');
   // v8.10 FIX-2.2 (2026-05-13) — sweep ALL activated projects with BOMs and
   // back-fill any blank sap_material via VPN lookup. Catches the case where
   // the BOM was uploaded before the inventory. One sweep per Inventory Master
@@ -4176,8 +4180,8 @@ function _updateInvMasterStatusPill() {
     lbl.textContent = _invMasterDataAsOf
       ? `stock ${_fmtDataDate(_invMasterDataAsOf)} · ${_invMasterRowCount.toLocaleString()} mats`
       : `stock date unknown · ${_invMasterRowCount.toLocaleString()} mats`;
-    lbl.style.color = _invMasterDataAsOf ? 'var(--green)' : 'var(--red)';
-    lbl.title = `Stock date: ${_invMasterDataAsOf ? _fmtDataDate(_invMasterDataAsOf) : 'unknown'} (${_dataMethodLabel(_invMasterDataMethod)}) · loaded ${hh}${_imFileName ? ' · ' + _imFileName : ''}`;
+    lbl.style.color = _ageColor(_invMasterDataAsOf);   // v8.20 — 7 / 14-day colours; unknown = red
+    lbl.title = `Stock date: ${_invMasterDataAsOf ? _fmtDataDate(_invMasterDataAsOf) : 'unknown'} (${_dataMethodLabel(_invMasterDataMethod)}) · loaded ${hh}${_imFileName ? ' · ' + _imFileName : ''}${_invMasterVia === 'folder' ? ' · from the client folder (Lens)' : ''}`;
   } else {
     lbl.textContent = 'Not loaded';
     lbl.style.color = 'var(--muted)';
@@ -4303,6 +4307,49 @@ function _dataMethodLabel(method) {
     'unknown':              'unknown'
   })[method] || method || 'unknown';
 }
+// v8.20 — operator 2026-09-26: "Apply 7/14 consistently" (amber after 7 days, red after 14) and
+// "Do not load anything older than 30d". Ages are whole local calendar days.
+const _MAX_DATA_AGE_DAYS = 30;
+function _ageDays(iso) {
+  const d = _isoToLocalDate(iso); if (!d) return null;
+  const t = new Date(); const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.round((today - d) / 86400000);
+}
+function _ageColor(iso) {
+  const a = _ageDays(iso);
+  if (a === null) return 'var(--red)';
+  return a > 14 ? 'var(--red)' : a > 7 ? 'var(--amber)' : 'var(--green)';
+}
+// v8.20 — one IW39 row → WO item, from any source: get(key) returns the cell for a mapped field, or
+// undefined when the field is not mapped. Same conversions as the v8.16–v8.19 inline code.
+function _woItem(get) {
+  const item = {};
+  WO_FIELDS.forEach(f => {
+    const v = get(f.key);
+    if (v === undefined) return;
+    const raw = String(v ?? '').trim();
+    item[f.key] = _WO_DATE_KEYS.includes(f.key) ? _xlDateStr(raw) : raw;
+  });
+  return item;
+}
+// v8.20 — one Inventory Master row → entry, from any source (same conversions as v8.9–v8.19).
+function _invEntry(get) {
+  const str = k => { const v = get(k); return v === undefined ? '' : String(v ?? '').trim(); };
+  const num = k => { const v = get(k); return _toNumOrZero(v === undefined ? 0 : v); };
+  return {
+    material_raw:  str('material'),
+    description:   str('description'),
+    mfg_part_no:   str('mfg_part_no'),
+    open_po:       num('open_po'),
+    po_flag:       str('po_flag').toUpperCase(),
+    tot_qty_oh:    num('tot_qty_oh'),
+    mov_ave_price: num('mov_ave_price'),
+    onhand_loc:    str('onhand_loc'),
+    mrp_min:       num('mrp_min'),
+    mrp_max:       num('mrp_max'),
+    mat_grp_descr: str('mat_grp_descr'),
+  };
+}
 // The IW39 mapper's "data date" box — recomputed whenever a column dropdown
 // changes, so the operator sees the date that will be recorded BEFORE import.
 function _renderIW39DataDateBox() {
@@ -4345,20 +4392,8 @@ function confirmIW39FleetImport() {
     if (s && s.value !== '(skip)') mapping[f.key] = _woHdrs.indexOf(s.value);
   });
   if (mapping.wo_number === undefined) { toast('WO Number column is required', 'error'); return; }
-  const _allWos = _woRaw.map(row => {
-    const item = {};
-    WO_FIELDS.forEach(f => {
-      if (mapping[f.key] === undefined) return;
-      const raw = String(row[mapping[f.key]] ?? '').trim();
-      // v8.16 FIX-2 — date columns converted at the import boundary; knownWOs
-      // recording downstream then stores ISO, and the next IW39 upload's sticky
-      // _setIf overwrite self-heals any serials saved by pre-FIX-2 sessions.
-      item[f.key] = _WO_DATE_KEYS.includes(f.key) ? _xlDateStr(raw) : raw;
-    });
-    return item;
-  });
-  const wos = _allWos.filter(i => i.wo_number);
-  const _skippedNoWO = _allWos.length - wos.length;   // v8.19 — counted, never silent
+  // v8.16 FIX-2 — date columns converted at the import boundary (now in _woItem).
+  const _allWos = _woRaw.map(row => _woItem(k => mapping[k] !== undefined ? (row[mapping[k]] ?? '') : undefined));
   // v8.19 FIX-1 — the extract's own data date (see _iw39DataDate). Computed
   // from the RAW Created On cells so every row counts, including skipped ones.
   const _dd = _iw39DataDate(mapping.created_on !== undefined ? _woRaw.map(r => r[mapping.created_on]) : [], _woFileName);
@@ -4366,11 +4401,27 @@ function confirmIW39FleetImport() {
     const _entered = (document.getElementById('iw39AskDate') || {}).value || '';
     if (_entered) { _dd.asOf = _entered; _dd.method = 'entered'; }
   }
+  // v8.20 — nothing older than 30 days is loaded (operator 2026-09-26)
+  if (_dd.asOf && _ageDays(_dd.asOf) > _MAX_DATA_AGE_DAYS) {
+    toast(`This IW39 is dated ${_fmtDataDate(_dd.asOf)}, ${_ageDays(_dd.asOf)} days old. Nothing older than ${_MAX_DATA_AGE_DAYS} days is loaded: export a fresh IW39.`, 'error');
+    return;
+  }
+  const _fn = _woFileName;
+  _woHdrs = []; _woRaw = null;
+  _commitIW39Fleet(_allWos, _dd, _fn, 'upload');
+}
+
+// v8.20 — the commit half of the IW39 import, shared by the upload mapper and the client-folder push
+// from Lens (via = 'folder'). _allWos: from _woItem; _dd: {asOf, method, window, warn}.
+function _commitIW39Fleet(_allWos, _dd, fileName, via) {
+  const wos = _allWos.filter(i => i.wo_number);
+  const _skippedNoWO = _allWos.length - wos.length;   // v8.19 — counted, never silent
   _fleetWideIW39 = wos;
   _iw39AsOf      = new Date().toISOString();   // upload time (per-load fingerprint)
   _iw39DataAsOf  = _dd.asOf || null;
   _iw39DataMethod = _dd.asOf ? _dd.method : 'unknown';
-  _woHdrs = []; _woRaw = null;
+  _woFileName    = fileName || '';
+  _iw39Via       = via || 'upload';
   // v8.15 FIX-2 (2026-05-17 evening) — Top-level fleet-wide IW39 timestamp
   // on the Deploy slice. Operator-reported the per-project FIX-1 signal was
   // too brittle (relied on knownWOs population which requires unit-FLOC
@@ -4445,7 +4496,7 @@ function confirmIW39FleetImport() {
     : '';
   const _dateLbl = _iw39DataAsOf ? ` · data ${_fmtDataDate(_iw39DataAsOf)}` : ' · ⚠ data date unknown';
   const _skipLbl = _skippedNoWO > 0 ? ` · ${_skippedNoWO.toLocaleString()} row${_skippedNoWO === 1 ? '' : 's'} without a WO number skipped` : '';
-  toast(`Fleet-wide IW39 loaded — ${wos.length.toLocaleString()} WOs${_dateLbl} · ${matchingCount.toLocaleString()} matching ${matchLbl}${_skipLbl}${_projSummary}${_fleetSummary}${_saveReminder}`, _iw39DataAsOf ? 'success' : 'warn');
+  toast(`${via === 'folder' ? 'IW39 from the client folder' : 'Fleet-wide IW39 loaded'} — ${wos.length.toLocaleString()} WOs${_dateLbl} · ${matchingCount.toLocaleString()} matching ${matchLbl}${_skipLbl}${_projSummary}${_fleetSummary}${_saveReminder}`, _iw39DataAsOf ? 'success' : 'warn');
   if (_dd.warn) setTimeout(() => toast('IW39: ' + _dd.warn, 'warn'), 4200);   // v8.19 — after the load toast clears
   // v8.14 — Closed-transitions one-shot toast. Aggregates across every Deploy
   // project (unit-filtered per-project) and surfaces a single deferred toast
@@ -4482,8 +4533,8 @@ function _updateIW39StatusPill(matchingCount) {
     const matchLbl = _ot.length === 0 ? 'all types' : _ot.join('/');
     // v8.19 FIX-1 — the data date leads; the upload clock time moves to the tooltip.
     lbl.textContent = `${_iw39DataAsOf ? 'data ' + _fmtDataDate(_iw39DataAsOf) : 'data date unknown'} · ${_fleetWideIW39.length.toLocaleString()} WOs · ${matchingCount.toLocaleString()} ${matchLbl}`;
-    lbl.style.color = _iw39DataAsOf ? 'var(--green)' : 'var(--red)';
-    lbl.title = `Data date: ${_iw39DataAsOf ? _fmtDataDate(_iw39DataAsOf) : 'unknown'} (${_dataMethodLabel(_iw39DataMethod)}) · loaded ${hh}${_woFileName ? ' · ' + _woFileName : ''}`;
+    lbl.style.color = _ageColor(_iw39DataAsOf);   // v8.20 — 7 / 14-day colours; unknown = red
+    lbl.title = `Data date: ${_iw39DataAsOf ? _fmtDataDate(_iw39DataAsOf) : 'unknown'} (${_dataMethodLabel(_iw39DataMethod)}) · loaded ${hh}${_woFileName ? ' · ' + _woFileName : ''}${_iw39Via === 'folder' ? ' · from the client folder (Lens)' : ''}`;
   } else if (deploy && deploy.fleetWideIW39DataAsOf) {
     // v8.19 FIX-3 — the pool is session-only, but the file remembers the last
     // IW39's data date. Say so instead of a bare "Not loaded".
@@ -6545,6 +6596,13 @@ if (_depInShell) {
     const ls = document.getElementById('load-screen');
     if (ls) ls.style.display = 'none';
   } catch(_) {}
+  // v8.20 — one Save inside Lens (operator 2026-09-26: "we have to save to json in Deploy and Cadence —
+  // that needs to disappear"). Lens's SAVE FILE / Meeting record save everything, so Deploy's own
+  // Save Fleet JSON button and its "Not saved" indicator are hidden when embedded.
+  try {
+    document.querySelectorAll('#hdr .hdr-btn.gold, .hdr-actions .hdr-btn.gold').forEach(b => { if ((b.getAttribute('onclick') || '').indexOf('saveSession') >= 0) b.style.display = 'none'; });
+    const si = document.getElementById('saveInd'); if (si) si.style.display = 'none';
+  } catch(_) {}
 
   // Ingest a fleet object pushed by the parent.
   function _depIngestFromShell(json) {
@@ -6554,6 +6612,45 @@ if (_depInShell) {
       parseFleet();
       startApp();
     } catch(e) { console.warn('Deploy shell ingest:', e); }
+    // v8.20 — client-folder data is applied AFTER startApp (so the auto-backup restore inside startApp
+    // can't put older deployData back over it) and re-applied after every load-fleet re-push.
+    try { Object.keys(_wsPending).forEach(_wsApply); } catch(e) { console.warn('Deploy workspace re-apply:', e); }
+  }
+
+  // v8.20 — IW39 / Inventory Master pushed by Lens from the client folder (numacore_workspace).
+  // m = {type:'workspace-data', source:'IW39'|'INV_MSTR', clientCode, fileName, dataAsOf, method, window,
+  //      rows:[{<WO_FIELDS / INVMASTER_FIELDS key>: value}]}. Session memory only, exactly as an upload.
+  const _wsPending = {};      // source → latest message (kept, so a re-push can re-apply it)
+  const _wsAppliedKey = {};   // source → fingerprint of what the session pools hold now
+  function _depIngestWorkspace(m) {
+    if (!m.source || !Array.isArray(m.rows)) return;
+    _wsPending[m.source] = m;
+    if (deploy) _wsApply(m.source);   // otherwise applied when the fleet arrives
+  }
+  function _wsApply(src) {
+    const m = _wsPending[src];
+    if (!m || !deploy) return;
+    const cc = String((fleetData && fleetData.meta && fleetData.meta.clientCode) || '');
+    if (m.clientCode && cc && m.clientCode !== cc) { console.warn('Deploy: client-folder data for ' + m.clientCode + ' ignored (file is ' + cc + ')'); return; }
+    const key = [src, m.fileName, m.dataAsOf, m.rows.length].join('|');
+    if (src === 'IW39') {
+      const have = _wsAppliedKey.IW39 === key && _fleetWideIW39 && _fleetWideIW39.length;
+      if (have && deploy.fleetWideIW39DataAsOf === (m.dataAsOf || null)) return;   // already in memory and on file
+      const cur = deploy.fleetWideIW39DataAsOf;
+      if (!have && cur && m.dataAsOf && m.dataAsOf < cur) {
+        toast(`Client folder IW39 (${_fmtDataDate(m.dataAsOf)}) is older than the IW39 already recorded (${_fmtDataDate(cur)}), so it was not applied.`, 'warn');
+        return;
+      }
+      _commitIW39Fleet(m.rows.map(o => _woItem(k => (k in o) ? o[k] : undefined)),
+        { asOf: m.dataAsOf || null, method: m.method || 'unknown', window: m.window || null, warn: '' }, m.fileName || '', 'folder');
+      _wsAppliedKey.IW39 = key;
+    } else if (src === 'INV_MSTR') {
+      if (_wsAppliedKey.INV_MSTR === key && _invMasterByMaterial && _invMasterByMaterial.size) return;
+      _commitInvMaster(m.rows.map(o => _invEntry(k => (k in o) ? o[k] : undefined)), m.dataAsOf || null, m.method || 'unknown', m.fileName || '', 'folder');
+      _wsAppliedKey.INV_MSTR = key;
+    } else return;
+    try { if (selProjId) switchTab(curTab); } catch(_) {}
+    try { window.parent.postMessage({ type: 'workspace-data-applied', tool: 'deploy', source: src, dataAsOf: m.dataAsOf || null, rows: m.rows.length }, _depMsgTarget()); } catch(_) {}
   }
 
   // After saveSession (file save), notify parent of the latest slice instead.
@@ -6591,6 +6688,12 @@ if (_depInShell) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'load-fleet' && m.fleet) {
       _depIngestFromShell(m.fleet);
+    } else if (m.type === 'workspace-data') {
+      try { _depIngestWorkspace(m); } catch(e) { console.warn('Deploy workspace-data:', e); }
+    } else if (m.type === 'flush') {
+      // v8.20 — Lens is about to save: send the latest slice now, then acknowledge.
+      try { window.parent.postMessage({ type: 'fleet-updated', slice: _depOwnedSliceForShell() }, _depMsgTarget()); } catch(_) {}
+      try { window.parent.postMessage({ type: 'flushed', tool: 'deploy', id: m.id }, _depMsgTarget()); } catch(_) {}
     }
   }, false);
 

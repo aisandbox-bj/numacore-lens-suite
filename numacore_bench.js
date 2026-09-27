@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.0.1 · 2026-09-26
+   v1.1.0 · 2026-09-26
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -38,17 +38,24 @@
        name only SUGGESTS where an unmatched component may belong.
      • The stock file's date is its DATA date: from the file name, or entered;
        unknown shows red. Never the upload time. Local calendar dates only.
+     • v1.1.0 (operator, 2026-09-26): amber after 7 days, red after 14, and
+       nothing older than 30 days is loaded. Stock can come from the client
+       folder (numacore_workspace → setStock). Stock never carries over to
+       another client's plan. The Older / Other Sandvik reference models are
+       tables only, listed in their own group.
 
    API
      NumaCoreBench.render(containerEl, host)
        host = { raw, fleetData, imageBase, planSaved, clientCode,
                 markUnsaved(msg), toast(msg, sev) }
+     NumaCoreBench.setStock(rows, {fileName, dataAsOf, method, clientCode})   rows = [headers, ...]
+     NumaCoreBench.clearStock()
      NumaCoreBench.version
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.0.1';
-  var STOCK_AGE = { amber: 7, red: 14 };        // days — suggested limits (drive-folder spec §5), operator to confirm
+  var VERSION = '1.1.0';
+  var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
   var BENCH_SCHEMA = 'numacore.bench/';
@@ -63,7 +70,9 @@
     stock: null,            // { fileName, sheet, dataAsOf, method, loadedAt, materials, rowsIn, rowsUsed, lastModified }
     askDate: false,         // show the "enter the stock date" box
     busy: '',               // reading-file message
-    linkTried: false
+    linkTried: false,
+    cc: null,               // v1.1.0 — the client the stock belongs to; a different client's plan clears it
+    prev: null              // v1.1.0 — stock kept while a hand-loaded file waits for its date (restored if refused)
   };
 
   // ── small helpers ─────────────────────────────────────────────────────────
@@ -245,6 +254,10 @@
       readInvMstrFile(file).then(function (res) {
         if (res.idx.nmat === 0) throw new Error('0 material rows found under those headers');
         var nameDate = dateFromFileName(file.name);
+        if (nameDate && daysSince(nameDate) > STOCK_AGE.refuse) {   // v1.1.0 — nothing older than 30 days is loaded
+          S.busy = ''; toast('INV_MSTR not loaded — it is dated ' + fmtDate(nameDate) + ', ' + daysSince(nameDate) + ' days old. Nothing older than ' + STOCK_AGE.refuse + ' days is loaded: export a fresh one.', 'error'); rerender(); return;
+        }
+        S.prev = S.stock ? { idx: S.idx, stock: S.stock } : null;
         S.idx = res.idx;
         S.stock = { fileName: file.name, sheet: res.sheet, dataAsOf: nameDate, method: nameDate ? 'file name' : 'unknown',
                     loadedAt: new Date(), materials: res.idx.nmat, ledger: res.idx.ledger, lastModified: file.lastModified || 0 };
@@ -376,7 +389,7 @@
   };
   function badge(k) { return '<span class="ncb-st" style="--c:' + ST[k].c + '"><i></i>' + ST[k].w + '</span>'; }
   function toast(msg, sev) { if (S.host && S.host.toast) S.host.toast(msg, sev); }
-  function stockAgeClass() { if (!S.stock) return 'none'; if (!S.stock.dataAsOf) return 'red'; var d = daysSince(S.stock.dataAsOf); return d > STOCK_AGE.red ? 'red' : d > STOCK_AGE.amber ? 'amber' : 'ok'; }
+  function stockAgeClass() { if (!S.stock) return 'none'; if (!S.stock.dataAsOf) return 'red'; var d = daysSince(S.stock.dataAsOf); return d > STOCK_AGE.refuse ? 'expired' : d > STOCK_AGE.red ? 'red' : d > STOCK_AGE.amber ? 'amber' : 'ok'; }
 
   function injectStyle() {
     if (document.getElementById('ncb-style')) return;
@@ -467,12 +480,13 @@
     v.pockets.forEach(function (x) { if (x.st) c[x.st.status]++; if (x.p.tier === 'major') { maj++; if (x.st && x.st.status === 'spare') majSpare++; } });
     return { c: c, maj: maj, majSpare: majSpare, unmatched: v.unmatched.length };
   }
+  var GROUP_NAME = { OP: 'Open pit', UG: 'Underground', REF: 'Older / other Sandvik (reference)' };
   function listHtml(def, views) {
     var h = '';
-    ['OP', 'UG'].forEach(function (g) {
+    ['OP', 'UG', 'REF'].forEach(function (g) {
       var ms = def.models.filter(function (m) { return m.group === g; });
       if (!ms.length) return;
-      h += '<div class="ncb-grp"><span>' + (g === 'OP' ? 'Open pit' : 'Underground') + '</span><span>' + ms.length + '</span></div>';
+      h += '<div class="ncb-grp"><span>' + GROUP_NAME[g] + '</span><span>' + ms.length + '</span></div>';
       ms.forEach(function (m) {
         var v = views[m.key], s = modelSummary(v), units = v.units.length;
         var lbl = m.lens.model + (m.lens.units ? ' · ' + (m.lens.units.length > 2 ? m.lens.units[0] + '–' + m.lens.units[m.lens.units.length - 1] : m.lens.units.join(', ')) : '');
@@ -495,7 +509,8 @@
     var cls = stockAgeClass();
     if (cls === 'none') return '<span class="ncb-chip">Stock · not loaded</span>';
     var s = S.stock, age = s.dataAsOf ? daysSince(s.dataAsOf) : null;
-    return '<span class="ncb-chip ' + cls + '" title="' + esc('INV_MSTR ' + s.fileName + ' [' + s.sheet + '] · ' + s.materials.toLocaleString() + ' materials · dated from ' + s.method + ' · loaded ' + s.loadedAt.toLocaleTimeString()) + '">Stock · ' + (s.dataAsOf ? fmtDate(s.dataAsOf) + ' · ' + age + (age === 1 ? ' day' : ' days') : 'date unknown') + '</span>';
+    var from = s.source === 'folder' ? 'from the client folder · ' : '';
+    return '<span class="ncb-chip ' + (cls === 'expired' ? 'red' : cls) + '" title="' + esc('INV_MSTR ' + from + s.fileName + ' [' + s.sheet + '] · ' + s.materials.toLocaleString() + ' materials · dated from ' + s.method + ' · loaded ' + s.loadedAt.toLocaleTimeString() + ' · amber after ' + STOCK_AGE.amber + ' days, red after ' + STOCK_AGE.red + ', not loaded after ' + STOCK_AGE.refuse) + '">Stock · ' + (s.dataAsOf ? fmtDate(s.dataAsOf) + ' · ' + age + (age === 1 ? ' day' : ' days') + (cls === 'expired' ? ' · expired' : '') : 'date unknown') + (s.source === 'folder' ? ' · folder' : '') + '</span>';
   }
   function topBar() {
     // local calendar date of the save stamp (an ISO timestamp is UTC — slicing it would read tomorrow after 5 pm Pacific)
@@ -504,7 +519,7 @@
     return '<div class="ncb-top"><span class="ncb-eyebrow">Bench · critical spares</span>' +
       (plan ? '<span class="ncb-chip ok">Plan · saved ' + fmtDate(plan) + '</span>' : '') + stockChip() +
       '<span class="ncb-spacer"></span>' +
-      '<button class="ncb-btn" data-act="load">⬆ Load INV_MSTR</button>' +
+      '<button class="ncb-btn" data-act="load"' + (S.stock && S.stock.source === 'folder' ? ' title="Load an INV_MSTR by hand instead of the client folder\'s stock (this session only)"' : '') + '>⬆ Load INV_MSTR</button>' +
       (root.showOpenFilePicker ? '<button class="ncb-btn ghost" data-act="link" title="Link the INV_MSTR file (e.g. in the client\'s OneDrive folder). This browser remembers it and re-reads it next time.">⛓ Link file</button>' : '') +
       '<button class="ncb-btn ghost" data-act="import" title="Import a Bench definition (.json) into this fleet file">Import definition</button>' +
       (benchDef() ? '<button class="ncb-btn ghost" data-act="export" title="Download this fleet file\'s Bench definition as JSON">Export definition</button>' : '') +
@@ -519,7 +534,8 @@
       h += '<div class="ncb-banner amber"><b>Stock date needed.</b> The INV_MSTR has no date inside it and its file name has none. Enter the date the export was taken: <input type="date" id="ncb-stockdate" value=""> <button class="ncb-btn" data-act="setdate">Use this date</button> <button class="ncb-btn ghost" data-act="nodate">Don\'t know</button>' + (saved ? ' <span style="color:var(--nc-text-m)">The file was last saved on ' + fmtDate(saved) + ' — use that only if nobody opened and re-saved it in Excel.</span>' : '') + '</div>';
     } else if (S.stock) {
       var cls = stockAgeClass(), age = S.stock.dataAsOf ? daysSince(S.stock.dataAsOf) : null;
-      if (cls === 'red') h += '<div class="ncb-banner red"><span class="ncb-dot" style="color:var(--ncb-notsap)"></span>' + (S.stock.dataAsOf ? '<span><b>Stock is ' + age + ' days old</b> (INV_MSTR ' + fmtDate(S.stock.dataAsOf) + ', red after ' + STOCK_AGE.red + ' days). Every stock number here carries that age.</span>' : '<span><b>Stock date unknown.</b> Every stock number here is undated — confirm the export date.</span> <button class="ncb-btn ghost" data-act="askdate">Enter date</button>') + '</div>';
+      if (cls === 'expired') h += '<div class="ncb-banner red"><span class="ncb-dot" style="color:var(--ncb-notsap)"></span><span><b>Stock is ' + age + ' days old: past the ' + STOCK_AGE.refuse + '-day limit.</b> (INV_MSTR ' + fmtDate(S.stock.dataAsOf) + ') Refresh the client folder with a fresh export; until then every stock number here is out of date.</span></div>';
+      else if (cls === 'red') h += '<div class="ncb-banner red"><span class="ncb-dot" style="color:var(--ncb-notsap)"></span>' + (S.stock.dataAsOf ? '<span><b>Stock is ' + age + ' days old</b> (INV_MSTR ' + fmtDate(S.stock.dataAsOf) + ', red after ' + STOCK_AGE.red + ' days). Every stock number here carries that age.</span>' : '<span><b>Stock date unknown.</b> Every stock number here is undated — confirm the export date.</span> <button class="ncb-btn ghost" data-act="askdate">Enter date</button>') + '</div>';
       else if (cls === 'amber') h += '<div class="ncb-banner amber"><span class="ncb-dot" style="color:var(--ncb-nospare)"></span><span>Stock is ' + age + ' days old (INV_MSTR ' + fmtDate(S.stock.dataAsOf) + ', amber after ' + STOCK_AGE.amber + ' days).</span></div>';
     }
     return h;
@@ -536,7 +552,7 @@
   }
   function boardHtml(v) {
     var m = v.m, majors = v.pockets.filter(function (x) { return x.p.tier === 'major'; });
-    if (!majors.length) return '';
+    if (!majors.length || m.reference || !majors.some(function (x) { return x.p.anchor; })) return '';   // v1.1.0 — reference models are tables only
     return '<div class="ncb-boardwrap" id="ncb-boardwrap"><div class="ncb-board" id="ncb-board" data-img="' + esc(S.host.imageBase + m.image) + '"></div></div>';
   }
   // V3 board(): image box, anchors, top row, left/right columns, leader lines
@@ -662,9 +678,9 @@
   }
   function summaryHtml(def, views) {
     var h = '<h1 class="ncb-h">Fleet spares cover</h1><div class="ncb-sub">Every critical component per model, judged on <b>cover after inbound</b> (on the shelf + on the way − reserved). Click a model for its board and table.</div>';
-    ['OP', 'UG'].forEach(function (g) {
+    ['OP', 'UG', 'REF'].forEach(function (g) {
       var ms = def.models.filter(function (m) { return m.group === g; }); if (!ms.length) return;
-      h += '<h3 style="font-family:var(--nc-font-head);margin:18px 0 6px">' + (g === 'OP' ? 'Open pit' : 'Underground') + '</h3><table><thead><tr><th class="l">Model</th><th>Units</th><th>Pockets</th><th>Spare</th><th>No spare</th><th>Short</th><th>Not in SAP</th><th>Lens components not matched</th></tr></thead><tbody>';
+      h += '<h3 style="font-family:var(--nc-font-head);margin:18px 0 6px">' + GROUP_NAME[g] + (g === 'REF' ? ' <small style="font-weight:400;color:var(--nc-text-m)">· tables only, no machine board</small>' : '') + '</h3><table><thead><tr><th class="l">Model</th><th>Units</th><th>Pockets</th><th>Spare</th><th>No spare</th><th>Short</th><th>Not in SAP</th><th>Lens components not matched</th></tr></thead><tbody>';
       ms.forEach(function (m) {
         var v = views[m.key], s = modelSummary(v), d = function (n, k) { return S.idx ? '<span style="color:' + (n ? ST[k].c : 'var(--nc-text-d)') + '">' + n + '</span>' : '—'; };
         h += '<tr class="ncb-row" data-model="' + esc(m.key) + '"><td class="l"><div class="ncb-cname">' + esc(m.lens.model) + '</div><div class="ncb-meta">' + esc(m.class) + (m.lens.units ? ' · ' + esc(m.lens.units.join(', ')) : '') + '</div></td><td class="n">' + v.units.length + '</td><td class="n">' + v.pockets.length + '</td><td class="n">' + d(s.c.spare, 'spare') + '</td><td class="n">' + d(s.c.nospare, 'nospare') + '</td><td class="n">' + d(s.c.short, 'short') + '</td><td class="n">' + d(s.c.notsap, 'notsap') + '</td><td class="n">' + s.unmatched + '</td></tr>';
@@ -691,6 +707,9 @@
     injectStyle();
     S.el = el; S.host = host;
     if (S.rawRef !== host.raw) { S.rawRef = host.raw; S.model = ''; S.open = {}; }     // a different fleet file was loaded
+    var cc = host.clientCode || 'DEFAULT';                                               // v1.1.0 — stock never carries over to another client
+    if (S.cc && S.cc !== cc) { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; S.linkTried = false; S.linkPending = null; }
+    S.cc = cc;
     var def = benchDef();
     if (!S.linkTried && root.indexedDB) { S.linkTried = true; reReadLinked(false); }
     var main;
@@ -730,7 +749,15 @@
         else if (a === 'reread') { S.linkPending = null; reReadLinked(true); }
         else if (a === 'import') defIn.click();
         else if (a === 'export') exportDef();
-        else if (a === 'setdate') { var d = (el.querySelector('#ncb-stockdate') || {}).value; if (!d) { toast('Pick a date first, or choose "Don\'t know"', 'warn'); return; } S.stock.dataAsOf = d; S.stock.method = 'entered'; S.askDate = false; rerender(); }
+        else if (a === 'setdate') {
+          var d = (el.querySelector('#ncb-stockdate') || {}).value; if (!d) { toast('Pick a date first, or choose "Don\'t know"', 'warn'); return; }
+          if (daysSince(d) > STOCK_AGE.refuse) {   // v1.1.0 — nothing older than 30 days is loaded
+            toast('INV_MSTR not loaded — dated ' + fmtDate(d) + ', ' + daysSince(d) + ' days old. Nothing older than ' + STOCK_AGE.refuse + ' days is loaded.', 'error');
+            if (S.prev) { S.idx = S.prev.idx; S.stock = S.prev.stock; } else { S.idx = null; S.stock = null; }
+            S.prev = null; S.askDate = false; rerender(); return;
+          }
+          S.stock.dataAsOf = d; S.stock.method = 'entered'; S.askDate = false; S.prev = null; rerender();
+        }
         else if (a === 'nodate') { S.stock.dataAsOf = null; S.stock.method = 'unknown'; S.askDate = false; rerender(); }
         else if (a === 'askdate') { S.askDate = true; rerender(); }
       };
@@ -760,8 +787,23 @@
     document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   }
 
+  // v1.1.0 — stock from the client folder (numacore_workspace): rows = [headers, ...] in the V3 reader's layout.
+  function setStock(rows, meta) {
+    meta = meta || {};
+    var k = headerAt(rows); if (k < 0) throw new Error('no header row with Material and Manufacturer Part No.');
+    var idx = buildIndex(rows.slice(k));
+    if (meta.clientCode) { if (S.cc && S.cc !== meta.clientCode) { S.model = ''; S.open = {}; } S.cc = meta.clientCode; }
+    S.idx = idx; S.prev = null;
+    S.stock = { fileName: meta.fileName || 'client folder', sheet: 'folder copy', dataAsOf: meta.dataAsOf || null, method: meta.method || 'unknown',
+                loadedAt: new Date(), materials: idx.nmat, ledger: idx.ledger, lastModified: 0, source: 'folder' };
+    S.askDate = false; S.linkTried = true; S.linkPending = null;   // the folder wins over a remembered file link
+    rerender();
+    return idx.nmat;
+  }
+  function clearStock() { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; rerender(); }
+
   root.NumaCoreBench = {
-    version: VERSION, render: render,
+    version: VERSION, render: render, setStock: setStock, clearStock: clearStock,
     // exposed for tests / the folder reader to come
     _internal: { buildIndex: buildIndex, headerAt: headerAt, lookup: lookup, resolveU: resolveU, pocketStock: pocketStock, netStatus: netStatus, catOf: catOf, joinKey: joinKey, dateFromFileName: dateFromFileName, state: S,
                  setIndex: function (idx, stock) { S.idx = idx; S.stock = stock; S.askDate = !stock.dataAsOf; rerender(); } }
