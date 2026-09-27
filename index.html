@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.11 — Mission Control</title>
+<title>NumaCore Lens v4.12 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -1340,12 +1340,14 @@ body { background: #030f0c; }
 #hm-panels-wrap { flex: 1; display: flex; overflow: hidden; }
 #hm-conmon-wrap {
   display: none; flex: 1; overflow: auto; padding: 10px 14px;
+  align-items: flex-start;   /* v4.12 VIT-02 — the table keeps its own height: rows stay as tall as Benchmark hours' (they stretched to fill the panel) */
 }
 #hm-conmon-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
 #hm-conmon-wrap::-webkit-scrollbar-track { background: #030f0c; }
 #hm-conmon-wrap::-webkit-scrollbar-thumb { background: #0f6e56; border-radius: 3px; }
 #hm-conmon-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1; align-self: stretch;   /* v4.12 VIT-03 — fills its half like the Benchmark empty state */
   height: 100%; color: #1d9e75; font-size: 0.62rem; letter-spacing: 1px; gap: 10px; opacity: 0.5;
 }
 #hm-conmon-table { border-collapse: separate; border-spacing: 2px; font-size: 0.65rem; white-space: nowrap; }
@@ -1588,7 +1590,7 @@ body { background: #030f0c; }
   <div id="banner-right">
     <span id="lens-ws-strip" style="margin-right:10px"></span><!-- v4.11 — client folder: source ages + new files (numacore_workspace) -->
     <div id="clock"></div>
-    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save the fleet file. Cadence's and Deploy's latest changes are collected first (one Save for the whole suite)">&#x2B07; SAVE FILE</button><button id="lens-meeting-btn" onclick="lensMeetingRecord()" style="margin-left:6px;background:transparent;border:1px solid rgba(251,191,36,0.45);color:#FBBF24;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Meeting record: saves the plan (every tool's latest changes first), then writes the saved JSON and a 'What was in use' note to the client folder's 3 Archive\Meetings\&lt;date&gt;. Never the SAP files.">&#x1F4DD; MEETING RECORD</button><!-- v4.3.5: unsaved-changes dot, lit when localStorage ui_settings is newer than the JSON file --><span id="lens-unsaved-dot" class="lens-unsaved-dot" style="display:none" title=""></span>
+    <button id="lens-reload-btn" onclick="showLoadScreen()" style="margin-left:10px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Load different fleet file">&#x2B06; LOAD FILE</button><button id="lens-save-btn" onclick="exportFleetJSON()" style="margin-left:6px;background:transparent;border:1px solid rgba(61,201,160,0.3);color:#3dc9a0;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Save the fleet file. Cadence's and Deploy's latest changes are collected first (one Save for the whole suite)">&#x2B07; SAVE FILE</button><button id="lens-copy-btn" onclick="downloadPlanCopy()" style="display:none;margin-left:4px;background:transparent;border:1px solid rgba(61,201,160,0.2);color:#5dcaa5;padding:3px 7px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px" title="Download a copy of the plan to this computer (SAVE FILE keeps it in the client folder)">&#x2B07; COPY</button><!-- v4.12 --><button id="lens-meeting-btn" onclick="lensMeetingRecord()" style="margin-left:6px;background:transparent;border:1px solid rgba(251,191,36,0.45);color:#FBBF24;padding:3px 10px;border-radius:4px;font-size:0.61rem;cursor:pointer;letter-spacing:1px;transition:all 0.2s;" title="Meeting record: saves the plan (every tool's latest changes first), then writes the saved JSON and a 'What was in use' note to the client folder's 3 Archive\Meetings\&lt;date&gt;. Never the SAP files.">&#x1F4DD; MEETING RECORD</button><!-- v4.3.5: unsaved-changes dot, lit when localStorage ui_settings is newer than the JSON file --><span id="lens-unsaved-dot" class="lens-unsaved-dot" style="display:none" title=""></span>
   </div>
 </div>
 
@@ -1871,7 +1873,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.11';
+const VERSION = '4.12';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -3471,6 +3473,10 @@ function switchTab(tab){
   // embedded tool's own controls. Strip nav stays so the operator can
   // still switch panels.
   _applyEmbedChrome(tab);
+  // v4.12 (UI audit BEN-01 / DEP-13) — the component-life legend belongs to Pulse / Vitals / Horizon; on Bench, Cadence
+  // and Deploy it covered live data (Bench's tiles at 1366) and spoke a vocabulary those tabs don't use
+  const _lg = document.getElementById('legend');
+  if (_lg) _lg.style.display = (tab === 'bench' || tab === 'cadence' || tab === 'deploy') ? 'none' : '';
 }
 
 function _applyEmbedChrome(tab) {
@@ -4070,6 +4076,49 @@ window.addEventListener('resize',()=>{
 function showLoadScreen() {
   document.getElementById('lens-load-screen').style.display = 'flex';
   document.getElementById('banner-meta').style.display = 'none';
+  _landingMsg('');
+  _landingRender();   // v4.12
+}
+
+// v4.12 — the landing page. "Open a client folder" picks the folder (view only or edit), reads its newest plan from
+// lens\plan (or a fleet JSON waiting in 1 New files) and opens it; the folder then stays connected for that plan.
+// "Recent" lists the folders this browser has opened. "Open a fleet file" is the old drop / browse.
+function _landingMsg(html, kind) {
+  const m = document.getElementById('ll-folder-msg'); if (!m) return;
+  m.style.display = html ? 'block' : 'none'; m.className = 'll-msg' + (kind ? ' ' + kind : ''); m.innerHTML = html || '';
+}
+function _landingOpened(r) {
+  if (r.plan) {
+    _landingMsg('Opening <b>' + esc(r.plan.fileName) + '</b> from <b>' + esc(r.folderName) + '</b>' + (r.plan.where === 'new' ? ' (found in 1 New files)' : '') + '…');
+    setTimeout(function () { loadLensJSON(r.plan.json); _landingMsg(''); }, 30);
+    return;
+  }
+  _landingMsg('<b>' + esc(r.folderName) + '</b> ' + (r.setUp ? 'has no saved plan yet.' : 'is not set up as a Lens client folder yet.') +
+    ' Open the client\'s fleet JSON on the right' + (r.mode === 'edit' ? ' (or put it in its <code>1 New files</code>): the folder connects to it, and SAVE FILE keeps the plan there from then on.' : '. The folder connects to it, view only.'), 'warn');
+}
+function _landingFail(e) {
+  if (e && e.name === 'AbortError') return;   // the picker was cancelled
+  _landingMsg(esc(e && e.message || String(e)), 'bad');
+}
+function _landingOpenFolder(mode) {
+  if (!window.NumaCoreWorkspace || !NumaCoreWorkspace.openFolder) { _landingMsg('The folder reader (numacore_workspace.js) is not loaded beside this page.', 'bad'); return; }
+  if (!window.showDirectoryPicker) { _landingMsg('Opening a folder needs Edge or Chrome. Use "Open a fleet file" instead.', 'warn'); return; }
+  NumaCoreWorkspace.openFolder(mode).then(_landingOpened).catch(_landingFail);
+}
+function _landingOpenRecent(id) {
+  NumaCoreWorkspace.openRecent(id).then(_landingOpened).catch(_landingFail);
+}
+function _landingRender() {
+  const el = document.getElementById('ll-recent'); if (!el) return;
+  if (!window.NumaCoreWorkspace || !NumaCoreWorkspace.recent) { el.innerHTML = ''; return; }
+  NumaCoreWorkspace.recent().then(function (list) {
+    if (!list.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="ll-eyebrow" style="margin-bottom:6px">Recent in this browser</div>' + list.slice(0, 6).map(function (r) {
+      const id = String(r.id).replace(/[^A-Za-z0-9_]/g, '');
+      return '<button class="ll-rec" onclick="_landingOpenRecent(\'' + id + '\')"><b>' + esc(r.cc) + '</b>' + (r.clientName ? '<em style="font-style:normal;color:#B8C4CC">' + esc(r.clientName) + '</em>' : '') +
+        '<span>' + esc(r.folderName) + ' · ' + (r.mode === 'view' ? 'view only' : 'I refresh it') + (r.lastOpened ? ' · opened ' + esc(String(r.lastOpened).slice(0, 10)) : '') + '</span></button>';
+    }).join('');
+  }).catch(function () { el.innerHTML = ''; });
 }
 
 function hideLoadScreen() {
@@ -4279,7 +4328,7 @@ function loadLensJSON(json) {
     try {
       NumaCoreWorkspace.mountStrip(document.getElementById('lens-ws-strip'));
       NumaCoreWorkspace.attach({ clientCode: _ccNow, clientName: cn, planUnits: Array.from(unitSet), lensVersion: 'v' + VERSION,
-        toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData });
+        toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData, onPlan: _wsOnPlan, onState: _wsOnState });   // v4.12 + onPlan / onState
     } catch (e) { console.warn('workspace attach:', e); }
   }
 }
@@ -4298,6 +4347,19 @@ function _wsOnData(p) {
     method: p.method, window: p.window, rows: NumaCoreWorkspace.forDeploy(p.digest) };
   if (embedReady.deploy) _postToEmbed('deploy', _embedWorkspace[p.source]);
   else _preloadEmbed('deploy');
+}
+// v4.12 — a plan published from 1 New files: offer to open it
+function _wsOnPlan(p) {
+  if (!p || !p.json) return;
+  if (confirm('The plan ' + p.fileName + ' was filed in the client folder (lens\\plan).\n\nOpen it now? Anything not saved in this session is lost.')) loadLensJSON(p.json);
+}
+// v4.12 — SAVE FILE goes to the client folder when it is connected with edit; the COPY button then downloads a copy
+function _wsOnState(st) {
+  const toFolder = !!(st && st.canSavePlan);
+  const sb = document.getElementById('lens-save-btn'), cb = document.getElementById('lens-copy-btn');
+  if (sb) sb.title = toFolder ? 'Save the plan into the client folder (lens\\plan); the previous one moves to 3 Archive\\Plans. Cadence\'s and Deploy\'s latest changes are collected first.'
+    : 'Save the fleet file (downloads it). Cadence\'s and Deploy\'s latest changes are collected first (one Save for the whole suite)' + (st && st.mode === 'view' && st.connected ? '. View only: the client folder is not changed.' : '');
+  if (cb) cb.style.display = toFolder ? '' : 'none';
 }
 function _preloadEmbed(tool) {
   const frame = document.getElementById('embedFrame-' + tool);
@@ -4330,14 +4392,31 @@ function _flushEmbeds() {
     });
   })).then(function (late) { return { late: late.filter(Boolean) }; });
 }
-function exportFleetJSON() {
+// v4.12 — with the client folder connected for editing, SAVE FILE writes the plan into lens\plan (the previous plan
+// moves to 3 Archive\Plans; nothing is deleted). Otherwise it downloads, as before. opts.download forces a download.
+function exportFleetJSON(opts) {
+  opts = opts || {};
   if (!lensRawData) { showToast('No fleet file loaded.', 'warn'); return Promise.resolve(null); }
   return _flushEmbeds().then(function (r) {
-    const saved = _exportFleetJSONNow();
-    if (r.late.length) showToast('Saved. ' + r.late.map(function (t) { return t.charAt(0).toUpperCase() + t.slice(1); }).join(' and ') + ' did not confirm its last changes in time, so the file has its most recent update.', 'warn', 6000);
-    return saved;
+    const ws = window.NumaCoreWorkspace;
+    const toFolder = !opts.download && !!(ws && ws.canSavePlan && ws.canSavePlan());
+    const saved = _exportFleetJSONNow({ download: !toFolder });
+    const late = r.late.length ? r.late.map(function (t) { return t.charAt(0).toUpperCase() + t.slice(1); }).join(' and ') + ' did not confirm its last changes in time, so the file has its most recent update.' : '';
+    if (!toFolder) {
+      const st = ws && ws.state ? ws.state() : null;
+      if (late) showToast('Saved. ' + late, 'warn', 6000);
+      else if (!opts.download && st && st.connected && st.mode === 'view') showToast('Saved to your Downloads as ' + saved.fname + '. View only: the client folder is not changed.', 'info', 6000);
+      return saved;
+    }
+    return ws.savePlan(saved.text, saved.fname).then(function (res) {
+      if (res.ok) { saved.folderFile = res.file; showToast('Saved into the client folder: ' + res.where + res.file + (late ? '. ' + late : ''), late ? 'warn' : 'success', 6000); return saved; }
+      _downloadText(saved.text, saved.fname); showToast('Could not save into the client folder, so the plan was downloaded as ' + saved.fname + '.', 'warn', 7000); return saved;
+    }).catch(function (e) {
+      _downloadText(saved.text, saved.fname); showToast('Saving into the client folder failed (' + (e && e.message || e) + '), so the plan was downloaded as ' + saved.fname + '.', 'error', 8000); return saved;
+    });
   });
 }
+function downloadPlanCopy() { return exportFleetJSON({ download: true }); }   // v4.12 — the COPY button
 // v4.11 — Meeting record (operator 2026-09-26: "the meeting button needs to spit out the saved json as well — ensure
 // that it is saved before you dump it out"; no SAP data). Save first (every tool flushed), then write that saved file
 // and "What was in use.txt" to the client folder's 3 Archive\Meetings\<date>\.
@@ -4347,9 +4426,9 @@ function lensMeetingRecord() {
     if (!saved) return;
     if (!window.NumaCoreWorkspace) { showToast('Saved as ' + saved.fname + '. The folder reader is not loaded, so no meeting record was written.', 'warn', 6000); return; }
     return NumaCoreWorkspace.meetingRecord({ json: saved.text, fileName: saved.fname }).then(function (res) {
-      if (res.ok) { showToast('Meeting record written to ' + res.where + ' (' + res.file + ' + ' + res.txtFile + '). The plan was saved as ' + saved.fname + '.', 'success', 7000); return; }
+      if (res.ok) { showToast('Meeting record written to ' + res.where + ' (' + res.file + ' + ' + res.txtFile + '). The plan was saved' + (saved.folderFile ? ' into lens\\plan' : ' as ' + saved.fname) + '.', 'success', 7000); return; }
       _downloadText(res.txt, saved.fname.replace(/\.json$/i, '') + ' - What was in use.txt');
-      showToast('Saved as ' + saved.fname + '. No client folder is connected, so the "What was in use" note was downloaded next to it.', 'warn', 7000);
+      showToast(res.reason === 'view' ? 'View only: the plan and the "What was in use" note were downloaded; the client folder is not changed.' : 'Saved as ' + saved.fname + '. No client folder is connected, so the "What was in use" note was downloaded next to it.', res.reason === 'view' ? 'info' : 'warn', 7000);
     });
   }).catch(function (e) { showToast('Meeting record not written: ' + (e && e.message || e), 'error', 7000); });
 }
@@ -4358,7 +4437,8 @@ function _downloadText(txt, name) {
   const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
-function _exportFleetJSONNow() {
+function _exportFleetJSONNow(opts) {
+  opts = opts || {};
   const out = JSON.parse(JSON.stringify(lensRawData));  // deep clone; preserves loaded shape
   // v4.7 FIX — strip the V5→V4 compat backfills that buildFleetData wrote onto
   // the master records (fleet/unit/component name mirrors + the marker field).
@@ -4385,15 +4465,17 @@ function _exportFleetJSONNow() {
     ? window.NumaCoreLib.buildSaveFilename(cc, { fleetData: out })
     : (cc + '_fleet.json');
   const text = JSON.stringify(out, null, 2);
-  const blob = new Blob([text], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  if (opts.download !== false) {   // v4.12 — the folder save (exportFleetJSON) writes instead of downloading
+    const blob = new Blob([text], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+  }
   // Reflect the save in the header label
   const savedDate = new Date().toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'});
   const lblEl = document.getElementById('lens-last-saved');
@@ -4417,6 +4499,7 @@ function _exportFleetJSONNow() {
 }
 
 document.addEventListener('DOMContentLoaded', function initLoadScreen() {
+  _landingRender();   // v4.12 — recent client folders
   // Wire file input
   const fileInput = document.getElementById('lens-file-input');
   if (fileInput) {
@@ -5787,10 +5870,11 @@ function buildHmSelector() {
   // Re-render if we have an active state
   if (hmState.fleet) {
     const vis2 = getVisFleets();
+    // v4.12 VIT-01 — through selectHm*() so the title follows the table (it kept the old fleet / model)
     if (hmState.model && vis2[hmState.fleet] && vis2[hmState.fleet][hmState.model]) {
-      renderHeatmapBoth(hmState.fleet, hmState.model);
+      selectHmModel(hmState.fleet, hmState.model);
     } else if (vis2[hmState.fleet]) {
-      renderHeatmapBoth(hmState.fleet, null);
+      selectHmFleet(hmState.fleet);
     } else {
       hmState = { fleet: null, model: null };
       showHmEmpty();
@@ -7232,31 +7316,71 @@ function copyPcrPrompt() {
 <!-- ══ LOAD SCREEN ══ -->
 <div id="lens-load-screen" style="
   position:fixed;inset:0;background:#050a12;
-  display:flex;align-items:center;justify-content:center;
-  z-index:9000;flex-direction:column;gap:0;
+  display:flex;align-items:flex-start;justify-content:center;
+  z-index:9000;flex-direction:column;gap:0;overflow:auto;padding:6vh 16px 24px;
 ">
-  <div id="lens-drop-zone" style="
-    border:2px dashed #0f6e56;border-radius:16px;
-    padding:60px 80px;text-align:center;cursor:pointer;
-    transition:all .25s;max-width:480px;width:90%;
-  " onclick="document.getElementById('lens-file-input').click()">
-    <div style="font-size:2.5rem;margin-bottom:14px;opacity:.6">⬇</div>
-    <div style="font-size:1.1rem;font-weight:700;letter-spacing:2px;color:#3dc9a0;text-transform:uppercase;margin-bottom:8px">NumaCore Lens</div>
-    <div style="font-size:0.75rem;color:#5dcaa5;letter-spacing:1px;margin-bottom:20px">COMPONENT HEALTH &amp; EXECUTION DASHBOARD</div>
-    <div style="font-size:0.85rem;color:#b8ede0;margin-bottom:6px">Drop fleet JSON file here</div>
-    <div style="font-size:0.72rem;color:#0a4438;">or click to browse</div>
-    <div style="margin-top:28px;font-size:0.62rem;color:#0f6e56;letter-spacing:1px">
-      Accepts: [ClientCode]_fleet.json · Schema v4 FINAL
+  <!-- v4.12 — the landing page (operator 2026-09-27: "maybe we can open with a landing page that give me the option to
+       link a folder, or drop a JSON"). Folder first: a client folder brings the plan (lens\plan) and its SAP data. -->
+  <div id="lens-landing">
+    <div class="ll-brand">
+      <svg width="46" height="46" viewBox="0 0 26 26" fill="none"><circle cx="12" cy="12" r="7.5" fill="none" stroke="#3dc9a0" stroke-width="1.2"/><circle cx="12" cy="12" r="2" fill="#3dc9a0" opacity="0.6"/><line x1="12" y1="3" x2="12" y2="6" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="12" y1="18" x2="12" y2="21" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="3" y1="12" x2="6" y2="12" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="18" y1="12" x2="21" y2="12" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="17" y1="17" x2="23" y2="23" stroke="#1d9e75" stroke-width="2" stroke-linecap="round"/></svg>
+      <div><div class="ll-name">NumaCore Lens</div><div class="ll-sub">Asset intelligence · component health &amp; execution</div></div>
     </div>
+    <div class="ll-cards">
+      <div class="ll-card">
+        <div class="ll-eyebrow">Recommended</div>
+        <h2>Open a client folder</h2>
+        <p>The plan and its SAP data together, from the client's synced OneDrive folder.</p>
+        <div class="ll-btns">
+          <button class="ll-btn solid" onclick="_landingOpenFolder('view')" title="Lens reads the folder and never changes it. The browser asks to view files.">&#x1F4C1; Open — view only</button>
+          <button class="ll-btn" onclick="_landingOpenFolder('edit')" title="For the person who drops SAP exports and publishes them. The browser asks to edit files in this folder only.">&#x1F4C1; Open — I refresh it</button>
+        </div>
+        <div class="ll-note"><b>View only</b> never changes the folder: most people. <b>I refresh it</b> is for the one person who drops SAP exports and publishes them; SAVE FILE then keeps the plan in the folder.</div>
+        <div id="ll-folder-msg" class="ll-msg" style="display:none"></div>
+      </div>
+      <div class="ll-card" id="lens-drop-zone" tabindex="0" onclick="document.getElementById('lens-file-input').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('lens-file-input').click();}">
+        <div class="ll-eyebrow">Or</div>
+        <h2>Open a fleet file</h2>
+        <p>A fleet JSON on this computer.</p>
+        <div class="ll-drop">&#x2B07; Drop the .json here, or click to browse</div>
+        <div class="ll-note">V4 Flat or V5 · [ClientCode]_fleet.json</div>
+      </div>
+    </div>
+    <div id="ll-recent" class="ll-recent"></div>
   </div>
   <input type="file" id="lens-file-input" accept=".json" style="display:none">
 </div>
 <style>
-#lens-drop-zone.drag-over {
-  border-color:#3dc9a0;
-  background:rgba(61,201,160,.06);
-  box-shadow:0 0 40px rgba(61,201,160,.2);
-}
+/* v4.12 — the landing page (folder first) */
+#lens-landing { width:100%; max-width:980px; margin:0 auto; font-family:var(--nc-font-body,'Barlow',sans-serif); color:#E8E9ED; }
+.ll-brand { display:flex; align-items:center; gap:14px; margin-bottom:24px; }
+.ll-name { font-family:var(--nc-font-display,'Barlow Condensed',sans-serif); font-weight:700; font-size:36px; letter-spacing:3px; text-transform:uppercase; color:#3dc9a0; line-height:1; }
+.ll-sub { font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#5dcaa5; margin-top:5px; }
+.ll-cards { display:grid; grid-template-columns:1.25fr 1fr; gap:16px; }
+.ll-card { border:1px solid rgba(61,201,160,.25); border-radius:12px; background:rgba(8,26,21,.55); padding:20px 22px; }
+.ll-card h2 { font-family:var(--nc-font-display,'Barlow Condensed',sans-serif); font-weight:700; font-size:24px; letter-spacing:2px; text-transform:uppercase; margin:4px 0 6px; color:#E8E9ED; }
+.ll-card p { margin:0 0 14px; color:#B8C4CC; font-size:14px; }
+.ll-eyebrow { font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:rgba(61,201,160,.8); }
+.ll-btns { display:flex; gap:10px; flex-wrap:wrap; }
+.ll-btn { font-family:var(--nc-font-head,'Rajdhani',sans-serif); font-weight:600; font-size:15px; padding:9px 16px; border-radius:6px; border:1px solid rgba(61,201,160,.5); background:transparent; color:#3dc9a0; cursor:pointer; }
+.ll-btn.solid { background:#3dc9a0; color:#030F0C; border-color:#3dc9a0; }
+.ll-btn:hover { filter:brightness(1.12); }
+.ll-btn:focus-visible, .ll-rec:focus-visible, #lens-drop-zone:focus-visible { outline:2px solid #3dc9a0; outline-offset:2px; }
+.ll-note { font-size:12.5px; color:#8B8FA3; margin-top:12px; line-height:1.5; }
+.ll-note b { color:#B8C4CC; font-weight:600; }
+.ll-msg { margin-top:12px; font-size:13px; padding:8px 12px; border-radius:6px; border:1px solid rgba(61,201,160,.3); background:rgba(61,201,160,.06); line-height:1.5; }
+.ll-msg.warn { border-color:rgba(251,191,36,.45); background:rgba(251,191,36,.07); color:#fde68a; }
+.ll-msg.bad { border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.07); color:#fecaca; }
+.ll-msg code { font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:12px; }
+#lens-drop-zone { cursor:pointer; transition:all .2s; }
+.ll-drop { border:1px dashed rgba(61,201,160,.4); border-radius:8px; padding:24px 12px; text-align:center; font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:12px; letter-spacing:1px; color:#5dcaa5; }
+#lens-drop-zone.drag-over { border-color:#3dc9a0; background:rgba(61,201,160,.08); box-shadow:0 0 40px rgba(61,201,160,.2); }
+.ll-recent { margin-top:20px; }
+.ll-rec { display:flex; align-items:baseline; gap:10px; width:100%; text-align:left; background:rgba(8,26,21,.45); border:1px solid rgba(61,201,160,.15); border-radius:8px; padding:10px 14px; margin:6px 0; color:#E8E9ED; font-family:inherit; font-size:14px; cursor:pointer; }
+.ll-rec b { font-family:var(--nc-font-head,'Rajdhani',sans-serif); font-size:17px; color:#3dc9a0; }
+.ll-rec span { color:#8B8FA3; font-size:12px; margin-left:auto; font-family:var(--nc-font-mono,'JetBrains Mono',monospace); }
+.ll-rec:hover { border-color:rgba(61,201,160,.45); }
+@media (max-width:760px) { .ll-cards { grid-template-columns:1fr; } .ll-name { font-size:28px; } }
 /* ── v3.7 — ConMon Tile (left canvas, unit-level) ─────────────────────── */
 #conmon-tile {
   display: none; background: rgba(4,14,11,0.88);

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.1.0 · 2026-09-26
+   v0.2.0 · 2026-09-27
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -27,6 +27,21 @@
      • Dates are local calendar dates; never toISOString() for a date.
      • Words, never just a colour.
      • People's names never enter a dated copy (Entered By / Last Changed By dropped).
+     • v0.2.0 (operator, 2026-09-27):
+       – Refresher edits, others view. A folder is connected in one of two modes.
+         EDIT (the person who refreshes it): the browser grants "edit files" and
+         Publish, dated copies, the plan and meeting records are written. VIEW ONLY:
+         the browser grants "view files"; everything is read, nothing is written,
+         Publish is hidden, and saves / meeting records download instead.
+       – The plan lives in the folder: lens\plan\ holds the latest saved fleet JSON
+         (SAVE FILE writes it there in edit mode); older plans move to
+         3 Archive\Plans\. Nothing is deleted.
+       – A folder can be opened BEFORE any plan (Lens's landing page): the newest
+         plan in lens\plan\ is read, else a fleet JSON waiting in 1 New files.
+       – Recent client folders are remembered in this browser (handle + mode).
+       – A fleet JSON dropped in 1 New files is recognised as a plan: its check card
+         files it in lens\plan\ on Publish and offers to open it. A Bench definition
+         JSON is recognised and left in place until Bench's before / after review.
 
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
@@ -43,12 +58,16 @@
      NumaCoreWorkspace.meetingRecord({json, fileName})  → Promise<{ok, where}>
      NumaCoreWorkspace.forDeploy(digest) / forBench(digest)
      NumaCoreWorkspace.state()
+     v0.2.0: openFolder(mode) / openRecent(id) → Promise<{folderName, mode, setUp, cc, plan}>
+             recent() → Promise<[{id, cc, clientName, folderName, mode, lastOpened}]>
+             savePlan(text, fileName) → Promise<{ok, where, file}> · canSavePlan() · setMode(mode)
+             host.onPlan({fileName, json}) — a plan published from 1 New files
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.1.0';
+  var VERSION = '0.2.0';
   var AGE = { amber: 7, red: 14, refuse: 30 };
-  var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data' };
+  var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans' };   // v0.2.0 + plan / Plans
   var LOG_NAME = 'Refresh log.csv';
   var REGISTER = 'register.js';
 
@@ -352,10 +371,12 @@
   }
 
   // ── browser plumbing (skipped in Node) ───────────────────────────────────
-  var S = { host: null, cc: '', handle: null, perm: 'none', folderName: '', register: null, loaded: {}, newFiles: [], stripEl: null, busy: false, cards: null, lastError: '' };
+  var S = { host: null, cc: '', handle: null, perm: 'none', folderName: '', register: null, loaded: {}, newFiles: [], stripEl: null, busy: false, cards: null, lastError: '',
+            mode: 'edit',     // v0.2.0 — 'edit' (the refresher) | 'view' (everyone else). v0.1.0 connections were all edit.
+            pending: null };  // v0.2.0 — a folder opened on the landing page, adopted by the next attach()
   function toast(msg, sev) { try { if (S.host && S.host.toast) S.host.toast(msg, sev); } catch (e) {} }
   function setState(p) { for (var k in p) S[k] = p[k]; renderStrip(); try { if (S.host && S.host.onState) S.host.onState(publicState()); } catch (e) {} }
-  function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded }; }
+  function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded, mode: S.mode, canSavePlan: canSavePlan() }; }
 
   // IndexedDB: the folder handle per client (own DB; never bump numacore_bench)
   function idb() {
@@ -366,6 +387,36 @@
   function idbGet(k) { return idb().then(function (db) { if (!db) return null; return new Promise(function (res) { var t = db.transaction('h', 'readonly').objectStore('h').get(k); t.onsuccess = function () { res(t.result || null); }; t.onerror = function () { res(null); }; }); }); }
   function idbPut(k, v) { return idb().then(function (db) { if (!db) return false; return new Promise(function (res) { var t = db.transaction('h', 'readwrite').objectStore('h').put(v, k); t.onsuccess = function () { res(true); }; t.onerror = function () { res(false); }; }); }); }
   function handleKey() { return 'folder_' + String(S.cc || 'DEFAULT').replace(/[^A-Z0-9_]/gi, '_'); }
+  // v0.2.0 — per-client memory beside the handle: mode, folder name, last opened, last plan saved
+  function metaKey() { return 'meta_' + String(S.cc || 'DEFAULT').replace(/[^A-Z0-9_]/gi, '_'); }
+  // the permission asked for follows the mode: VIEW ONLY asks the browser to "view files", EDIT to "edit files"
+  function permMode() { return S.mode === 'view' ? 'read' : 'readwrite'; }
+  function putMeta(extra) {
+    var m = { cc: S.cc, clientName: (S.host && S.host.clientName) || '', folderName: S.folderName, mode: S.mode, lastOpened: localStamp(new Date()) };
+    for (var k in (extra || {})) m[k] = extra[k];
+    return idbGet(metaKey()).then(function (old) { var o = old || {}; for (var q in m) o[q] = m[q]; return idbPut(metaKey(), o); });
+  }
+  function idbAll() {
+    return idb().then(function (db) {
+      if (!db) return [];
+      return new Promise(function (res) {
+        var out = [], rq = db.transaction('h', 'readonly').objectStore('h').openCursor();
+        rq.onsuccess = function () { var c = rq.result; if (!c) return res(out); out.push({ key: c.key, value: c.value }); c.continue(); };
+        rq.onerror = function () { res(out); };
+      });
+    });
+  }
+  // the client folders this browser has opened, newest first (Lens's landing page)
+  function recent() {
+    return idbAll().then(function (all) {
+      var metas = {}, handles = {};
+      all.forEach(function (e) { var k = String(e.key); if (k.indexOf('meta_') === 0) metas[k.slice(5)] = e.value; else if (k.indexOf('folder_') === 0) handles[k.slice(7)] = e.value; });
+      return Object.keys(handles).map(function (id) {
+        var m = metas[id] || {}, h = handles[id];
+        return { id: id, cc: m.cc || id, clientName: m.clientName || '', folderName: m.folderName || (h && h.name) || '', mode: m.mode || 'edit', lastOpened: m.lastOpened || '', planFile: m.planFile || '', planSaved: m.planSaved || '' };
+      }).sort(function (a, b) { return String(b.lastOpened).localeCompare(String(a.lastOpened)); });
+    });
+  }
 
   function ensureXLSX() {
     if (root.XLSX) return Promise.resolve(root.XLSX);
@@ -424,13 +475,14 @@
   }
   function useHandle(h, fromPicker) {
     var wasPerm;
-    return (h.queryPermission ? h.queryPermission({ mode: 'readwrite' }) : Promise.resolve('granted')).then(function (p) {
+    return (h.queryPermission ? h.queryPermission({ mode: permMode() }) : Promise.resolve('granted')).then(function (p) {
       wasPerm = p; S.handle = h; S.folderName = h.name;
       if (p !== 'granted') { setState({ perm: 'prompt' }); return false; }
       return layoutPresent(h).then(function (n) {
         if (n < 4) {
           if ([DIR.NEW, DIR.INUSE, DIR.ARCHIVE, DIR.LENS, DIR.DATA, DIR.NOTUSED, DIR.MEETINGS].indexOf(h.name) >= 0) { toast('That is a folder inside the client folder. Pick the client folder itself.', 'warn'); S.handle = null; setState({ perm: 'none' }); return false; }
           if (!fromPicker) { setState({ perm: 'granted' }); return true; }
+          if (S.mode === 'view') { toast('"' + h.name + '" is not set up as a Lens client folder yet. The person who refreshes it sets it up by connecting with "I refresh it".', 'warn'); S.handle = null; setState({ perm: 'none' }); return false; }
           var ok = root.confirm('Set up "' + h.name + '" as the Lens client folder for ' + S.cc + '?\n\nLens will create four folders in it: 1 New files, 2 In use, 3 Archive and lens. Nothing already there is changed.');
           if (!ok) { S.handle = null; setState({ perm: 'none' }); return false; }
           return setUpLayout().then(function () { return true; });
@@ -443,27 +495,43 @@
             toast('This folder belongs to ' + reg.meta.clientCode + ', but the plan loaded is ' + S.cc + '. Not connected.', 'error');
             S.handle = null; S.register = null; setState({ perm: 'none' }); return false;
           }
-          return idbPut(handleKey(), h).then(function () { setState({ perm: 'granted' }); return true; });
+          return idbPut(handleKey(), h).then(function () { return putMeta(); }).then(function () { setState({ perm: 'granted' }); return true; });
         });
       });
     });
   }
-  function connect() {
+  function connect(mode) {
     if (!root.showDirectoryPicker) { toast('Connecting a folder needs Edge or Chrome.', 'warn'); return Promise.resolve(false); }
-    return root.showDirectoryPicker({ id: 'numacore-client', mode: 'readwrite' }).then(function (h) { return useHandle(h, true); }).then(function (ok) { if (ok) return refreshAll(); }).catch(function (e) {
+    if (mode !== 'view' && mode !== 'edit') { openChooser(); return Promise.resolve(false); }   // v0.2.0 — view only, or edit (the refresher)
+    S.mode = mode;
+    return root.showDirectoryPicker({ id: 'numacore-client', mode: mode === 'view' ? 'read' : 'readwrite' }).then(function (h) { return useHandle(h, true); }).then(function (ok) { if (ok) return refreshAll(); }).catch(function (e) {
       if (e && e.name === 'AbortError') return false;
       toast('Could not connect the folder: ' + (e && e.message || e), 'error'); return false;
     });
   }
   function allow() {   // user gesture → permission for the remembered folder
     if (!S.handle) return connect();
-    return S.handle.requestPermission({ mode: 'readwrite' }).then(function (p) { if (p === 'granted') return useHandle(S.handle, false).then(function (ok) { if (ok) return refreshAll(); }); setState({ perm: 'prompt' }); });
+    return S.handle.requestPermission({ mode: permMode() }).then(function (p) { if (p === 'granted') return useHandle(S.handle, false).then(function (ok) { if (ok) return refreshAll(); }); setState({ perm: 'prompt' }); });
   }
   function restore() {
-    return idbGet(handleKey()).then(function (h) {
+    return Promise.all([idbGet(handleKey()), idbGet(metaKey())]).then(function (r) {
+      var h = r[0], m = r[1];
       if (!h) { setState({ perm: 'none', handle: null, folderName: '' }); return false; }
+      S.mode = (m && m.mode) || 'edit';   // v0.2.0 — v0.1.0 connections had no mode: they were edit
       return useHandle(h, false).then(function (ok) { if (ok) return refreshAll(); });
     });
+  }
+  // v0.2.0 — switch this browser between view only and edit for the connected folder (the "?" panel)
+  function setMode(m) {
+    if (!S.handle) return Promise.resolve();
+    if (m === 'edit') {
+      return S.handle.requestPermission({ mode: 'readwrite' }).then(function (p) {
+        if (p !== 'granted') { toast('Edit was not allowed, so this browser stays view only.', 'warn'); return; }
+        S.mode = 'edit'; setState({ perm: 'granted' }); putMeta(); scanNew(); toast('This browser now refreshes "' + S.folderName + '" (edit).', 'success');
+      });
+    }
+    S.mode = 'view'; setState({}); putMeta(); toast('View only: this browser will not change "' + S.folderName + '".', 'info');
+    return Promise.resolve();
   }
 
   // ── register + loading the dated copies ──────────────────────────────────
@@ -499,7 +567,7 @@
     return path([DIR.NEW], false).then(function (d) {
       var out = [], it = d.values();
       // skips Excel lock files (~$…), temp and OneDrive swap files
-      function step() { return it.next().then(function (r) { if (r.done) return out; var e = r.value; if (e.kind === 'file' && !/^~\$|\.tmp$|\.crswap$|^\./i.test(e.name) && /\.(xlsx|xlsm|xls|xlsb|csv)$/i.test(e.name)) out.push(e.name); return step(); }); }
+      function step() { return it.next().then(function (r) { if (r.done) return out; var e = r.value; if (e.kind === 'file' && !/^~\$|\.tmp$|\.crswap$|^\./i.test(e.name) && /\.(xlsx|xlsm|xls|xlsb|csv|json)$/i.test(e.name)) out.push(e.name);   /* v0.2.0 + json (plans) */ return step(); }); }
       return step();
     }).catch(function () { return []; }).then(function (list) { setState({ newFiles: list }); return list; });
   }
@@ -508,6 +576,7 @@
   // ── check new files → cards ──────────────────────────────────────────────
   function checkNew() {
     if (S.busy) return; if (!S.handle || S.perm !== 'granted') return allow();
+    if (S.mode === 'view') { toast('View only: new files are checked and published by the person who refreshes this folder.', 'info'); return; }   // v0.2.0
     S.busy = true; openCards([], 'Reading the new files…');
     var XLSX, newDir, cards = [];
     return ensureXLSX().then(function (X) { XLSX = X; return path([DIR.NEW], false); }).then(function (d) {
@@ -516,6 +585,7 @@
         return p.then(function () {
           setCardsMsg('Reading ' + name + '…  (a full INV_MSTR takes up to half a minute)');
           return new Promise(function (r) { setTimeout(r, 60); }).then(function () { return d.getFileHandle(name); }).then(function (fh) { return fh.getFile(); }).then(function (f) {
+            if (/\.json$/i.test(name)) return f.text().then(function (t) { cards.push(assessJson(name, f, t)); });   // v0.2.0
             return f.arrayBuffer().then(function (buf) { cards.push(assess(XLSX, name, f, buf)); });
           }).catch(function (e) { cards.push({ name: name, status: 'error', reasons: ['Could not read the file: ' + (e && e.message || e) + '. If OneDrive is still syncing it, wait for the green tick and check again.'] }); });
         });
@@ -528,8 +598,40 @@
         same.sort(function (a, b) { return String(b.dataAsOf || '').localeCompare(String(a.dataAsOf || '')); });
         same.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A newer ' + REG[src].short.toLowerCase() + ' file (' + same[0].name + ') is in the same drop.'); });
       });
+      // v0.2.0 — several plans in one drop: only the most recently saved one is filed
+      var plans = cards.filter(function (c) { return c.src === 'PLAN' && c.status === 'accept'; });
+      if (plans.length > 1) {
+        plans.sort(function (a, b) { return String(b.plan.saved || '').localeCompare(String(a.plan.saved || '')); });
+        plans.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A more recently saved plan (' + plans[0].name + ') is in the same drop.'); });
+      }
       S.cards = cards; S.busy = false; openCards(cards, '');
     }).catch(function (e) { S.busy = false; setCardsMsg('Could not read the folder: ' + (e && e.message || e)); });
+  }
+  // v0.2.0 — a JSON in 1 New files. A fleet plan is filed in lens\plan\ on Publish; a Bench definition is left in
+  // place until Bench's before / after review (Bench v1.2.0). Plans carry no data date: the 7 / 14 / 30-day limits
+  // are for SAP exports.
+  function planInfo(j) {
+    if (!j || typeof j !== 'object') return null;
+    var comps = (j.masterData && Array.isArray(j.masterData.components)) ? j.masterData.components : Array.isArray(j.components) ? j.components : null;
+    if (!comps || !comps.length) return null;
+    var units = {}; comps.forEach(function (c) { var u = c && (c.unit || c.unit_id); if (u) units[u] = 1; });
+    var m = j.meta || {};
+    return { cc: m.clientCode || '', client: m.clientName || m.client || '', saved: m.lastSaved || '', comps: comps.length, units: Object.keys(units).length, shape: j.masterData ? 'V5' : 'V4 Flat', bench: !!(j.bench && j.bench.models) };
+  }
+  function assessJson(name, file, text) {
+    var c = { name: name, bytes: file.size, lastModified: file.lastModified, status: 'accept', reasons: [], warnings: [], json: true };
+    var j; try { j = JSON.parse(text); } catch (e) { c.status = 'error'; c.reasons.push('Not valid JSON: ' + e.message); return c; }
+    var pi = planInfo(j), b = j && (j.bench || j);
+    if (!pi && b && typeof b.schema === 'string' && b.schema.indexOf('numacore.bench/') === 0 && Array.isArray(b.models)) {
+      c.status = 'ignore'; c.label = 'Bench definition';
+      c.reasons.push('A Bench definition (' + b.models.length + ' models). Its before / after review comes with the next Bench release, so it is left where it is. Until then, import it in Bench (⋯ → Replace the Bench definition…).');
+      return c;
+    }
+    if (!pi) { c.status = 'ignore'; c.reasons.push('Not a fleet plan or a Bench definition, so it is left where it is.'); return c; }
+    c.src = 'PLAN'; c.label = 'Plan (fleet JSON)'; c.plan = pi; c.text = text;
+    if (pi.cc && S.cc && S.cc !== 'DEFAULT' && pi.cc !== S.cc) { c.status = 'refuse'; c.reasons.push('This plan belongs to ' + pi.cc + ', but the plan open in Lens is ' + S.cc + '\'s.'); return c; }
+    if (!pi.cc) c.warnings.push('The plan has no client code inside it.');
+    return c;
   }
   function assess(XLSX, name, file, buf) {
     var c = { name: name, bytes: file.size, lastModified: file.lastModified, status: 'accept', reasons: [], warnings: [] };
@@ -587,7 +689,7 @@
     var cards = S.cards || [], accepted = cards.filter(function (c) { return c.status === 'accept'; }), refused = cards.filter(function (c) { return c.status === 'refuse'; });
     if (!accepted.length && !refused.length) { closeCards(); return Promise.resolve(); }
     S.busy = true; setCardsMsg('Publishing…');
-    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now);
+    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now), planPublished = null;
     reg.meta.generatedAt = stamp; reg.meta.toolVersion = VERSION; reg.meta.clientCode = S.cc;
     reg.ageLimits = { amber: AGE.amber, red: AGE.red, refuse: AGE.refuse };
     return path([DIR.NEW], true).then(function (d) { newDir = d; return path([DIR.INUSE], true); }).then(function (d) { inUse = d; return path([DIR.LENS, DIR.DATA], true); })
@@ -595,6 +697,13 @@
       .then(function () {
         return accepted.reduce(function (p, c) {
           return p.then(function () {
+            if (c.src === 'PLAN') {   // v0.2.0 — a plan: into lens\plan\, the previous one to 3 Archive\Plans\
+              return placePlan(newDir, c.name).then(function (placed) {
+                reg.plan = { current: { file: placed, from: c.name, savedAt: c.plan.saved || null, filedAt: stamp, units: c.plan.units, shape: c.plan.shape } };
+                log.push([stamp, 'PLAN', c.name, DIR.LENS + '\\' + DIR.PLAN + '\\' + placed, '', 'plan', '', '', 'filed as the plan', c.warnings.join(' | '), VERSION]);
+                planPublished = { fileName: placed, text: c.text };
+              });
+            }
             var src = c.src, ext = (c.name.match(/\.\w+$/) || ['.xlsx'])[0].toLowerCase();
             var dateTag = c.dataAsOf ? nameDate(c.dataAsOf) : 'undated ' + nameDate(localIso(now));
             var std = src + ' ' + safeName(S.cc) + ' ' + dateTag + ext, dataFile = src + ' ' + safeName(S.cc) + ' ' + dateTag + '.js';
@@ -632,7 +741,8 @@
       .then(function () { return appendLog(log); })
       .then(function () {
         S.register = reg; S.busy = false; S.cards = null; closeCards();
-        toast('Published: ' + accepted.map(function (c) { return REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
+        toast('Published: ' + accepted.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
+        if (planPublished && S.host && S.host.onPlan) { try { S.host.onPlan({ fileName: planPublished.fileName, json: JSON.parse(planPublished.text) }); } catch (e) { console.warn('workspace onPlan:', e); } }
         return loadCopies().then(scanNew);
       })
       .catch(function (e) { S.busy = false; setCardsMsg('Publish stopped: ' + (e && e.message || e) + '. Files already moved are listed in the refresh log; nothing was deleted.'); return appendLog(log).catch(function () {}); });
@@ -653,9 +763,88 @@
     lines.push('', 'Written by NumaCore Lens ' + (S.host && S.host.lensVersion || '') + ' · numacore_workspace ' + VERSION);
     var txt = lines.join('\r\n') + '\r\n';
     var body = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
-    if (!S.handle || S.perm !== 'granted') return Promise.resolve({ ok: false, txt: txt, body: body, reason: 'no folder' });
+    if (!S.handle || S.perm !== 'granted' || S.mode === 'view') return Promise.resolve({ ok: false, txt: txt, body: body, reason: S.mode === 'view' && S.handle ? 'view' : 'no folder' });   // v0.2.0 — view only writes nothing
     return path([DIR.ARCHIVE, DIR.MEETINGS, day], true).then(function (md) {
       return freeName(md, fileName).then(function (nm) { return writeFile(md, nm, body).then(function () { return freeName(md, 'What was in use.txt'); }).then(function (tn) { return writeFile(md, tn, txt).then(function () { return { ok: true, where: DIR.ARCHIVE + '\\' + DIR.MEETINGS + '\\' + day + '\\', file: nm, txtFile: tn }; }); }); });
+    });
+  }
+
+  // ── v0.2.0 — the plan in the folder: lens\plan\ (latest) + 3 Archive\Plans\ (earlier ones; nothing deleted) ──
+  function canSavePlan() { return !!S.handle && S.perm === 'granted' && S.mode === 'edit'; }
+  function listJson(dirH) {
+    var it = dirH.values(), out = [];
+    function step() { return it.next().then(function (r) { if (r.done) return out; var e = r.value; if (e.kind === 'file' && /\.json$/i.test(e.name) && !/^~\$|^\./.test(e.name)) out.push(e); return step(); }); }
+    return step();
+  }
+  function archiveOldPlans(planDir, keep) {
+    return listJson(planDir).then(function (files) {
+      var old = files.filter(function (e) { return e.name !== keep; });
+      if (!old.length) return;
+      return path([DIR.ARCHIVE, DIR.PLANS], true).then(function (ad) { return old.reduce(function (p, e) { return p.then(function () { return moveFile(planDir, e.name, ad); }); }, Promise.resolve()); });
+    });
+  }
+  function placePlan(fromDir, name) {   // the new plan in first, then the others out: lens\plan is never empty
+    var planDir;
+    return path([DIR.LENS, DIR.PLAN], true).then(function (d) { planDir = d; return moveFile(fromDir, name, planDir); })
+      .then(function (placed) { return archiveOldPlans(planDir, placed).then(function () { putMeta({ planFile: placed }); return placed; }); });
+  }
+  function savePlan(text, fileName) {
+    if (!canSavePlan()) return Promise.resolve({ ok: false, reason: S.mode === 'view' ? 'view' : 'no folder' });
+    var planDir;
+    return path([DIR.LENS, DIR.PLAN], true).then(function (d) { planDir = d; return freeName(d, fileName); })
+      .then(function (nm) { return writeFile(planDir, nm, text).then(function () { return nm; }); })
+      .then(function (nm) { return archiveOldPlans(planDir, nm).then(function () { return nm; }); })
+      .then(function (nm) { putMeta({ planFile: nm, planSaved: localStamp(new Date()) }); return { ok: true, where: DIR.LENS + '\\' + DIR.PLAN + '\\', file: nm }; });
+  }
+  function stampOf(d) { return localIso(d) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()); }
+  function planStamp(name) { var m = /(\d{4}-\d{2}-\d{2})[_ T](\d{2})[-:.]?(\d{2})[-:.]?(\d{2})?/.exec(name); return m ? m[1] + 'T' + m[2] + m[3] + (m[4] || '00') : ''; }
+  // the newest fleet plan in a folder: lens\plan\ first, else a fleet JSON waiting in 1 New files
+  function findPlan(h) {
+    function sub(names) { var p = Promise.resolve(h); names.forEach(function (n) { p = p.then(function (d) { return d.getDirectoryHandle(n); }); }); return p; }
+    function newest(dirH, where) {
+      return listJson(dirH).then(function (files) {
+        return Promise.all(files.map(function (fh) { return fh.getFile().then(function (f) { return { f: f, key: planStamp(f.name) || stampOf(new Date(f.lastModified)) }; }); }));
+      }).then(function (xs) {
+        xs.sort(function (a, b) { return String(b.key).localeCompare(String(a.key)); });
+        return xs.reduce(function (p, x) {
+          return p.then(function (found) {
+            if (found) return found;
+            return x.f.text().then(function (t) { var j; try { j = JSON.parse(t); } catch (e) { return null; } var pi = planInfo(j); return pi ? { json: j, fileName: x.f.name, info: pi, where: where } : null; });
+          });
+        }, Promise.resolve(null));
+      });
+    }
+    return sub([DIR.LENS, DIR.PLAN]).then(function (d) { return newest(d, 'plan'); }, function () { return null; })
+      .then(function (p) { return p || sub([DIR.NEW]).then(function (d) { return newest(d, 'new'); }, function () { return null; }); });
+  }
+  function readRegisterOf(h) {
+    return h.getDirectoryHandle(DIR.LENS).then(function (l) { return l.getDirectoryHandle(DIR.DATA); }).then(function (d) { return d.getFileHandle(REGISTER); })
+      .then(function (fh) { return fh.getFile(); }).then(function (f) { return f.text(); }).then(parseScript).catch(function () { return null; });
+  }
+  function inspectFolder(h, mode) {
+    if ([DIR.NEW, DIR.INUSE, DIR.ARCHIVE, DIR.LENS, DIR.DATA, DIR.NOTUSED, DIR.MEETINGS, DIR.PLAN, DIR.PLANS].indexOf(h.name) >= 0)
+      return Promise.reject(new Error('"' + h.name + '" is a folder inside the client folder. Pick the client folder itself.'));
+    return Promise.all([layoutPresent(h), findPlan(h), readRegisterOf(h)]).then(function (r) {
+      var setUp = r[0] >= 4, plan = r[1], reg = r[2], cc = (reg && reg.meta && reg.meta.clientCode) || '';
+      S.pending = { handle: h, mode: mode, folderName: h.name, cc: cc, setUp: setUp, planWhere: plan && plan.where, planFile: plan && plan.fileName };
+      return { folderName: h.name, mode: mode, setUp: setUp, cc: cc, plan: plan };
+    });
+  }
+  // Lens's landing page: pick a client folder (a user gesture), then read its newest plan
+  function openFolder(mode) {
+    if (!root.showDirectoryPicker) return Promise.reject(new Error('Opening a folder needs Edge or Chrome.'));
+    mode = mode === 'view' ? 'view' : 'edit';
+    return root.showDirectoryPicker({ id: 'numacore-client', mode: mode === 'view' ? 'read' : 'readwrite' }).then(function (h) { return inspectFolder(h, mode); });
+  }
+  function openRecent(id) {
+    id = String(id || '').replace(/[^A-Z0-9_]/gi, '_');
+    return Promise.all([idbGet('folder_' + id), idbGet('meta_' + id)]).then(function (r) {
+      var h = r[0], m = r[1] || {}, mode = m.mode || 'edit';
+      if (!h) throw new Error('That folder is no longer remembered in this browser. Open it again.');
+      return (h.requestPermission ? h.requestPermission({ mode: mode === 'view' ? 'read' : 'readwrite' }) : Promise.resolve('granted')).then(function (p) {
+        if (p !== 'granted') throw new Error('The browser did not allow access to "' + h.name + '".');
+        return inspectFolder(h, mode);
+      });
     });
   }
 
@@ -703,6 +892,7 @@
     } else if (S.perm !== 'granted') {
       h += '<button class="ncw-btn gold" data-ncw="allow" title="The browser needs your OK once per session to read the client folder ' + esc(S.folderName) + '.">📁 ALLOW ' + esc(S.folderName).toUpperCase() + '</button>' + helpBtn;
     } else {
+      if (S.mode === 'view') h += '<span class="ncw-chip" title="View only: this browser reads the folder but never changes it. The person who refreshes the folder publishes new files and keeps the plan. Switch in the ? panel.">VIEW ONLY</span>';   // v0.2.0
       SOURCES.forEach(function (src) {
         var cur = S.register && S.register.sources && S.register.sources[src] && S.register.sources[src].current;
         if (!cur) { h += '<span class="ncw-chip" title="No ' + esc(REG[src].label) + ' in the folder yet. Drop an export in 1 New files.">' + esc(REG[src].short) + ' · none</span>'; return; }
@@ -712,7 +902,8 @@
           ' · ' + cur.standardName + ' · ' + (cur.rows || 0).toLocaleString() + ' rows · refreshed ' + String(cur.refreshedAt || '').slice(0, 16).replace('T', ' ') + ' · amber after ' + AGE.amber + ' days, red after ' + AGE.red + ', not loaded after ' + AGE.refuse;
         h += '<span class="ncw-chip ' + cls + '" title="' + esc(tip) + '">' + esc(REG[src].short) + ' ' + esc(words) + '</span>';
       });
-      if (S.newFiles.length) h += '<button class="ncw-btn gold" data-ncw="check" title="' + esc(S.newFiles.join(', ')) + '">' + S.newFiles.length + ' NEW FILE' + (S.newFiles.length > 1 ? 'S' : '') + ': CHECK</button>';
+      if (S.newFiles.length && S.mode === 'view') h += '<span class="ncw-chip amber" title="' + esc(S.newFiles.join(', ')) + ' — waiting for the person who refreshes the folder">' + S.newFiles.length + ' NEW · FOR THE REFRESHER</span>';   // v0.2.0
+      else if (S.newFiles.length) h += '<button class="ncw-btn gold" data-ncw="check" title="' + esc(S.newFiles.join(', ')) + '">' + S.newFiles.length + ' NEW FILE' + (S.newFiles.length > 1 ? 'S' : '') + ': CHECK</button>';
       else h += '<button class="ncw-btn" data-ncw="rescan" title="Folder: ' + esc(S.folderName) + '. Look in 1 New files again.">↻</button>';
       h += helpBtn;
     }
@@ -721,6 +912,18 @@
     el.querySelectorAll('[data-ncw]').forEach(function (b) {
       b.onclick = function () { var a = b.getAttribute('data-ncw'); if (a === 'connect') connect(); else if (a === 'allow') allow(); else if (a === 'check') checkNew(); else if (a === 'rescan') scanNew(); else if (a === 'help') openHelp(); };
     });
+  }
+  // v0.2.0 — CONNECT FOLDER asks how the folder will be used, then asks the browser for exactly that permission
+  var CH = null;
+  function openChooser() {
+    injectStyle();
+    if (!CH) { CH = document.createElement('div'); CH.className = 'ncw-ov'; document.body.appendChild(CH); CH.addEventListener('click', function (e) { if (e.target === CH) CH.style.display = 'none'; }); }
+    CH.innerHTML = '<div class="ncw-dlg" style="max-width:640px"><h3>Connect the client folder</h3><div class="ncw-sub">How will you use it in this browser? Chrome or Edge then asks for exactly that permission, for this one folder and this web address only.</div>' +
+      '<div class="ncw-card accept"><div class="t"><span>View only</span><span class="w">most people</span></div><div class="m">Lens reads the published SAP data and the plan, and never changes anything in the folder: the browser asks to <b>view</b> files. SAVE FILE and MEETING RECORD go to your Downloads.</div><div class="ncw-foot" style="margin-top:8px"><button class="ncw-btn solid" data-ncw-mode="view">Connect — view only</button></div></div>' +
+      '<div class="ncw-card ask"><div class="t"><span>I refresh this folder</span><span class="w">edit</span></div><div class="m">For the person who drops the SAP exports and publishes them. Lens moves files between the folders (never deleting anything), writes the dated copies, keeps the plan in <code>lens\\plan</code> and writes meeting records. The browser asks to <b>edit</b> files, in this folder only.</div><div class="ncw-foot" style="margin-top:8px"><button class="ncw-btn gold" data-ncw-mode="edit">Connect — I refresh it</button></div></div>' +
+      '<div class="ncw-foot"><button class="ncw-btn" data-ncw-mode="">Cancel</button></div></div>';
+    CH.style.display = 'flex';
+    CH.querySelectorAll('[data-ncw-mode]').forEach(function (b) { b.onclick = function () { var m = b.getAttribute('data-ncw-mode'); CH.style.display = 'none'; if (m) connect(m); }; });
   }
   var OV = null;
   function openCards(cards, msg) {
@@ -733,6 +936,7 @@
     cards.forEach(function (c, i) {
       var word = { accept: 'Will be used', refuse: 'Not used', error: 'Could not read', ask: 'Question', older: 'Older than in use', ignore: 'Left in place' }[c.status] || c.status;
       h += '<div class="ncw-card ' + c.status + '"><div class="t"><span>' + esc(c.label || 'File') + ' · ' + esc(c.name) + '</span><span class="w">' + esc(word) + '</span></div>';
+      if (c.plan) h += '<div class="m">Client <b>' + esc(c.plan.cc || '—') + '</b>' + (c.plan.client ? ' · ' + esc(c.plan.client) : '') + ' · ' + c.plan.units + ' units · ' + c.plan.comps.toLocaleString() + ' components · ' + esc(c.plan.shape) + (c.plan.saved ? ' · saved ' + esc(fmtDate(localIso(new Date(c.plan.saved)))) : '') + (c.plan.bench ? ' · with its Bench definition' : '') + (c.status === 'accept' ? ' · Publish files it in <code>lens\\plan</code> and offers to open it' : '') + '</div>';   // v0.2.0
       if (c.digest) h += '<div class="m">' + (c.dataAsOf ? 'Data date <b>' + esc(fmtDate(c.dataAsOf)) + '</b> (' + ageDays(c.dataAsOf) + ' days old) · dated from ' + esc(methodWords(c.method)) : 'Data date not known yet') +
         (c.window ? ' · covers ' + esc(fmtDate(c.window.from)) + ' – ' + esc(fmtDate(c.window.to)) : '') + ' · ' + (c.rowsOut || 0).toLocaleString() + ' rows kept of ' + (c.rowsIn || 0).toLocaleString() + (c.unitsInPlan ? ' · ' + c.unitsInPlan + ' plan units found' : '') + '</div>';
       if (c.status === 'ask') h += '<div class="r warn">The INV_MSTR has no date inside it and its file name has none. Enter the date the export was taken: <input type="date" data-ncw-date="' + i + '" value="' + esc(c.suggest || '') + '"> ' +
@@ -766,29 +970,33 @@
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && HELP && HELP.style.display !== 'none') HELP.style.display = 'none'; });
     }
     var cc = safeName(S.cc || 'CLIENT'), ex = nameDate(localIso(new Date()));
-    var now = !S.handle || S.perm === 'none' ? '<b>Not connected yet.</b> Create the folder (step 1), then press <b>📁 CONNECT FOLDER</b>.'
+    var now = !S.handle || S.perm === 'none' ? '<b>Not connected yet.</b> Create the folder (step 1), then open it from Lens\'s start page or press <b>📁 CONNECT FOLDER</b>.'
       : S.perm !== 'granted' ? 'Connected to <b>' + esc(S.folderName) + '</b>. The browser needs one <b>Allow</b> this session (the gold button).'
-      : 'Connected to <b>' + esc(S.folderName) + '</b> for ' + esc(cc) + '.';
+      : 'Connected to <b>' + esc(S.folderName) + '</b> for ' + esc(cc) + (S.mode === 'view' ? ', <b>view only</b>' : ', <b>edit</b> (you refresh it)') + '.';
     HELP.innerHTML = '<div class="ncw-dlg ncw-help">' +
       '<h3>The client folder — how it works</h3>' +
       '<div class="ncw-sub">' + now + ' Lens reads SAP exports from the folder, dates them from their data, and hands them to Bench and Deploy. You never load them by hand.</div>' +
       '<h4>1 · Create one folder per client</h4>' +
       '<p>In that client\'s OneDrive / SharePoint library, synced to your PC. For example <code>' + esc(cc) + ' Lens</code>. Right-click it and choose <b>Always keep on this device</b>.</p>' +
       '<h4>2 · Connect it (once per client)</h4>' +
-      '<p>Load the client\'s plan, press <b>📁 CONNECT FOLDER</b> and pick that folder itself, not a folder inside it. Lens creates everything else and remembers it for this client (Edge or Chrome):</p>' +
+      '<p>On Lens\'s start page choose <b>Open a client folder</b> (or, with a plan loaded, press <b>📁 CONNECT FOLDER</b>) and pick that folder itself, not a folder inside it. Choose <b>View only</b> (most people: Lens never changes the folder) or <b>I refresh it</b> (the one person who publishes new files: the browser allows editing this folder only). Lens creates everything else and remembers it for this client (Edge or Chrome):</p>' +
       '<pre>' + esc(cc) + ' Lens\\\n' +
       '├── 1 New files\\          ← YOU drop SAP exports here\n' +
       '│   └── Not used\\         ← Lens: refused files (reason in the log)\n' +
       '├── 2 In use\\             ← Lens only: the IW39 + INV_MSTR in use now\n' +
       '├── 3 Archive\\            ← Lens only: replaced files, Refresh log.csv\n' +
       '│   └── Meetings\\&lt;date&gt;\\  ← MEETING RECORD: saved plan + "What was in use"\n' +
-      '└── lens\\data\\            ← Lens only: dated copies. Never edit</pre>' +
+      '│   └── Plans\\             ← Lens: earlier plans (nothing is deleted)\n' +
+      '└── lens\\\n' +
+      '    ├── plan\\             ← the plan: SAVE FILE (edit) keeps it here\n' +
+      '    └── data\\             ← Lens only: dated copies. Never edit</pre>' +
       '<h4>3 · Where to put what</h4>' +
       '<table><thead><tr><th>What</th><th>Where</th><th>Name / notes</th></tr></thead><tbody>' +
       '<tr><td>IW39 export</td><td><code>1 New files</code></td><td><code>IW39 ' + esc(cc) + ' ' + ex + '.xlsx</code> (the export day)</td></tr>' +
       '<tr><td>INV_MSTR export</td><td><code>1 New files</code></td><td><code>INV_MSTR ' + esc(cc) + ' ' + ex + '.xlsx</code>. The date in the name matters most: the file has no date inside, otherwise Lens asks you</td></tr>' +
-      '<tr><td>MB51, Component Snapshots</td><td>Keep them out for now</td><td>Not read yet. If dropped, they are left where they are</td></tr>' +
-      '<tr><td>The plan (fleet JSON)</td><td>Where you keep it today</td><td>Load it with LOAD FILE as now. Each MEETING RECORD puts a copy in <code>3 Archive\\Meetings</code></td></tr>' +
+      '<tr><td>The plan (fleet JSON)</td><td><code>1 New files</code> once; then Lens keeps it in <code>lens\\plan</code></td><td>Publish files it and offers to open it. From then on SAVE FILE (edit) saves it there and moves the previous one to <code>3 Archive\\Plans</code>. Each MEETING RECORD also puts a copy in <code>3 Archive\\Meetings</code></td></tr>' +
+      '<tr><td>Bench definition (.json)</td><td>Import it in Bench for now</td><td>Recognised in <code>1 New files</code> but left there until Bench\'s before / after review arrives</td></tr>' +
+      '<tr><td>MB51, Component Snapshots</td><td>Keep them out for now</td><td>Not read yet (snapshots come with the next Bench release, reviewed before they change anything). If dropped, they are left where they are</td></tr>' +
       '</tbody></table>' +
       '<h4>4 · Each refresh (weekly)</h4>' +
       '<p>Drop fresh IW39 + INV_MSTR the same day → press <b>N NEW FILES: CHECK</b> → read the cards → <b>Publish</b>. The header then shows each source\'s data date and age.</p>' +
@@ -797,8 +1005,11 @@
       '<li>Age: <span style="color:#34D399">green</span> up to ' + AGE.amber + ' days, <span style="color:#FBBF24">amber</span> after ' + AGE.amber + ', <span style="color:#EF4444">red</span> after ' + AGE.red + '. <b>Nothing older than ' + AGE.refuse + ' days is loaded.</b></li>' +
       '<li>An older file never replaces a newer one without your say-so. An old export renamed with a new date is caught.</li>' +
       '<li>Never edit anything in <code>2 In use</code>, <code>3 Archive</code> or <code>lens</code>. Lens moves the files; <b>nothing is ever deleted</b>.</li>' +
-      '<li>One folder per client. A folder is refused for another client\'s plan.</li></ul>' +
+      '<li>One folder per client. A folder is refused for another client\'s plan.</li>' +
+      '<li><b>What "edit" allows:</b> this web address can change files in this one folder only, nothing else on your PC or OneDrive. Lens only creates its folders, moves files between them (copy, check, then remove the original), and writes its own files (dated copies, register, log, plans, meeting records). OneDrive keeps version history and a recycle bin for all of it. To withdraw it: the icon left of the address bar → Site settings.</li></ul>' +
+      (S.handle && S.perm === 'granted' ? '<div class="ncw-foot" style="justify-content:flex-start">' + (S.mode === 'view' ? '<button class="ncw-btn gold" data-ncw-sm="edit">I refresh this folder — switch to edit</button>' : '<button class="ncw-btn" data-ncw-sm="view">Switch this browser to view only</button>') + '</div>' : '') +
       '<div class="ncw-foot"><button class="ncw-btn solid" data-ncw-hx="1">Got it</button></div></div>';
+    HELP.querySelectorAll('[data-ncw-sm]').forEach(function (b) { b.onclick = function () { HELP.style.display = 'none'; setMode(b.getAttribute('data-ncw-sm')); }; });
     HELP.style.display = 'flex';
   }
 
@@ -810,6 +1021,18 @@
     else S.loaded = {};   // a re-load of the same client re-delivers the copies (Lens rebuilt its state)
     renderStrip();
     if (!root.indexedDB || !root.document) return Promise.resolve();
+    // v0.2.0 — a folder opened on Lens's landing page is adopted for this plan instead of the remembered one
+    var pend = S.pending; S.pending = null;
+    if (pend && pend.cc && pend.cc !== S.cc) toast('The folder "' + pend.folderName + '" belongs to ' + pend.cc + ', not ' + S.cc + ', so it was not connected.', 'warn');
+    else if (pend) {
+      S.mode = pend.mode;
+      return useHandle(pend.handle, !pend.setUp).then(function (ok) {
+        if (!ok) return;
+        // a plan opened straight from 1 New files is filed in lens\plan (edit only)
+        var file = pend.planWhere === 'new' && S.mode === 'edit' ? path([DIR.NEW], false).then(function (d) { return placePlan(d, pend.planFile); }).then(function (p) { toast('The plan ' + p + ' was filed in lens\\plan.', 'success'); }) : Promise.resolve();
+        return file.catch(function (e) { toast('The plan stays in 1 New files: ' + (e && e.message || e), 'warn'); }).then(refreshAll);
+      }).catch(function (e) { console.warn('workspace adopt:', e); });
+    }
     return restore().catch(function (e) { console.warn('workspace restore:', e); });
   }
   if (root.document) {
@@ -819,9 +1042,11 @@
   root.NumaCoreWorkspace = {
     version: VERSION, AGE: AGE,
     attach: attach, mountStrip: mountStrip, connect: connect, allow: allow, checkNew: checkNew, rescan: scanNew,
+    openFolder: openFolder, openRecent: openRecent, recent: recent, savePlan: savePlan, canSavePlan: canSavePlan, setMode: setMode,   // v0.2.0
     meetingRecord: meetingRecord, forDeploy: forDeploy, forBench: forBench, state: publicState,
     _internal: { REG: REG, norm: norm, mapColumns: mapColumns, recognise: recognise, findHeaderRow: findHeaderRow, coerce: coerce, dateFromFileName: dateFromFileName,
       iw39DataDate: iw39DataDate, readWorkbook: readWorkbook, buildDigest: buildDigest, toScript: toScript, parseScript: parseScript, ageDays: ageDays, ageClass: ageClass,
-      useHandle: useHandle, refreshAll: refreshAll, publish: publish, assess: assess, S: S }
+      useHandle: useHandle, refreshAll: refreshAll, publish: publish, assess: assess, S: S,
+      assessJson: assessJson, planInfo: planInfo, findPlan: findPlan, inspectFolder: inspectFolder, placePlan: placePlan, planStamp: planStamp }
   };
 })(typeof window !== 'undefined' ? window : this);
