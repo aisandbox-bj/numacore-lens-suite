@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.0.0 · 2026-09-26
+   v1.0.1 · 2026-09-26
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -26,7 +26,12 @@
 
    Rules held here (operator, 2026-09-26)
      • Status is judged on COVER AFTER INBOUND = on hand + in transit + on order
-       − reserved (V3 netStatus). Every row still shows all four numbers.
+       − reserved. Every row still shows all four numbers.
+     • v1.0.1 status rule (operator, 2026-09-26): Spare = cover > 0; No spare =
+       cover exactly 0, INCLUDING zero stock with no demand; Short = demand
+       (reserved) the shelf + inbound cannot meet (cover < 0). This is the one
+       deliberate departure from V3, whose netStatus also called "nothing on the
+       shelf or inbound" Short when nothing was reserved.
      • Words, never just a colour. Five states: Spare / No spare / Short /
        Not in SAP / Not in review (grey — tracked in Lens, no pocket matches).
      • Lens components join by SAP number, then part number. Never by name; a
@@ -42,7 +47,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.0.0';
+  var VERSION = '1.0.1';
   var STOCK_AGE = { amber: 7, red: 14 };        // days — suggested limits (drive-folder spec §5), operator to confirm
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -170,10 +175,12 @@
     return mats;
   }
   function sumf(mats, k) { return mats.reduce(function (a, m) { return a + (m[k] || 0); }, 0); }
-  // V3 colours -> Bench state names
+  // Bench states from cover after inbound. v1.0.1 (operator, 2026-09-26): zero stock with no demand is
+  // No spare, not Short; Short needs demand (reserved) that the shelf + inbound cannot meet.
+  // (V3 netStatus had `supply <= 0 || net < 0` -> short.)
   function netStatus(soh, tr, po, rs, has) {
-    if (!has) return 'notsap'; var supply = soh + tr + po, net = supply - rs;
-    if (supply <= 0 || net < 0) return 'short'; if (net === 0) return 'nospare'; return 'spare';
+    if (!has) return 'notsap'; var net = soh + tr + po - rs;
+    if (net < 0) return 'short'; if (net === 0) return 'nospare'; return 'spare';
   }
   function catOf(pn) { pn = ('' + pn).trim().toUpperCase(); if (/-EXC$/.test(pn)) return 'EXC'; if (/^\d+R\d+$/.test(pn)) return 'REMAN'; return 'NEW'; }
   function keptMats(mats) {
@@ -519,7 +526,7 @@
   }
   function tiles(v) {
     var s = modelSummary(v);
-    var t = [['spare', s.c.spare, 'cover after inbound > 0'], ['nospare', s.c.nospare, 'covered, nothing spare'], ['short', s.c.short, 'demand exceeds supply, or none'], ['notsap', s.c.notsap, 'no SAP material set up'], ['notin', s.unmatched, 'tracked in Lens, no pocket match']];
+    var t = [['spare', s.c.spare, 'cover after inbound > 0'], ['nospare', s.c.nospare, 'cover 0: nothing spare, or no stock and no demand'], ['short', s.c.short, 'demand the shelf + inbound cannot meet'], ['notsap', s.c.notsap, 'no SAP material set up'], ['notin', s.unmatched, 'tracked in Lens, no pocket match']];
     return '<div class="ncb-tiles">' + t.map(function (x) { return '<div class="ncb-tile"><div class="k" style="color:' + ST[x[0]].c + '"><span class="ncb-dot"></span>' + ST[x[0]].w + '</div><div class="v">' + (S.idx || x[0] === 'notin' ? x[1] : '—') + '</div><div class="d">' + x[2] + '</div></div>'; }).join('') + '</div>';
   }
   function qtyWords(st) {
@@ -596,9 +603,9 @@
     var way = st.po + st.tr;
     var s = '<b>' + st.soh + '</b> on the shelf, <b>' + way + '</b> on the way' + (way ? ' (' + st.po + ' on order' + (st.tr ? ', ' + st.tr + ' in transit' : '') + ')' : '') + ', <b>' + st.res + '</b> reserved ';
     if (st.status === 'spare') s += '→ <b style="color:var(--ncb-spare)">' + st.net + ' spare</b> after everything inbound arrives.';
-    else if (st.status === 'nospare') s += '→ <b style="color:var(--ncb-nospare)">exactly covered</b>: nothing spare once reservations are met.';
-    else if (st.net < 0) s += '→ <b style="color:var(--ncb-short)">short by ' + (-st.net) + '</b> even after everything inbound arrives.';
-    else s += '→ <b style="color:var(--ncb-short)">nothing on the shelf or inbound</b>.';
+    else if (st.status === 'nospare') s += (st.soh + way === 0 ? '→ <b style="color:var(--ncb-nospare)">no spare</b>: nothing on the shelf or on the way, and nothing reserved against it.' : '→ <b style="color:var(--ncb-nospare)">exactly covered</b>: nothing spare once reservations are met.');
+    else if (st.soh + way === 0) s += '→ <b style="color:var(--ncb-short)">short by ' + (-st.net) + '</b>: demand, with nothing on the shelf or inbound.';
+    else s += '→ <b style="color:var(--ncb-short)">short by ' + (-st.net) + '</b> even after everything inbound arrives.';
     if (st.assembly) s += ' <span style="color:var(--nc-text-m)">(an assembly: counted as the smallest of its sub-part groups, as in Critical Spares V3)</span>';
     return s;
   }
