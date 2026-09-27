@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.1.2 · 2026-09-27
+   v1.2.0 · 2026-09-27
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -73,6 +73,26 @@
          connector ties each detail row to it (it "floated" on wide screens).
        – V3 sizes: the board is never scaled above its 1520 x 860 design size,
          and the page is one centred column no wider than V3's (1520 px).
+     • v1.2.0 (operator, 2026-09-27: "I do not want to adjust INVENTORY… I want to be
+       able to see the component details (snapshot stuff) and be able to see what pulls
+       through… maybe even update — either manually or via the upload"):
+       – A model page has two views: Stock (the board and table, as before) and PART
+         NUMBERS: every part number of every component, what it pulls through to in the
+         INV_MSTR (SAP material, shelf / on the way / reserved — read-only; "rows ▸" shows
+         the INV_MSTR rows behind them and how they were counted), whether a snapshot in
+         the client folder lists it, and how many Lens units carry it.
+       – Component Snapshots (from numacore_workspace) are compared with the definition:
+         part numbers and components a snapshot has that the definition doesn't become
+         SUGGESTIONS. Never a removal (a list can span several snapshots).
+       – Editing by hand: add / remove part numbers (not an assembly's sub-part groups).
+       – One review for all of it: before / after, tick, Apply. Unticked suggestions are
+         declined and not suggested again. A replacement definition file (⋯ or the
+         client folder) gets a per-model before / after and applies whole or not at all.
+       – Everything is logged in the definition (bench.log, travels in the plan); a
+         Change log page lists it. A "not saved yet" banner stays until SAVE FILE.
+       – The Lens join tries every unit's SAP number, then every unit's part number
+         (v1.1.x tried only the first unit's).
+       – Stock is never written: INV_MSTR stays read-only.
 
    API
      NumaCoreBench.render(containerEl, host)
@@ -80,11 +100,14 @@
                 markUnsaved(msg), toast(msg, sev) }
      NumaCoreBench.setStock(rows, {fileName, dataAsOf, method, clientCode})   rows = [headers, ...]
      NumaCoreBench.clearStock()
+     NumaCoreBench.setSnapshots([snapshot])            v1.2.0 — the Component Snapshots in the client folder
+     NumaCoreBench.reviewDefinition(json, fileName)    v1.2.0 — a definition file for the before / after
+     NumaCoreBench.previewSnapshot(snapshot) → {adds, newComps}   v1.2.0 — for the folder's check card
      NumaCoreBench.version
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.1.2';
+  var VERSION = '1.2.0';
   var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -101,7 +124,18 @@
     askDate: false,         // show the "enter the stock date" box
     busy: '',               // reading-file message
     cc: null,              // v1.1.0 — the client the stock belongs to; a different client's plan clears it
-    prev: null              // v1.1.0 — stock kept while a hand-loaded file waits for its date (restored if refused)
+    prev: null,             // v1.1.0 — stock kept while a hand-loaded file waits for its date (restored if refused)
+    // v1.2.0 — the Part numbers view, the review and the change log
+    view: 'stock',          // on a model page: 'stock' (board + table) | 'parts' (part numbers and what they pull through)
+    page: '',               // '' | 'review' | 'log' — full-width pages
+    snaps: [],              // Component Snapshots in the client folder's 2 In use\Snapshots (from numacore_workspace)
+    staged: [],             // hand edits waiting for the review: {kind:'add'|'remove', model, pid, pn}
+    defReview: null,        // a Bench definition file waiting for its before / after: {bench, fileName}
+    tick: {},               // review item id -> false when unticked (ticked by default)
+    edit: false,            // Part numbers view: editing by hand
+    pfilter: 'all',         // Part numbers view filter: all | nostock | nolens | snap
+    raw: {},                // "pid|pn" -> true when its INV_MSTR rows are shown
+    unsaved: null           // {at, what} — the definition changed in this tab and SAVE FILE has not run since
   };
 
   // ── small helpers ─────────────────────────────────────────────────────────
@@ -159,7 +193,9 @@
       min: findCol(h, [function (x) { return x === 'min' || x.indexOf('reorder') >= 0; }]),
       max: findCol(h, [function (x) { return x === 'max' || x.indexOf('maximum') >= 0; }]),
       ss: findCol(h, [function (x) { return x.indexOf('safety') >= 0; }]),
-      val: findCol(h, [function (x) { return x === 'valuation type' || x === 'valuation'; }])
+      val: findCol(h, [function (x) { return x === 'valuation type' || x === 'valuation'; }]),
+      plant: findCol(h, [function (x) { return x === 'plant'; }]),                                             // v1.2.0 — shown on the raw rows only
+      sloc: findCol(h, [function (x) { return x === 'storage location' || x === 'sloc' || x === 'stor. loc.'; }])
     };
     // every required column must be present — otherwise refuse the file (no partial / zeroed load)
     var req = [['material', 'Material'], ['mfg', 'Manufacturer Part No.'], ['soh', 'Unrestricted (on hand)'],
@@ -174,8 +210,11 @@
       var mpn = ('' + row[col.mfg]).trim(); if (!mpn) { noMpn++; continue; }
       var val = col.val >= 0 ? ('' + row[col.val]).trim().toUpperCase() : '';
       var a = agg.get(mat);
-      if (!a) { a = { material: mat, mpn: mpn, desc: col.desc >= 0 ? ('' + row[col.desc]) : '', soh: 0, transit: 0, po: 0, _nr: 0, _blank: 0, _hasval: false, _tr: 0, _po: 0, _res: 0, _n: 0, mrp: '', mn: 0, mx: 0, ss: 0 }; agg.set(mat, a); }
+      if (!a) { a = { material: mat, mpn: mpn, desc: col.desc >= 0 ? ('' + row[col.desc]) : '', soh: 0, transit: 0, po: 0, _nr: 0, _blank: 0, _hasval: false, _tr: 0, _po: 0, _res: 0, _n: 0, mrp: '', mn: 0, mx: 0, ss: 0, raw: [] }; agg.set(mat, a); }
       var q = num(row[col.soh]);
+      // v1.2.0 — the INV_MSTR rows behind each material, kept as read (read-only; the Part numbers view shows them)
+      a.raw.push({ val: val, soh: q, tr: col.transit >= 0 ? num(row[col.transit]) : 0, po: col.po >= 0 ? num(row[col.po]) : 0, res: col.res >= 0 ? num(row[col.res]) : 0,
+                   plant: col.plant >= 0 ? ('' + row[col.plant]).trim() : '', sloc: col.sloc >= 0 ? ('' + row[col.sloc]).trim() : '' });
       if (col.val < 0) { a._blank += q; }
       else { if (val === 'NEW' || val === 'REBUILT' || val === 'DEFECTIVE') a._hasval = true; if (val === 'NEW' || val === 'REBUILT') a._nr += q; if (val === '') a._blank += q; }
       a._tr += (col.transit >= 0 ? num(row[col.transit]) : 0); a._po += (col.po >= 0 ? num(row[col.po]) : 0); a._res += (col.res >= 0 ? num(row[col.res]) : 0); a._n++;
@@ -405,14 +444,16 @@
     var unmatched = [];
     Object.keys(groups).sort().forEach(function (name) {
       var cs = groups[name], c0 = cs.find(function (c) { return c.mm_number || c.part_number; }) || cs[0];
-      var hit = null, how = '';
-      var sk = sapKey(c0.mm_number), pk = joinKey(c0.part_number);
-      if (S.idx && sk) { hit = pockets.find(function (x) { return x.saps.has(sk); }); if (hit) how = 'SAP number ' + c0.mm_number; }
-      if (!hit && pk) { hit = pockets.find(function (x) { return x.keys.has(pk); }); if (hit) how = 'part number ' + c0.part_number; }
+      var hit = null, how = '', pnHit = '';
+      // v1.2.0 — every unit's SAP number, then every unit's part number (v1.1.x tried only the FIRST unit's, so the 775G
+      // Left Hoist stayed unlinked although TD404's 2960738 is in the pocket). Most common numbers are tried first.
+      var uniq = function (k, keyFn) { var n = {}; cs.forEach(function (c) { var v = String(c[k] || '').trim(); if (v && keyFn(v)) n[v] = (n[v] || 0) + 1; }); return Object.keys(n).sort(function (a, b) { return n[b] - n[a]; }); };
+      if (S.idx) uniq('mm_number', sapKey).some(function (mm) { hit = pockets.find(function (x) { return x.saps.has(sapKey(mm)); }); if (hit) how = 'SAP number ' + mm; return !!hit; });
+      if (!hit) uniq('part_number', joinKey).some(function (pn) { hit = pockets.find(function (x) { return x.keys.has(joinKey(pn)); }); if (hit) { how = 'part number ' + pn; pnHit = pn; } return !!hit; });
       var pcts = cs.map(function (c) { return c.pct; }).filter(function (v) { return v != null; });
       var dues = cs.map(function (c) { return c.pred_changeout; }).filter(Boolean).map(function (d) { return String(d).slice(0, 10); }).sort();
       var rec = { name: name, n: cs.length, worst: pcts.length ? Math.max.apply(null, pcts) : null, due: dues[0] || null,
-                  pn: c0.part_number || '', mm: c0.mm_number || '', how: how, units: cs.map(function (c) { return c.unit; }) };
+                  pn: pnHit || c0.part_number || '', mm: c0.mm_number || '', how: how, units: cs.map(function (c) { return c.unit; }) };
       // v1.1.2 — every part number Lens holds for this component, with its units (shown when it doesn't match a pocket)
       rec.pnc = {}; cs.forEach(function (c) { var k = String(c.part_number || '').trim() || '(none)', e = rec.pnc[k] || (rec.pnc[k] = { n: 0, units: [], mm: {} }); e.n++; e.units.push(c.unit); if (c.mm_number) e.mm[String(c.mm_number).trim()] = 1; });
       if (hit) { hit.lens.push(rec); return; }
@@ -570,6 +611,35 @@
       '.ncb-more{position:relative}.ncb-more>summary{list-style:none;cursor:pointer;font-family:var(--nc-font-head);font-weight:700;font-size:15px;line-height:1;padding:5px 11px;border-radius:4px;border:1px solid var(--nc-border);color:var(--nc-text-m)}.ncb-more>summary::-webkit-details-marker{display:none}.ncb-more[open]>summary,.ncb-more>summary:hover{border-color:rgba(95,168,224,.55);color:var(--ncb-accent)}',
       '.ncb-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:280px;padding:6px;border:1px solid var(--nc-border);border-radius:8px;background:var(--nc-chrome,#14161D);box-shadow:0 10px 28px rgba(0,0,0,.45)}',
       '.ncb-menu button{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:5px;color:var(--nc-text);font-family:var(--nc-font-body);font-size:13px;padding:7px 10px;cursor:pointer}.ncb-menu button:hover{background:rgba(95,168,224,.1)}.ncb-menu button small{display:block;color:var(--nc-text-d);font-size:11px}',
+      /* v1.2.0 — the Stock / Part numbers switch, the Part numbers table, the review and the change log */
+      '.ncb-views{display:inline-flex;border:1px solid var(--nc-border);border-radius:6px;overflow:hidden;margin:2px 0 10px}',
+      '.ncb-views button{font-family:var(--nc-font-head,Rajdhani);font-weight:600;font-size:13px;letter-spacing:.3px;padding:5px 16px;background:transparent;color:var(--nc-text-m);border:0;cursor:pointer}',
+      '.ncb-views button+button{border-left:1px solid var(--nc-border)}.ncb-views button.on{background:rgba(95,168,224,.14);color:var(--ncb-accent)}.ncb-views button:hover{color:var(--nc-text)}',
+      '.ncb table.ncb-parts{table-layout:fixed;min-width:980px}',
+      '.ncb tr.ncb-prow td{background:rgba(255,255,255,.028);border-top:1px solid var(--nc-border);text-align:left;padding:9px 10px 7px}',
+      '.ncb-pline{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.ncb-pline .ncb-spacer{flex:1}',
+      '.ncb tr.ncb-pnrow td{padding:5px 8px;font-size:12.5px;border-bottom:1px solid rgba(42,45,58,.35)}.ncb tr.ncb-pnrow td.n{font-family:var(--nc-font-mono);font-size:12.5px}',
+      '.ncb tr.ncb-pnrow td:first-child{box-shadow:inset 3px 0 0 rgba(95,168,224,.25)}',
+      '.ncb-miss{color:#fdba74}.ncb-dim{color:var(--nc-text-d)}',
+      '.ncb tr.ncb-pnrow.sugg td{background:rgba(52,211,153,.045)}.ncb tr.ncb-pnrow.sugg td:first-child{box-shadow:inset 3px 0 0 rgba(52,211,153,.6)}',
+      '.ncb tr.ncb-pnrow.staged-add td{background:rgba(52,211,153,.08)}.ncb tr.ncb-pnrow.staged-add td:first-child{box-shadow:inset 3px 0 0 #34D399}',
+      '.ncb tr.ncb-pnrow.staged-rem td{opacity:.55}.ncb tr.ncb-pnrow.staged-rem td .ncb-mono{text-decoration:line-through}.ncb tr.ncb-pnrow.staged-rem td:first-child{box-shadow:inset 3px 0 0 #EF4444}',
+      '.ncb tr.ncb-pgrp td{font-family:var(--nc-font-mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#9ccbf0;padding:4px 8px}',
+      '.ncb tr.ncb-rawrow td{font-size:11.5px;color:var(--nc-text-m);padding:3px 8px;background:rgba(95,168,224,.035);border-bottom:1px dashed rgba(42,45,58,.5)}.ncb tr.ncb-rawrow td.n{font-family:var(--nc-font-mono);font-size:11.5px}',
+      '.ncb tr.ncb-rawrow.sum td{color:var(--nc-text);font-size:11.5px;padding:5px 8px 8px}',
+      '.ncb-lnk{white-space:nowrap;background:transparent;border:0;color:var(--ncb-accent);font-family:var(--nc-font-mono);font-size:11px;cursor:pointer;padding:2px 4px;border-radius:3px}.ncb-lnk:hover{background:rgba(95,168,224,.1)}.ncb-lnk.on{color:#fdba74}',
+      '.ncb-add{display:inline-flex;gap:6px;align-items:center}.ncb-add input{background:var(--nc-void,#0A0D1A);border:1px solid var(--nc-border);color:var(--nc-text);border-radius:4px;padding:3px 7px;font-family:var(--nc-font-mono);font-size:12px;width:150px}',
+      'h3.ncb-h3{font-family:var(--nc-font-head);font-weight:600;font-size:17px;margin:18px 0 4px}',
+      '.ncb-rmodel{margin:14px 0 2px;font-size:13.5px}',
+      '.ncb-rcard{border:1px solid var(--nc-border);border-radius:8px;padding:9px 14px 10px;margin:8px 0;background:var(--nc-surface,#080C14);max-width:1100px}.ncb-rcard.new{border-color:rgba(52,211,153,.35)}',
+      '.ncb-rcard h4{margin:0 0 6px;font-family:var(--nc-font-head);font-weight:600;font-size:15px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}',
+      '.ncb-ba{display:grid;grid-template-columns:60px 1fr;gap:5px 10px;font-size:12.5px;align-items:start}',
+      '.ncb-pnchip{font-family:var(--nc-font-mono);font-size:11.5px;padding:2px 7px;border-radius:4px;border:1px solid var(--nc-border);display:inline-flex;gap:5px;align-items:center;margin:2px 6px 2px 0}',
+      '.ncb-pnchip .ncb-pill{margin:0}.ncb-pnchip.add{border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.06)}.ncb-pnchip.rem{border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.05);text-decoration:line-through}',
+      '.ncb-tickl{display:inline-flex;align-items:center;gap:4px;cursor:pointer}.ncb-tickl input{accent-color:#34D399}',
+      '.ncb-revfoot{position:sticky;bottom:-60px;background:var(--nc-void,#0A0D1A);border-top:1px solid var(--nc-border);padding:12px 0 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;z-index:5}',
+      '.ncb-log td{font-size:12.5px;vertical-align:top}',
+      '.ncb-banner>span:not(.ncb-dot){flex:1 1 320px;min-width:0}',   /* the text stays beside its dot (it wrapped under it) */
       '@media (max-width:1100px){.ncb-list{width:210px}.ncb-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}'
     ].join('\n');
     document.head.appendChild(st);
@@ -623,7 +693,10 @@
       (folderOn() ? '' : '<button class="ncb-btn" data-act="load" title="Load an INV_MSTR by hand for this session. Connect the client folder (header) to have it read automatically.">⬆ Load INV_MSTR</button>') +
       '<details class="ncb-more"><summary title="More: definition import / export' + (folderOn() ? ', load stock by hand' : '') + '">⋯</summary><div class="ncb-menu">' +
       (folderOn() ? '<button data-act="load">Load an INV_MSTR by hand<small>This session only — replaces the client folder\'s stock until reload</small></button>' : '') +
-      '<button data-act="import">' + (benchDef() ? 'Replace the Bench definition…' : 'Import a Bench definition…') + '<small>A bench_definition_*.json: which part numbers fit which component</small></button>' +
+      (benchDef() ? '<button data-act="parts">Part numbers<small>Each component\'s part numbers and what they pull through from stock</small></button>' +   // v1.2.0
+        '<button data-act="review">Review changes' + (allProposals().length + S.staged.length ? ' (' + (allProposals().length + S.staged.length) + ')' : '') + '<small>Snapshot suggestions and edits by hand, before / after</small></button>' +
+        '<button data-act="log">Change log' + ((benchDef().log || []).length ? ' (' + benchDef().log.length + ')' : '') + '<small>Every change to the definition, and every declined suggestion</small></button>' : '') +
+      '<button data-act="import">' + (benchDef() ? 'Replace the Bench definition…' : 'Import a Bench definition…') + '<small>A bench_definition_*.json: which part numbers fit which component' + (benchDef() ? ' (you see a before / after first)' : '') + '</small></button>' +
       (benchDef() ? '<button data-act="export">Export the Bench definition<small>Downloads it as JSON</small></button>' : '') +
       '</div></details>' +
       '<input type="file" id="ncb-file-inv" accept=".xlsx,.xls,.xlsm" hidden><input type="file" id="ncb-file-def" accept=".json" hidden></div>';
@@ -632,6 +705,16 @@
   function banners() {
     var h = '';
     if (S.busy) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span>' + esc(S.busy) + '</div>';
+    // v1.2.0 — the definition changed in this tab and is not in the saved plan yet (operator: "I have to load the Bench def every time")
+    if (S.unsaved) h += '<div class="ncb-banner amber"><span class="ncb-dot" style="color:var(--ncb-nospare)"></span><span><b>Not saved yet:</b> ' + esc(S.unsaved.what) + '. Until you press <b>SAVE FILE</b> it lives only in this browser tab: reopening the old fleet file brings back the definition without it. With the client folder in edit, SAVE FILE keeps the plan in <code>lens\\plan</code>, and opening the folder loads it.</span></div>';
+    if (S.page !== 'review' && benchDef()) {
+      var pr = allProposals();
+      if (S.defReview) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>A Bench definition file (<span class="ncb-mono">' + esc(S.defReview.fileName) + '</span>) is waiting for your before / after review. Nothing has changed yet.</span> <button class="ncb-btn solid" data-act="review">Review</button></div>';
+      else if (pr.length) {
+        var np = pr.filter(function (x) { return x.kind === 'add'; }).length, nc = pr.length - np;
+        h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>The Component Snapshots in the client folder list <b>' + np + '</b> part number' + (np === 1 ? '' : 's') + (nc ? ' and <b>' + nc + '</b> component' + (nc === 1 ? '' : 's') : '') + ' that the Bench definition doesn\'t have. Nothing changes until you review them.</span> <button class="ncb-btn solid" data-act="review">Review</button></div>';
+      }
+    }
     if (!S.stock && !S.busy && benchDef() && folderOn()) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>Stock comes from the client folder, and it has no INV_MSTR yet. Put the export in <b>1 New files</b>, press <b>↻</b> in the header, then <b>NEW FILES: CHECK</b> and Publish.</span></div>';
     if (S.stock && S.askDate) {
       var saved = S.stock.lastModified ? localIso(new Date(S.stock.lastModified)) : '';
@@ -886,26 +969,414 @@
       '<p style="font-size:12px">Stock is never stored in the fleet file: it is read each session from the INV_MSTR in the client folder (or loaded by hand when there is no folder).</p></div>';
   }
 
+  // ══ v1.2.0 — Part numbers · snapshot suggestions · editing by hand · the review · the change log ══════════════
+  // Operator 2026-09-27: "I do not want to adjust INVENTORY… I want to be able to see the component details (snapshot
+  // stuff) and be able to see what pulls through… maybe even update — either manually or via the upload."
+  // Stock is read-only here. Only the definition (which part numbers belong to which component) changes, and only
+  // through the review: before / after, tick, Apply — logged in the definition (bench.log) — then SAVE FILE.
+  function stampNow() { var d = new Date(), o = -d.getTimezoneOffset(), sg = o >= 0 ? '+' : '-'; o = Math.abs(o); return localIso(d) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) + sg + pad2(Math.floor(o / 60)) + ':' + pad2(o % 60); }
+  function nameKey(s) { return String(s || '').replace(/^\s*↳\s*/, '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/S$/, ''); }
+  function pocketKeys(p) { var k = new Set((p.vpns || []).map(joinKey)); (p.groups || []).forEach(function (g) { g.forEach(function (v) { k.add(joinKey(v)); }); }); return k; }
+  function findModel(key) { var d = benchDef(); return d ? d.models.find(function (m) { return m.key === key; }) || null : null; }
+  function findPocket(m, pid) { return m ? m.pockets.find(function (p) { return p.id === pid; }) || null : null; }
+  function snapModelKey(s) { return s.benchModel || (s.inUse && s.inUse.benchModel) || ''; }
+  function snapFile(s) { return (s.inUse && s.inUse.standardName) || s.fileName || (s.model + '-' + s.prefix + ' Component Snapshot'); }
+  // which component a snapshot row is: shared part numbers first (the name breaks a tie — 6015 Front / Rear Swing Drive
+  // share theirs), then the name ("Final Drives" = "Final Drive")
+  function matchPocket(m, comp) {
+    var keys = comp.pns.map(function (x) { return joinKey(x.pn); }), nk = nameKey(comp.component), best = null, bs = -1;
+    m.pockets.forEach(function (p, i) {
+      var pk = pocketKeys(p), ov = keys.filter(function (k) { return pk.has(k); }).length; if (!ov) return;
+      var sc = (nameKey(p.component) === nk ? 1000 : 0) + ov * 10 - i * 0.001;
+      if (sc > bs) { bs = sc; best = p; }
+    });
+    if (best) return { p: best, how: 'shared part numbers' };
+    var byName = m.pockets.filter(function (p) { return nameKey(p.component) === nk; })[0];
+    return byName ? { p: byName, how: 'the component name' } : null;
+  }
+  function declinedIds(def) { var d = {}; ((def && def.log) || []).forEach(function (e) { if (e.change === 'declined' && e.id) d[e.id] = 1; }); return d; }
+  // What the snapshots in use have that the definition doesn't: part numbers for a component it has ('add'), and
+  // components it has no entry for ('new'). Never a removal: a component's list can span several snapshots (775G MJS + FY2).
+  // A suggestion declined once is logged and not made again.
+  function snapProposals(def, snaps) {
+    if (!def) return [];
+    var out = [], byId = {}, dec = declinedIds(def);
+    (snaps || []).forEach(function (s) {
+      var m = def.models.find(function (x) { return x.key === snapModelKey(s); }); if (!m) return;
+      var file = snapFile(s);
+      var add = function (pr) {
+        var e = byId[pr.id]; if (e) { if (e.files.indexOf(file) < 0) e.files.push(file); return; }
+        if (dec[pr.id]) return;
+        pr.files = [file]; pr.prefix = s.prefix || ''; byId[pr.id] = pr; out.push(pr);
+      };
+      (s.comps || []).forEach(function (comp) {
+        var seen = {}, pns = comp.pns.filter(function (x) { var k = joinKey(x.pn); if (!k || seen[k]) return false; seen[k] = 1; return true; });
+        if (!pns.length) return;
+        var hit = matchPocket(m, { component: comp.component, pns: pns });
+        if (hit && hit.p.groups && hit.p.groups.length) return;   // an assembly's sub-part groups are edited in the definition file
+        if (hit) {
+          var pk = pocketKeys(hit.p);
+          pns.forEach(function (x) {
+            if (pk.has(joinKey(x.pn))) return;
+            add({ id: 'add|' + m.key + '|' + hit.p.id + '|' + joinKey(x.pn), kind: 'add', by: 'snapshot', model: m.key, pid: hit.p.id, pn: x.pn, type: x.type, col: x.col, comp: comp.component, how: hit.how });
+          });
+        } else {
+          add({ id: 'new|' + m.key + '|' + nameKey(comp.component), kind: 'new', by: 'snapshot', model: m.key, name: comp.component, location: comp.identifier || '', note: comp.note || '',
+                pns: pns.map(function (x) { return { pn: x.pn, type: x.type, col: x.col }; }) });
+        }
+      });
+    });
+    return out;
+  }
+  function allProposals() { return snapProposals(benchDef(), S.snaps); }
+  function previewSnapshot(sn, d) { var ps = snapProposals(d || benchDef(), [sn]); return { adds: ps.filter(function (p) { return p.kind === 'add'; }).length, newComps: ps.filter(function (p) { return p.kind === 'new'; }).length }; }
+  // one part number's stock, read-only: every material it finds (with "SEE" redirects), summed as the pocket does
+  function pnStock(pn) {
+    if (!S.idx) return null;
+    var mats = lookup(S.idx, pn);
+    return { mats: mats, amb: ambiguousCode(S.idx, pn), soh: sumf(mats, 'soh'), tr: sumf(mats, 'transit'), po: sumf(mats, 'po'), res: sumf(mats, 'res') };
+  }
+  function stageToggle(kind, model, pid, pn) {
+    var id = 'hand|' + kind + '|' + model + '|' + pid + '|' + joinKey(pn);
+    var i = -1; S.staged.forEach(function (s, k) { if (s.id === id) i = k; });
+    if (i >= 0) S.staged.splice(i, 1); else S.staged.push({ id: id, kind: kind, by: 'by hand', model: model, pid: pid, pn: pn });
+  }
+  function logEntry(def, e) { def.log = def.log || []; e.at = e.at || stampNow(); def.log.push(e); }
+  function markChanged(what) { S.unsaved = { at: Date.now(), what: what }; if (S.host && S.host.markUnsaved) S.host.markUnsaved(); }
+  // apply ticked items (hand edits and snapshot suggestions); unticked snapshot suggestions are declined (logged)
+  function applyItems(items, declinedItems) {
+    var def = benchDef(); if (!def) return 0;
+    var at = stampNow(), n = 0;
+    items.forEach(function (it) {
+      var m = findModel(it.model); if (!m) return;
+      if (it.kind === 'add' || it.kind === 'remove') {
+        var p = findPocket(m, it.pid); if (!p) return;
+        var before = (p.vpns || []).slice(), k = joinKey(it.pn);
+        if (it.kind === 'add') { if (pocketKeys(p).has(k)) return; p.vpns = before.concat([String(it.pn).trim()]); if (!p.vpn) p.vpn = p.vpns[0]; }
+        else { if (!before.some(function (v) { return joinKey(v) === k; })) return; p.vpns = before.filter(function (v) { return joinKey(v) !== k; }); if (joinKey(p.vpn) === k) p.vpn = p.vpns[0] || ''; }
+        logEntry(def, { at: at, by: it.by, file: (it.files || []).join(', '), model: m.key, pid: p.id, component: baseName(p), change: it.kind === 'add' ? 'added part number' : 'removed part number',
+                        pn: it.pn, type: it.type || catOf(it.pn), col: it.col || '', before: before, after: p.vpns.slice(), id: it.id });
+        n++;
+      } else if (it.kind === 'new') {
+        var base = m.key + '-snap-' + nameKey(it.name).toLowerCase(), pid = base, q = 2;
+        while (findPocket(m, pid)) pid = base + '-' + (q++);
+        var vp = it.pns.map(function (x) { return x.pn; }), news = it.pns.filter(function (x) { return x.type === 'NEW'; });
+        m.pockets.push({ id: pid, tier: 'minor', component: it.name, location: it.location || '', vpn: news.length ? news[news.length - 1].pn : vp[0], vpns: vp, added: { from: (it.files || []).join(', '), at: at } });
+        logEntry(def, { at: at, by: it.by, file: (it.files || []).join(', '), model: m.key, pid: pid, component: it.name, change: 'added component', pn: vp.join(', '), before: [], after: vp.slice(), id: it.id });
+        n++;
+      }
+      // a snapshot matched by model name (an S/N prefix new to the model) joins the model's snapshot list
+      if (it.by === 'snapshot' && it.prefix) {
+        m.snapshots = m.snapshots || [];
+        var listed = m.snapshots.some(function (f) { return String(f).toUpperCase().indexOf('-' + String(it.prefix).toUpperCase()) > 0; });
+        if (!listed && it.files && it.files[0]) m.snapshots.push(it.files[0]);
+      }
+    });
+    (declinedItems || []).forEach(function (it) {
+      var m = findModel(it.model), p = m && it.pid ? findPocket(m, it.pid) : null;
+      logEntry(def, { at: at, by: it.by, file: (it.files || []).join(', '), model: it.model, pid: it.pid || '', component: p ? baseName(p) : (it.name || ''), change: 'declined',
+                      pn: it.kind === 'new' ? it.pns.map(function (x) { return x.pn; }).join(', ') : it.pn, what: it.kind === 'new' ? 'add component' : 'add part number', id: it.id });
+    });
+    if (n || (declinedItems || []).length) def.updatedAt = at;
+    return n;
+  }
+  // a definition file against the one in the plan: per model, components added / removed / part lists changed
+  function defDiff(cur, nb) {
+    var out = [], keys = [];
+    (cur ? cur.models : []).concat(nb.models).forEach(function (m) { if (keys.indexOf(m.key) < 0) keys.push(m.key); });
+    keys.forEach(function (k) {
+      var a = cur ? cur.models.find(function (m) { return m.key === k; }) : null, b = nb.models.find(function (m) { return m.key === k; });
+      var r = { key: k, label: (b || a).label, a: a ? a.pockets.length : 0, b: b ? b.pockets.length : 0, added: [], removed: [], changed: [] };
+      if (!a) r.status = 'added'; else if (!b) r.status = 'removed';
+      else {
+        b.pockets.forEach(function (p) {
+          var q = a.pockets.find(function (x) { return x.id === p.id; });
+          if (!q) { r.added.push(baseName(p)); return; }
+          var ka = pocketKeys(q), kb = pocketKeys(p);
+          var plus = (p.vpns || []).filter(function (v) { return !ka.has(joinKey(v)); }), minus = (q.vpns || []).filter(function (v) { return !kb.has(joinKey(v)); });
+          if (plus.length || minus.length) r.changed.push({ name: baseName(p), plus: plus, minus: minus });
+        });
+        a.pockets.forEach(function (q) { if (!b.pockets.some(function (x) { return x.id === q.id; })) r.removed.push(baseName(q)); });
+        r.status = r.added.length || r.removed.length || r.changed.length ? 'changed' : 'same';
+      }
+      out.push(r);
+    });
+    return out;
+  }
+  function applyDefinition(replace) {
+    var cur = benchDef(), rv = S.defReview, at = stampNow();
+    if (!rv) return;
+    if (replace) {
+      var nb = JSON.parse(JSON.stringify(rv.bench)), seen = {}, merged = [];
+      ((cur && cur.log) || []).concat(nb.log || []).forEach(function (e) { var k = [e.at, e.change, e.model, e.pid, e.pn].join('|'); if (!seen[k]) { seen[k] = 1; merged.push(e); } });
+      nb.log = merged;
+      var d = defDiff(cur, nb), ch = d.filter(function (r) { return r.status !== 'same'; }).length;
+      logEntry(nb, { at: at, by: 'definition file', file: rv.fileName, model: '', component: '', change: cur ? 'replaced the definition' : 'imported the definition', pn: '', what: nb.models.length + ' models; ' + ch + ' differ from the one it replaced' });
+      S.host.raw.bench = nb;
+      markChanged('the definition from ' + rv.fileName);
+      toast('Bench definition ' + (cur ? 'replaced' : 'imported') + ' from ' + rv.fileName + '. SAVE FILE to keep it in the plan.', 'success');
+    } else if (cur) {
+      logEntry(cur, { at: at, by: 'definition file', file: rv.fileName, model: '', component: '', change: 'declined', pn: '', what: 'kept the current definition' });
+      markChanged('a declined definition file (logged)');
+      toast('Kept the current definition. The file stays in 3 Archive\\Definitions; the decision is logged.', 'info');
+    }
+    S.defReview = null; S.tick = {}; S.page = allProposals().length || S.staged.length ? 'review' : '';
+    rerender();
+  }
+  function applyReview() {
+    var props = allProposals(), hand = S.staged.slice();
+    var ticked = function (id) { return S.tick[id] !== false; };
+    var doHand = hand.filter(function (h) { return ticked(h.id); }), doSnap = props.filter(function (p) { return ticked(p.id); }), noSnap = props.filter(function (p) { return !ticked(p.id); });
+    if (!doHand.length && !doSnap.length && !noSnap.length) { toast('Nothing ticked.', 'warn'); return; }
+    var n = applyItems(doHand.concat(doSnap), noSnap);
+    S.staged = S.staged.filter(function (h) { return !ticked(h.id); });
+    S.tick = {}; S.page = ''; S.edit = S.staged.length ? S.edit : false;
+    markChanged(n + ' change' + (n === 1 ? '' : 's') + (noSnap.length ? ' and ' + noSnap.length + ' declined suggestion' + (noSnap.length === 1 ? '' : 's') : ''));
+    toast('Applied ' + n + ' change' + (n === 1 ? '' : 's') + ' to the Bench definition' + (noSnap.length ? ', declined ' + noSnap.length : '') + '. Logged. SAVE FILE to keep them in the plan.', 'success');
+    rerender();
+  }
+
+  // ── the Part numbers view ──
+  function snapsFor(key) { return (S.snaps || []).filter(function (s) { return snapModelKey(s) === key; }); }
+  function snapIndex(key) {
+    var ix = {};
+    snapsFor(key).forEach(function (s) { (s.comps || []).forEach(function (c) { c.pns.forEach(function (x) { var k = joinKey(x.pn); (ix[k] = ix[k] || []).push({ prefix: s.prefix, col: x.col }); }); }); });
+    return ix;
+  }
+  function snapCell(ix, pn, hasSnaps) {
+    var e = ix[joinKey(pn)];
+    if (e) { var seen = {}; return e.filter(function (x) { var k = x.prefix + x.col; if (seen[k]) return false; seen[k] = 1; return true; }).map(function (x) { return '<span class="ncb-mono" style="font-size:11px">' + esc(x.prefix) + ' · ' + esc(x.col) + '</span>'; }).join('<br>'); }
+    return hasSnaps ? '<span class="ncb-dim" style="font-size:11px">not in the snapshot</span>' : '<span class="ncb-dim">—</span>';
+  }
+  function pullCell(ps) {
+    if (!S.idx) return '<span class="ncb-dim">stock not loaded</span>';
+    if (ps.amb) return '<span class="ncb-warn">not counted: with leading zeros ignored it matches more than one part number</span>';
+    if (!ps.mats.length) return '<span class="ncb-miss">no stock record</span>';
+    return ps.mats.map(function (mm) { return '<span class="ncb-mono">SAP ' + esc(mm.material) + '</span> <span class="ncb-ddesc">' + esc(mm.desc) + '</span>'; }).join('<br>');
+  }
+  function qtyCells(ps) {
+    if (!ps || ps.amb || !ps.mats.length) return '<td class="n"></td><td class="n"></td><td class="n"></td>';
+    return '<td class="n">' + ps.soh + '</td><td class="n">' + wayCell(ps.po, ps.tr) + '</td><td class="n">' + ps.res + '</td>';
+  }
+  // the INV_MSTR rows behind one part number, as read, and how Bench counted them
+  function rawRows(ps) {
+    var out = '';
+    ps.mats.forEach(function (mm) {
+      var raw = mm.raw || [], hasVal = raw.some(function (r) { return r.val === 'NEW' || r.val === 'REBUILT' || r.val === 'DEFECTIVE'; });
+      raw.forEach(function (r) {
+        var counted = !hasVal ? 'counted on the shelf' : (r.val === 'NEW' || r.val === 'REBUILT') ? 'counted on the shelf' : r.val === 'DEFECTIVE' ? 'not counted (defective)' : 'not counted (no valuation beside NEW / REBUILT rows)';
+        out += '<tr class="ncb-rawrow"><td></td><td class="l" colspan="2"><span class="ncb-mono">SAP ' + esc(mm.material) + '</span> · ' + esc(r.val || 'no valuation type') + (r.plant ? ' · plant ' + esc(r.plant) : '') + (r.sloc ? ' · ' + esc(r.sloc) : '') + '</td>' +
+          '<td class="n">' + Math.round(r.soh * 100) / 100 + '</td><td class="n">' + (r.po + r.tr) + '<span class="ncb-kit">order ' + r.po + ' · transit ' + r.tr + '</span></td><td class="n">' + r.res + '</td><td class="l" colspan="3"><span class="ncb-dim">' + counted + '</span></td></tr>';
+      });
+      out += '<tr class="ncb-rawrow sum"><td></td><td class="l" colspan="8">SAP ' + esc(mm.material) + ' as Bench counts it: shelf <b>' + Math.round(mm.soh) + '</b> (' + (hasVal ? 'NEW + REBUILT rows' : 'all rows') + ') · on the way <b>' + (Math.round(mm.po) + Math.round(mm.transit)) + '</b> and reserved <b>' + Math.round(mm.res) + '</b> (the average over its ' + raw.length + ' row' + (raw.length === 1 ? '' : 's') + ', as Critical Spares V3 did)</td></tr>';
+    });
+    return out;
+  }
+  function viewSwitch() {
+    return '<div class="ncb-views" role="tablist"><button data-view="stock"' + (S.view === 'stock' ? ' class="on"' : '') + '>Stock</button><button data-view="parts"' + (S.view === 'parts' ? ' class="on"' : '') + '>Part numbers</button></div>';
+  }
+  function partsHtml(v) {
+    var m = v.m, snaps = snapsFor(m.key), sx = snapIndex(m.key), props = allProposals().filter(function (p) { return p.model === m.key; });
+    var comps = fleetModelComps(m.lens.fleet, m.lens.model, m.lens.units), lensPn = {};
+    comps.forEach(function (c) { var k = joinKey(c.part_number); if (k) (lensPn[k] = lensPn[k] || []).push(c.unit); });
+    var tot = { comps: 0, pns: 0, hit: 0, miss: 0, amb: 0, nolens: 0 };
+    var rowsFor = function (x) {
+      var p = x.p, list = [];
+      (p.groups && p.groups.length ? p.groups.map(function (g, gi) { return { gi: gi, vs: g }; }) : [{ gi: null, vs: p.vpns || [] }]).forEach(function (g) {
+        g.vs.forEach(function (pn) { list.push({ pn: pn, gi: g.gi, ps: pnStock(pn) }); });
+      });
+      return list;
+    };
+    var blocks = [];
+    v.pockets.forEach(function (x) {
+      var list = rowsFor(x), p = x.p;
+      var sug = props.filter(function (pr) { return pr.kind === 'add' && pr.pid === p.id; });
+      var stAdd = S.staged.filter(function (s) { return s.kind === 'add' && s.model === m.key && s.pid === p.id; });
+      var likely = v.unmatched.filter(function (u) { return u.hint === p; });
+      var noStock = S.idx && list.some(function (r) { return !r.ps.amb && !r.ps.mats.length; });
+      if (S.pfilter === 'nostock' && !noStock) return;
+      if (S.pfilter === 'nolens' && x.lens.length) return;
+      if (S.pfilter === 'snap' && !sug.length) return;
+      tot.comps++; if (!x.lens.length) tot.nolens++;
+      list.forEach(function (r) { tot.pns++; if (r.ps) { if (r.ps.amb) tot.amb++; else if (r.ps.mats.length) tot.hit++; else tot.miss++; } });
+      blocks.push({ x: x, list: list, sug: sug, stAdd: stAdd, likely: likely });
+    });
+    var h = '<div class="ncb-eyebrow" style="margin-top:6px">' + esc(m.brand || '') + ' · part numbers</div><h1 class="ncb-h">' + esc(m.label) + '</h1>' +
+      '<div class="ncb-sub">' + esc(m.class || '') + ' · ' + v.units.length + ' ' + (v.units.length === 1 ? 'unit' : 'units') + ' · which part numbers make up each component, and what each one pulls through from the INV_MSTR (read-only)</div>';
+    h += '<div class="ncb-stmt" style="margin-top:10px">' + tot.comps + ' component' + (tot.comps === 1 ? '' : 's') + ' · ' + tot.pns + ' part numbers' +
+      (S.idx ? ' — <b style="color:var(--ncb-spare)">' + tot.hit + '</b> pull through to a stock record, <b style="color:#fdba74">' + tot.miss + '</b> don\'t' + (tot.amb ? ', <b>' + tot.amb + '</b> ambiguous' : '') : ' — load stock to see what they pull through') +
+      ' · ' + (tot.comps - tot.nolens) + ' of ' + tot.comps + ' linked to Lens</div>';
+    var snapLine = snaps.length ? 'Snapshot' + (snaps.length > 1 ? 's' : '') + ' in the client folder: ' + snaps.map(function (s) { return '<span class="ncb-mono">' + esc(snapFile(s)) + '</span>' + (s.inUse && s.inUse.refreshedAt ? ' (filed ' + fmtDate(String(s.inUse.refreshedAt).slice(0, 10)) + ')' : ''); }).join(', ') +
+        (props.length ? ' · <b>' + props.length + '</b> suggestion' + (props.length === 1 ? '' : 's') + ' not in the definition <button class="ncb-btn" data-act="review">Review</button>' : (function () { var dn = ((benchDef() || {}).log || []).filter(function (e) { return e.model === m.key && e.change === 'declined'; }).length; return ' · nothing left to review' + (dn ? ' (' + dn + ' declined suggestion' + (dn === 1 ? '' : 's') + ', in the change log)' : ': the definition has everything they list'); })())
+      : 'No Component Snapshot for this model in the client folder' + ((m.snapshots || []).length ? ' (the definition was built from ' + esc(m.snapshots.join(', ')) + ')' : '') + '. Drop one in <b>1 New files</b> to compare.';
+    h += '<div class="ncb-note" style="margin-bottom:8px">' + snapLine + '</div>';
+    h += '<div class="ncb-filters">' + [['all', 'All'], ['nostock', 'No stock record'], ['nolens', 'Not linked to Lens'], ['snap', 'Snapshot suggestions']].map(function (f) { return '<button class="ncb-fb' + (S.pfilter === f[0] ? ' on' : '') + '" data-pfilter="' + f[0] + '">' + f[1] + '</button>'; }).join('') +
+      '<span class="ncb-spacer"></span>' + (S.edit ? '<button class="ncb-btn solid" data-act="editoff">Done editing</button>' : '<button class="ncb-btn" data-act="editon" title="Add or remove part numbers by hand. Nothing changes until you review and apply.">✎ Edit part numbers</button>') + '</div>';
+    if (S.staged.length) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span><b>' + S.staged.length + '</b> change' + (S.staged.length === 1 ? '' : 's') + ' by hand waiting for review (nothing has changed yet).</span> <button class="ncb-btn solid" data-act="review">Review and apply</button></div>';
+    h += '<div class="ncb-tscroll"><table class="ncb-parts"><colgroup><col style="width:70px"><col style="width:150px"><col><col style="width:72px"><col style="width:112px"><col style="width:78px"><col style="width:120px"><col style="width:84px"><col style="width:92px"></colgroup>' +
+      '<thead><tr><th>Type</th><th class="l">Part number</th><th class="l">Pulls through to (INV_MSTR, read-only)</th><th>On shelf</th><th>On the way</th><th>Reserved</th><th>In snapshot</th><th>Lens units</th><th></th></tr></thead><tbody>';
+    blocks.forEach(function (b) {
+      var x = b.x, p = x.p, f = x.fam, cont = f && !f.first, asm = !!(p.groups && p.groups.length);
+      var lensTxt = x.lens.length ? '<span class="ncb-lens">Lens: ' + x.lens.map(function (l) { return esc(l.name); }).join(', ') + ' · ' + x.lens.reduce(function (s, l) { return s + l.n; }, 0) + ' units · by ' + esc(x.lens[0].how) + '</span>'
+        : b.likely.length ? '<span class="ncb-warn">Lens: ' + b.likely.map(function (u) { return esc(u.name); }).join(', ') + ' — part numbers don\'t match</span>' : '<span class="ncb-dim">not tracked in Lens</span>';
+      var addCtl = !S.edit ? '' : asm ? '<span class="ncb-dim" style="font-size:11px">assembly: edit its sub-part groups in the definition file</span>'
+        : '<span class="ncb-add"><input data-addin="' + esc(p.id) + '" placeholder="part number" aria-label="Part number to add to ' + esc(x.label) + '"><button class="ncb-btn" data-add="' + esc(p.id) + '">+ Add</button></span>';
+      h += '<tr class="ncb-prow"><td colspan="9"><div class="ncb-pline"><span class="ncb-cname">' + (cont ? '<span class="ncb-arrow">↳</span>' : '') + esc(x.label) + (f ? unitChips(f.units) : '') + '</span>' +
+        '<span class="ncb-meta">' + p.tier + (p.location ? ' · ' + esc(p.location) : '') + ' · ' + b.list.length + ' part number' + (b.list.length === 1 ? '' : 's') + (asm ? ' · assembly, ' + p.groups.length + ' sub-part groups' : '') + (p.added ? ' · added from ' + esc(p.added.from) : '') + '</span>' +
+        '<span class="ncb-spacer"></span>' + lensTxt + addCtl + '</div></td></tr>';
+      var lastG = null;
+      b.list.forEach(function (r) {
+        if (asm && r.gi !== lastG) { lastG = r.gi; h += '<tr class="ncb-pgrp"><td></td><td class="l" colspan="8">Sub-part group ' + (r.gi + 1) + ' of ' + p.groups.length + '</td></tr>'; }
+        var rid = p.id + '|' + r.pn, stRem = S.staged.some(function (s) { return s.kind === 'remove' && s.model === v.m.key && s.pid === p.id && joinKey(s.pn) === joinKey(r.pn); });
+        var miss = r.ps && !r.ps.amb && !r.ps.mats.length;
+        var lu = lensPn[joinKey(r.pn)] || [];
+        var act = S.edit ? (asm ? '' : '<button class="ncb-lnk' + (stRem ? ' on' : '') + '" data-rm="' + esc(rid) + '" title="' + (stRem ? 'Keep it (undo)' : 'Remove it from this component (after review)') + '">' + (stRem ? 'undo' : '✕ remove') + '</button>')
+          : (r.ps && r.ps.mats.length ? '<button class="ncb-lnk" data-raw="' + esc(rid) + '" title="The INV_MSTR rows behind these numbers">' + (S.raw[rid] ? 'rows ▾' : 'rows ▸') + '</button>' : '');
+        h += '<tr class="ncb-pnrow' + (miss ? ' miss' : '') + (stRem ? ' staged-rem' : '') + '"><td><span class="ncb-pill ' + catOf(r.pn) + '">' + catOf(r.pn) + '</span></td><td class="l"><span class="ncb-mono">' + esc(r.pn) + '</span>' + (r.pn === p.vpn ? ' <span class="ncb-dim" style="font-size:10px" title="The number shown on the card and in the stock table">· shown</span>' : '') + '</td>' +
+          '<td class="l pt">' + pullCell(r.ps || { mats: [] }) + '</td>' + qtyCells(r.ps) + '<td>' + snapCell(sx, r.pn, snaps.length > 0) + '</td>' +
+          '<td class="n" title="' + esc(lu.slice().sort().join(', ')) + '">' + (lu.length ? lu.length : '<span class="ncb-dim">—</span>') + '</td><td>' + act + '</td></tr>';
+        if (!S.edit && S.raw[rid] && r.ps && r.ps.mats.length) h += rawRows(r.ps);
+      });
+      b.stAdd.forEach(function (s) {
+        var ps = pnStock(s.pn);
+        h += '<tr class="ncb-pnrow staged-add"><td><span class="ncb-pill ' + catOf(s.pn) + '">' + catOf(s.pn) + '</span></td><td class="l"><span class="ncb-mono">' + esc(s.pn) + '</span> <span class="ncb-dim" style="font-size:10px" title="Added by hand; waiting for the review">· to add</span></td><td class="l pt">' + pullCell(ps || { mats: [] }) + '</td>' + qtyCells(ps) +
+          '<td>' + snapCell(sx, s.pn, snaps.length > 0) + '</td><td class="n">' + ((lensPn[joinKey(s.pn)] || []).length || '<span class="ncb-dim">—</span>') + '</td><td><button class="ncb-lnk on" data-unstage="' + esc(s.id) + '">undo</button></td></tr>';
+      });
+      b.sug.forEach(function (pr) {
+        var ps = pnStock(pr.pn);
+        h += '<tr class="ncb-pnrow sugg"><td><span class="ncb-pill ' + esc(pr.type) + '">' + esc(pr.type) + '</span></td><td class="l"><span class="ncb-mono">' + esc(pr.pn) + '</span> <span class="ncb-dim" style="font-size:10px" title="In the snapshot, not in the definition yet">· suggested</span></td><td class="l pt">' + pullCell(ps || { mats: [] }) + '</td>' + qtyCells(ps) +
+          '<td><span class="ncb-mono" style="font-size:11px">' + esc(pr.prefix) + ' · ' + esc(pr.col) + '</span></td><td class="n">' + ((lensPn[joinKey(pr.pn)] || []).length || '<span class="ncb-dim">—</span>') + '</td><td><button class="ncb-lnk" data-act="review">review</button></td></tr>';
+      });
+    });
+    var newc = props.filter(function (pr) { return pr.kind === 'new'; });
+    if (newc.length && (S.pfilter === 'all' || S.pfilter === 'snap')) {
+      h += '<tr class="ncb-prow"><td colspan="9"><div class="ncb-pline"><span class="ncb-cname" style="color:#a7f3d0">In the snapshot, not in the definition</span><span class="ncb-meta">' + newc.length + ' component' + (newc.length === 1 ? '' : 's') + ' · suggestions until you review them</span><span class="ncb-spacer"></span><button class="ncb-btn" data-act="review">Review</button></div></td></tr>';
+      newc.forEach(function (pr) {
+        pr.pns.forEach(function (x, i) {
+          var ps = pnStock(x.pn);
+          h += '<tr class="ncb-pnrow sugg"><td><span class="ncb-pill ' + esc(x.type) + '">' + esc(x.type) + '</span></td><td class="l"><span class="ncb-mono">' + esc(x.pn) + '</span>' + (i === 0 ? ' <span class="ncb-dim" style="font-size:10px">· ' + esc(pr.name) + (pr.location ? ' (' + esc(pr.location) + ')' : '') + '</span>' : '') + '</td><td class="l pt">' + pullCell(ps || { mats: [] }) + '</td>' + qtyCells(ps) +
+            '<td><span class="ncb-mono" style="font-size:11px">' + esc(pr.prefix) + ' · ' + esc(x.col) + '</span></td><td class="n">' + ((lensPn[joinKey(x.pn)] || []).length || '<span class="ncb-dim">—</span>') + '</td><td></td></tr>';
+        });
+      });
+    }
+    h += '</tbody></table></div>';
+    var lg = ((benchDef() || {}).log || []).filter(function (e) { return e.model === m.key; });
+    h += '<div class="ncb-note" style="margin-top:10px">Stock is read from the INV_MSTR and never changed here. Changes to this list are made by hand (✎ Edit part numbers) or from a Component Snapshot, always through the review, and logged: ' +
+      '<button class="ncb-lnk" data-act="log">change log' + (lg.length ? ' (' + lg.length + ' for ' + esc(m.label) + ')' : '') + '</button>.</div>';
+    return h;
+  }
+
+  // ── the review page ──
+  function chip(pn, cls, extra) { return '<span class="ncb-pnchip' + (cls ? ' ' + cls : '') + '"><span class="ncb-pill ' + catOf(pn) + '">' + catOf(pn) + '</span> ' + esc(pn) + (extra || '') + '</span>'; }
+  function stockWords(pn) {
+    var ps = pnStock(pn); if (!ps) return '';
+    if (ps.amb) return ' <span class="ncb-warn" style="font-size:11px">ambiguous in the INV_MSTR</span>';
+    if (!ps.mats.length) return ' <span class="ncb-miss" style="font-size:11px">no stock record</span>';
+    return ' <span class="ncb-dim" style="font-size:11px">SAP ' + esc(ps.mats.map(function (x) { return x.material; }).join(', ')) + ' · shelf ' + ps.soh + '</span>';
+  }
+  function tickBox(id) { return '<input type="checkbox" data-tick="' + esc(id) + '"' + (S.tick[id] === false ? '' : ' checked') + '>'; }
+  function reviewHtml() {
+    var def = benchDef(), h = '<div class="ncb-eyebrow" style="margin-top:6px">Bench · the definition</div><h1 class="ncb-h">Review changes</h1>' +
+      '<div class="ncb-sub">Nothing changes until you press Apply. Only the definition changes (which part numbers belong to which component); stock (INV_MSTR) is never changed here. Every change, and every suggestion you decline, is logged in the definition. Then SAVE FILE.</div>';
+    if (S.defReview) {
+      var rv = S.defReview, d = defDiff(def, rv.bench), diff = d.filter(function (r) { return r.status !== 'same'; });
+      h += '<h3 class="ncb-h3">Bench definition file · <span class="ncb-mono">' + esc(rv.fileName) + '</span></h3>' +
+        '<div class="ncb-note">' + rv.bench.models.length + ' models' + (rv.bench.updatedAt ? ', updated ' + esc(String(rv.bench.updatedAt).slice(0, 10)) : '') + '. ' + (def ? diff.length + ' of ' + d.length + ' models differ from the definition in the plan (' + def.models.length + ' models).' : 'The plan has no definition yet.') + '</div>' +
+        '<div class="ncb-note">Key: ' + chip('1234567', 'add') + ' the file has it and the plan doesn\'t (it would be added) · ' + chip('1234567', 'rem') + ' the plan has it and the file doesn\'t (it would be removed) · <span style="color:#a7f3d0">+ component</span> / <span style="color:#fca5a5">− component</span> likewise.</div>';
+      h += '<table class="ncb-mats" style="max-width:none;margin-top:8px"><thead><tr><th class="l">Model</th><th>Components now → in the file</th><th class="l">What changes</th></tr></thead><tbody>' +
+        d.map(function (r) {
+          var what = r.status === 'added' ? '<span style="color:#a7f3d0">new model</span>' : r.status === 'removed' ? '<span style="color:#fca5a5">model not in the file (it would be removed)</span>' : r.status === 'same' ? '<span class="ncb-dim">no change</span>'
+            : [r.added.length ? '<span style="color:#a7f3d0">+ ' + esc(r.added.join(', ')) + '</span>' : '', r.removed.length ? '<span style="color:#fca5a5">− ' + esc(r.removed.join(', ')) + '</span>' : '',
+               r.changed.map(function (c) { return esc(c.name) + ': ' + c.plus.map(function (x) { return chip(x, 'add'); }).join('') + c.minus.map(function (x) { return chip(x, 'rem'); }).join(''); }).join('<br>')].filter(Boolean).join('<br>');
+          return '<tr><td class="l"><b>' + esc(r.label) + '</b></td><td class="n">' + r.a + ' → ' + r.b + '</td><td class="l">' + what + '</td></tr>';
+        }).join('') + '</tbody></table>';
+      h += '<div class="ncb-revfoot"><button class="ncb-btn solid" data-act="defreplace">' + (def ? 'Replace the definition with this file' : 'Use this definition') + '</button>' + (def ? '<button class="ncb-btn" data-act="defkeep">Keep the current one</button>' : '') +
+        '<button class="ncb-btn ghost" data-act="back">Back</button><span class="ncb-note" style="margin:0">' + (def ? 'Replacing keeps the change log. Either way the decision is logged.' : '') + '</span></div>';
+      return h;
+    }
+    var props = allProposals(), hand = S.staged, n = 0;
+    if (!props.length && !hand.length) return h + '<div class="ncb-empty" style="margin:30px 0">Nothing to review: no changes by hand, and the Component Snapshots in the client folder list nothing the definition doesn\'t have.<p><button class="ncb-btn" data-act="back">Back</button></p></div>';
+    if (hand.length) {
+      h += '<h3 class="ncb-h3">By hand · ' + hand.length + '</h3>';
+      var byP = {};
+      hand.forEach(function (s) { var k = s.model + '|' + s.pid; (byP[k] = byP[k] || []).push(s); });
+      Object.keys(byP).forEach(function (k) {
+        var list = byP[k], m = findModel(list[0].model), p = findPocket(m, list[0].pid); if (!p) return;
+        h += '<div class="ncb-rcard"><h4>' + esc(baseName(p)) + ' <span class="ncb-meta">' + esc(m.label) + ' · ' + p.tier + '</span></h4><div class="ncb-ba"><span class="ncb-dim">Now</span><div>' + (p.vpns || []).map(function (x) { return chip(x); }).join('') + '</div>' +
+          '<span class="ncb-dim">Change</span><div>' + list.map(function (s) { n++; return '<label class="ncb-tickl">' + tickBox(s.id) + chip(s.pn, s.kind === 'add' ? 'add' : 'rem', s.kind === 'add' ? stockWords(s.pn) : '') + '</label>'; }).join('') + '</div></div></div>';
+      });
+    }
+    if (props.length) {
+      h += '<h3 class="ncb-h3">From Component Snapshots · ' + props.length + '</h3><div class="ncb-note">Part numbers and components a snapshot in <code>2 In use\\Snapshots</code> lists and the definition doesn\'t. Untick what should not be added: it is declined, logged, and not suggested again.</div>';
+      var models = []; props.forEach(function (pr) { if (models.indexOf(pr.model) < 0) models.push(pr.model); });
+      models.forEach(function (mk) {
+        var m = findModel(mk), mp = props.filter(function (pr) { return pr.model === mk; });
+        var files = []; mp.forEach(function (pr) { pr.files.forEach(function (f) { if (files.indexOf(f) < 0) files.push(f); }); });
+        h += '<div class="ncb-rmodel"><b>' + esc(m.label) + '</b> <span class="ncb-dim">· from ' + esc(files.join(', ')) + '</span></div>';
+        var byP = {}, order = [];
+        mp.forEach(function (pr) { var k = pr.kind === 'new' ? pr.id : pr.pid; if (!byP[k]) { byP[k] = []; order.push(k); } byP[k].push(pr); });
+        order.forEach(function (k) {
+          var list = byP[k];
+          if (list[0].kind === 'new') {
+            var pr = list[0]; n++;
+            h += '<div class="ncb-rcard new"><h4><label class="ncb-tickl">' + tickBox(pr.id) + ' New component: ' + esc(pr.name) + '</label> <span class="ncb-meta">' + esc(m.label) + (pr.location ? ' · ' + esc(pr.location) : '') + ' · added as a minor component</span></h4>' +
+              '<div class="ncb-ba"><span class="ncb-dim">Now</span><div class="ncb-dim">not in the definition</div><span class="ncb-dim">After</span><div>' + pr.pns.map(function (x) { return chip(x.pn, 'add', ' <span class="ncb-dim" style="font-size:10px">' + esc(x.col) + '</span>' + stockWords(x.pn)); }).join('') + '</div></div>' +
+              (pr.note ? '<div class="ncb-note">Snapshot note: ' + esc(pr.note) + '</div>' : '') + '</div>';
+            return;
+          }
+          var p = findPocket(m, k);
+          h += '<div class="ncb-rcard"><h4>' + esc(baseName(p)) + ' <span class="ncb-meta">' + esc(m.label) + ' · ' + p.tier + ' · snapshot row "' + esc(list[0].comp) + '", matched by ' + esc(list[0].how) + '</span></h4>' +
+            '<div class="ncb-ba"><span class="ncb-dim">Now</span><div>' + (p.vpns || []).map(function (x) { return chip(x); }).join('') + '</div>' +
+            '<span class="ncb-dim">Add</span><div>' + list.map(function (pr) { n++; return '<label class="ncb-tickl">' + tickBox(pr.id) + chip(pr.pn, 'add', ' <span class="ncb-dim" style="font-size:10px">' + esc(pr.col) + '</span>' + stockWords(pr.pn)) + '</label>'; }).join('') + '</div></div></div>';
+        });
+      });
+    }
+    h += '<div class="ncb-revfoot"><button class="ncb-btn solid" data-act="apply">Apply the ticked changes</button><button class="ncb-btn ghost" data-act="back">Back (nothing changes)</button>' +
+      '<span class="ncb-note" style="margin:0">' + n + ' item' + (n === 1 ? '' : 's') + '. Unticked snapshot suggestions are declined (logged); unticked hand edits stay waiting.</span></div>';
+    return h;
+  }
+  function logHtml() {
+    var def = benchDef(), all = ((def && def.log) || []).slice().reverse();
+    var mine = S.model && S.model.indexOf('notin:') !== 0 ? all.filter(function (e) { return e.model === S.model || !e.model; }) : all;
+    var h = '<div class="ncb-eyebrow" style="margin-top:6px">Bench · the definition</div><h1 class="ncb-h">Change log</h1>' +
+      '<div class="ncb-sub">Every change to the definition (by hand, from a snapshot, from a definition file) and every declined suggestion, newest first. It travels in the plan with the definition.' + (mine.length !== all.length ? ' Showing ' + esc(S.model) + ' (' + mine.length + ' of ' + all.length + ').' : '') + '</div>';
+    if (!mine.length) return h + '<div class="ncb-empty" style="margin:30px 0">No changes logged yet.<p><button class="ncb-btn" data-act="back">Back</button></p></div>';
+    h += '<table class="ncb-mats ncb-log" style="max-width:none;margin-top:10px"><thead><tr><th class="l">When</th><th class="l">Model</th><th class="l">Component</th><th class="l">Change</th><th class="l">Part number(s)</th><th class="l">How</th><th class="l">From</th></tr></thead><tbody>' +
+      mine.map(function (e) {
+        var col = e.change === 'declined' ? 'var(--nc-text-d)' : /removed/.test(e.change) ? '#fca5a5' : '#a7f3d0';
+        return '<tr><td class="l ncb-mono" style="white-space:nowrap">' + esc(String(e.at || '').slice(0, 16).replace('T', ' ')) + '</td><td class="l">' + esc(e.model || '—') + '</td><td class="l">' + esc(e.component || '') + '</td><td class="l" style="color:' + col + '">' + esc(e.change) + (e.what ? ' <span class="ncb-dim">(' + esc(e.what) + ')</span>' : '') + '</td>' +
+          '<td class="l ncb-mono">' + esc(e.pn || '') + '</td><td class="l">' + esc(e.by || '') + '</td><td class="l" style="font-size:11.5px">' + esc(e.file || '') + '</td></tr>';
+      }).join('') + '</tbody></table><p><button class="ncb-btn" data-act="back">Back</button></p>';
+    return h;
+  }
+
   function rerender() { if (S.el && S.host) render(S.el, S.host); }
   function render(el, host) {
     injectStyle();
     S.el = el; S.host = host;
-    if (S.rawRef !== host.raw) { S.rawRef = host.raw; S.model = ''; S.open = {}; }     // a different fleet file was loaded
+    // a different fleet file was loaded (v1.2.0: hand edits and reviews belonged to the old one)
+    if (S.rawRef !== host.raw) { S.rawRef = host.raw; S.model = ''; S.open = {}; S.staged = []; S.page = ''; S.defReview = null; S.tick = {}; S.edit = false; S.unsaved = null; S.raw = {}; }
     var cc = host.clientCode || 'DEFAULT';                                               // v1.1.0 — stock never carries over to another client
     // v1.1.1 — a new client also resets the view (model, open rows, filter), not just the stock
-    if (S.cc && S.cc !== cc) { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; S.model = ''; S.open = {}; S.filter = 'all'; }
+    if (S.cc && S.cc !== cc) { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; S.model = ''; S.open = {}; S.filter = 'all'; S.snaps = []; }
     S.cc = cc;
+    // v1.2.0 — "not saved yet" clears once the plan has been saved after the change
+    if (S.unsaved && host.planSaved) { var ps = Date.parse(host.planSaved); if (ps && ps >= S.unsaved.at - 1000) S.unsaved = null; }
     var def = benchDef();
     var main;
     var views = {};
     if (def) def.models.forEach(function (m) { views[m.key] = modelView(m); });
-    if (!def) main = topBar() + banners() + emptyHtml();
+    if (!def && S.defReview) S.page = 'review';
+    if (S.page === 'review') main = topBar() + banners() + reviewHtml();
+    else if (S.page === 'log' && def) main = topBar() + banners() + logHtml();
+    else if (!def) main = topBar() + banners() + emptyHtml();
     else if (!S.model) main = topBar() + banners() + summaryHtml(def, views);
     else if (S.model.indexOf('notin:') === 0) main = topBar() + banners() + notInReviewHtml(S.model);
+    else if (S.view === 'parts' && views[S.model]) main = topBar() + banners() + viewSwitch() + partsHtml(views[S.model]);
     else {
       var v = views[S.model];
       if (!v) { S.model = ''; return render(el, host); }
-      main = topBar() + banners() + boardHtml(v) + tiles(v) +
+      main = topBar() + banners() + viewSwitch() + boardHtml(v) + tiles(v) +
         '<div class="ncb-rule"><b>Cover after inbound</b> = on the shelf + on the way (on order + in transit) − reserved. The status is judged on it; every row still shows all four, so a spare that exists only on a truck is never mistaken for one on the shelf. Click a card or a row for the SAP detail.</div>' +
         '<div class="ncb-filters">' + [['all', 'All ' + v.pockets.length], ['major', 'Majors'], ['minor', 'Minors'], ['attn', 'Needs attention']].map(function (f) { return '<button class="ncb-fb' + (S.filter === f[0] ? ' on' : '') + '" data-filter="' + f[0] + '">' + f[1] + '</button>'; }).join('') + '</div>' +
         tableHtml(v) + gapPanel(v);
@@ -915,14 +1386,34 @@
     var keepMain = pm ? pm.scrollTop : 0, keepList = pl ? pl.scrollTop : 0;
     el.innerHTML = '<div class="ncb">' + (def ? '<aside class="ncb-list"><div class="ncb-mi' + (!S.model ? ' on' : '') + '" data-model=""><b>Fleet summary</b><span>' + def.models.length + ' models in the spares review</span></div>' + listHtml(def, views) + '</aside>' : '') + '<div class="ncb-main"><div class="ncb-col">' + main + '</div></div></div>';
     wire(el, views);
-    if (S.model && views[S.model]) layoutBoard(views[S.model]);   // sets the board height synchronously, so the scroll below lands right
+    if (S.model && views[S.model] && !S.page && S.view !== 'parts') layoutBoard(views[S.model]);   // sets the board height synchronously, so the scroll below lands right
     var nm = el.querySelector('.ncb-main'), nl = el.querySelector('.ncb-list');
     if (nm) nm.scrollTop = keepMain;
     if (nl) nl.scrollTop = keepList;
   }
   function wire(el, views) {
-    el.querySelectorAll('[data-model]').forEach(function (n) { n.onclick = function () { S.model = n.getAttribute('data-model'); S.filter = 'all'; S.open = {}; rerender(); var mn = el.querySelector('.ncb-main'); if (mn) mn.scrollTop = 0; }; });
+    el.querySelectorAll('[data-model]').forEach(function (n) { n.onclick = function () { S.model = n.getAttribute('data-model'); S.filter = 'all'; S.open = {}; S.raw = {}; if (S.page === 'log' || (S.page === 'review' && !S.defReview)) S.page = ''; rerender(); var mn = el.querySelector('.ncb-main'); if (mn) mn.scrollTop = 0; }; });
     el.querySelectorAll('[data-filter]').forEach(function (n) { n.onclick = function () { S.filter = n.getAttribute('data-filter'); rerender(); }; });
+    // v1.2.0 — the Part numbers view, editing by hand, the review
+    el.querySelectorAll('[data-view]').forEach(function (n) { n.onclick = function () { S.view = n.getAttribute('data-view'); rerender(); }; });
+    el.querySelectorAll('[data-pfilter]').forEach(function (n) { n.onclick = function () { S.pfilter = n.getAttribute('data-pfilter'); rerender(); }; });
+    el.querySelectorAll('[data-raw]').forEach(function (n) { n.onclick = function () { var k = n.getAttribute('data-raw'); S.raw[k] = !S.raw[k]; rerender(); }; });
+    el.querySelectorAll('[data-rm]').forEach(function (n) { n.onclick = function () { var k = n.getAttribute('data-rm'), cut = k.indexOf('|'); stageToggle('remove', S.model, k.slice(0, cut), k.slice(cut + 1)); rerender(); }; });
+    el.querySelectorAll('[data-unstage]').forEach(function (n) { n.onclick = function () { var id = n.getAttribute('data-unstage'); S.staged = S.staged.filter(function (s) { return s.id !== id; }); rerender(); }; });
+    el.querySelectorAll('[data-tick]').forEach(function (n) { n.onchange = function () { S.tick[n.getAttribute('data-tick')] = n.checked; }; });
+    el.querySelectorAll('[data-add]').forEach(function (n) {
+      var pid = n.getAttribute('data-add'), inp = el.querySelector('[data-addin="' + CSS.escape(pid) + '"]');
+      var go = function () {
+        var pn = String(inp && inp.value || '').trim(), m = findModel(S.model), p = findPocket(m, pid);
+        if (!pn || !p) { toast('Type a part number first.', 'warn'); return; }
+        if (pocketKeys(p).has(joinKey(pn))) { toast(pn + ' is already on ' + baseName(p) + '.', 'warn'); return; }
+        if (S.staged.some(function (s) { return s.kind === 'add' && s.pid === pid && joinKey(s.pn) === joinKey(pn); })) { toast(pn + ' is already waiting to be added.', 'warn'); return; }
+        stageToggle('add', S.model, pid, pn); rerender();
+        var again = el.querySelector('[data-addin="' + CSS.escape(pid) + '"]'); if (again) again.focus();
+      };
+      n.onclick = go;
+      if (inp) inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+    });
     el.querySelectorAll('tr.ncb-row[data-id]').forEach(function (n) { n.onclick = function () { var id = n.getAttribute('data-id'); S.open[id] = !S.open[id]; rerender(); }; });
     var inv = el.querySelector('#ncb-file-inv'), defIn = el.querySelector('#ncb-file-def');
     el.querySelectorAll('[data-act]').forEach(function (n) {
@@ -943,6 +1434,15 @@
         }
         else if (a === 'nodate') { S.stock.dataAsOf = null; S.stock.method = 'unknown'; S.askDate = false; rerender(); }
         else if (a === 'askdate') { S.askDate = true; rerender(); }
+        else if (a === 'review') { S.page = 'review'; rerender(); var mr = el.querySelector('.ncb-main'); if (mr) mr.scrollTop = 0; }   // v1.2.0
+        else if (a === 'log') { S.page = 'log'; rerender(); var ml = el.querySelector('.ncb-main'); if (ml) ml.scrollTop = 0; }
+        else if (a === 'back') { S.page = ''; rerender(); }
+        else if (a === 'apply') applyReview();
+        else if (a === 'defreplace') applyDefinition(true);
+        else if (a === 'defkeep') applyDefinition(false);
+        else if (a === 'editon') { S.edit = true; S.view = 'parts'; rerender(); }
+        else if (a === 'editoff') { S.edit = false; rerender(); }
+        else if (a === 'parts') { S.view = 'parts'; S.page = ''; rerender(); }
       };
     });
     if (inv) inv.onchange = function () { var f = inv.files[0]; inv.value = ''; if (f) ingestFile(f); };
@@ -950,18 +1450,29 @@
     if (!S._resize) { S._resize = true; root.addEventListener('resize', function () { if (S.el && S.el.offsetParent && S.model && S.model.indexOf('notin:') !== 0) rerender(); }); }
   }
   function importDef(file) {
-    file.text().then(function (txt) {
-      var j = JSON.parse(txt), b = j && j.bench ? j.bench : j;
-      if (!b || typeof b.schema !== 'string' || b.schema.indexOf(BENCH_SCHEMA) !== 0 || !Array.isArray(b.models)) throw new Error('not a Bench definition (expected schema "' + BENCH_SCHEMA + '…" with a models list)');
-      var raw = S.host.raw; if (!raw) throw new Error('load a fleet file first');
-      var had = !!raw.bench;
-      raw.bench = b;                                      // top-level, Lens-owned; same place on V4 Flat and V5 files
-      S.model = ''; S.open = {};
-      if (S.host.markUnsaved) S.host.markUnsaved();
-      toast('Bench definition ' + (had ? 'replaced' : 'imported') + ' — ' + b.models.length + ' models. SAVE FILE to keep it in the fleet JSON.', 'success');
-      rerender();
-    }).catch(function (e) { toast('Bench definition not imported — ' + e.message, 'error'); });
+    file.text().then(function (txt) { reviewDefinition(JSON.parse(txt), file.name); }).catch(function (e) { toast('Bench definition not imported — ' + e.message, 'error'); });
   }
+  // v1.2.0 — a definition (from ⋯ or from the client folder): the first one goes straight in (nothing to compare);
+  // a replacement is shown as a before / after first and applied only when the operator says so.
+  function reviewDefinition(j, fileName) {
+    try {
+      var b = j && j.bench ? j.bench : j;
+      if (!b || typeof b.schema !== 'string' || b.schema.indexOf(BENCH_SCHEMA) !== 0 || !Array.isArray(b.models)) throw new Error('not a Bench definition (expected schema "' + BENCH_SCHEMA + '…" with a models list)');
+      var raw = S.host && S.host.raw; if (!raw) throw new Error('load a fleet file first');
+      if (raw.bench && Array.isArray(raw.bench.models)) {
+        S.defReview = { bench: b, fileName: fileName || 'definition file' }; S.page = 'review';
+        toast('Bench definition read: review the before / after, then replace or keep the current one.', 'info');
+        rerender(); return;
+      }
+      raw.bench = b;                                      // top-level, Lens-owned; same place on V4 Flat and V5 files
+      logEntry(b, { by: 'definition file', file: fileName || '', model: '', component: '', change: 'imported the definition', pn: '', what: b.models.length + ' models' });
+      S.model = ''; S.open = {}; S.page = '';
+      markChanged('the imported Bench definition (' + (fileName || 'file') + ')');
+      toast('Bench definition imported — ' + b.models.length + ' models. SAVE FILE to keep it in the fleet JSON.', 'success');
+      rerender();
+    } catch (e) { toast('Bench definition not used — ' + e.message, 'error'); }
+  }
+  function setSnapshots(list) { S.snaps = Array.isArray(list) ? list.filter(function (s) { return s && Array.isArray(s.comps); }) : []; rerender(); }
   function exportDef() {
     var b = benchDef(); if (!b) return;
     var blob = new Blob([JSON.stringify({ bench: b }, null, 1)], { type: 'application/json' });
@@ -987,9 +1498,13 @@
 
   root.NumaCoreBench = {
     version: VERSION, render: render, setStock: setStock, clearStock: clearStock,
+    setSnapshots: setSnapshots, reviewDefinition: reviewDefinition, previewSnapshot: previewSnapshot,   // v1.2.0
     // exposed for tests / the folder reader to come
     _internal: { buildIndex: buildIndex, headerAt: headerAt, lookup: lookup, resolveU: resolveU, pocketStock: pocketStock, netStatus: netStatus, catOf: catOf, joinKey: joinKey, dateFromFileName: dateFromFileName, state: S,
                  ambiguousCode: ambiguousCode, families: families, labels: labels, baseName: baseName, qtyWords: qtyWords, signed: signed,   // v1.1.1 — for the reconcile test
+                 snapProposals: snapProposals, matchPocket: matchPocket, applyItems: applyItems, defDiff: defDiff, pnStock: pnStock, modelView: modelView, stageToggle: stageToggle,   // v1.2.0
+                 applyDefinition: applyDefinition, applyReview: applyReview, partsHtml: partsHtml, reviewHtml: reviewHtml, logHtml: logHtml,
+                 setHost: function (h) { S.host = h; },
                  setIndex: function (idx, stock) { S.idx = idx; S.stock = stock; S.askDate = !stock.dataAsOf; rerender(); } }
   };
 })(typeof window !== 'undefined' ? window : this);

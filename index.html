@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.12 — Mission Control</title>
+<title>NumaCore Lens v4.13 — Mission Control</title>
 <script src="numacore_lib.js"></script>
-<script src="numacore_bench.js"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
-<script src="numacore_workspace.js"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
+<script src="numacore_bench.js?v=1.2.0"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_workspace.js?v=0.3.0"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1873,7 +1873,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.12';
+const VERSION = '4.13';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4320,6 +4320,7 @@ function loadLensJSON(json) {
   if (_wsClient !== null && _wsClient !== _ccNow) {
     _embedWorkspace = {};
     try { if (window.NumaCoreBench && NumaCoreBench.clearStock) NumaCoreBench.clearStock(); } catch(_) {}
+    try { if (window.NumaCoreBench && NumaCoreBench.setSnapshots) NumaCoreBench.setSnapshots([]); } catch(_) {}   // v4.13 — another client's snapshots never carry over
     const _df = document.getElementById('embedFrame-deploy');
     if (_df && _df.src && _df.src !== window.location.href) { embedReady.deploy = false; _df.src = ''; if (currentTab === 'deploy') switchToEmbedded('deploy'); }
   }
@@ -4328,7 +4329,8 @@ function loadLensJSON(json) {
     try {
       NumaCoreWorkspace.mountStrip(document.getElementById('lens-ws-strip'));
       NumaCoreWorkspace.attach({ clientCode: _ccNow, clientName: cn, planUnits: Array.from(unitSet), lensVersion: 'v' + VERSION,
-        toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData, onPlan: _wsOnPlan, onState: _wsOnState });   // v4.12 + onPlan / onState
+        toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData, onPlan: _wsOnPlan, onState: _wsOnState,   // v4.12 + onPlan / onState
+        benchDef: _wsBenchDef, benchPreview: _wsBenchPreview, onSnapshots: _wsOnSnapshots, onDefinition: _wsOnDefinition });   // v4.13 — snapshots + definition files
     } catch (e) { console.warn('workspace attach:', e); }
   }
 }
@@ -4352,6 +4354,19 @@ function _wsOnData(p) {
 function _wsOnPlan(p) {
   if (!p || !p.json) return;
   if (confirm('The plan ' + p.fileName + ' was filed in the client folder (lens\\plan).\n\nOpen it now? Anything not saved in this session is lost.')) loadLensJSON(p.json);
+}
+// v4.13 — Component Snapshots and Bench definition files from the client folder (numacore_workspace v0.3.0). The folder
+// reader matches a snapshot to a Bench model at the check (benchDef) and shows what it would suggest (benchPreview);
+// after Publish, every snapshot in 2 In use goes to Bench (onSnapshots), which compares it with the definition and
+// lists the differences for review. A definition file opens Bench's before / after (onDefinition). Nothing in the plan
+// changes until the operator applies it in Bench; then SAVE FILE.
+function _wsBenchDef() { return (lensRawData && lensRawData.bench && Array.isArray(lensRawData.bench.models)) ? lensRawData.bench : null; }
+function _wsBenchPreview(sn) { try { return (window.NumaCoreBench && NumaCoreBench.previewSnapshot) ? NumaCoreBench.previewSnapshot(sn, _wsBenchDef()) : null; } catch (e) { return null; } }
+function _wsOnSnapshots(list) { try { if (window.NumaCoreBench && NumaCoreBench.setSnapshots) NumaCoreBench.setSnapshots(list); } catch (e) { console.warn('workspace → Bench snapshots:', e); } }
+function _wsOnDefinition(p) {
+  if (!p || !p.json || !window.NumaCoreBench || !NumaCoreBench.reviewDefinition) return;
+  switchTab('bench');   // Bench draws first, so it holds the plan the definition is compared with
+  NumaCoreBench.reviewDefinition(p.json, p.fileName);
 }
 // v4.12 — SAVE FILE goes to the client folder when it is connected with edit; the COPY button then downloads a copy
 function _wsOnState(st) {
@@ -4495,6 +4510,7 @@ function _exportFleetJSONNow(opts) {
     }));
   } catch (e) { console.warn('[lens v4.3.6] post-save localStorage sync failed:', e); }
   _updateUnsavedDot();
+  if (currentTab === 'bench') _renderBench();   // v4.13 — Bench's "not saved yet" banner clears once the plan is saved
   return { out: out, fname: fname, text: text };   // v4.11 — the saved file, for the Meeting record
 }
 

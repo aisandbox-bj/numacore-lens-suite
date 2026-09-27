@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.2.1 · 2026-09-27
+   v0.3.0 · 2026-09-27
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -42,15 +42,21 @@
        – A fleet JSON dropped in 1 New files is recognised as a plan: its check card
          files it in lens\plan\ on Publish and offers to open it. A Bench definition
          JSON is recognised and left in place until Bench's before / after review.
-     • v0.2.1 (hotfix, operator on a real OneDrive folder, 2026-09-27: "it moved the file but the
-       warning on screen says it did not move"; then the moved plan and the Bench JSON both showed
-       "could not read"):
-       – Removing the original after a checked copy is retried for ~9 s (OneDrive can hold a file it
-         is still uploading). If it still won't go, the move counts as done, the refresher is told
-         exactly that, the log says so, and the next check tries again.
-       – A file OneDrive still lists after it has gone is skipped, not shown as "could not read".
-       – A new file is read up to three times before its card says it could not be read, and the
-         card then says why and what to do. A plan already filed in lens\plan is not filed twice.
+     • v0.3.0 (operator, 2026-09-27: "I do not want to adjust INVENTORY… I want to see
+       the component details (snapshot stuff) and what pulls through… maybe even
+       update, either manually or via the upload"):
+       – Cat Component Snapshots are READ. v0.2.0 named them but never got that far:
+         the header-row finder only knew IW39 / INV_MSTR column names, so a snapshot
+         was "not recognised". The finder now knows the snapshot's and MB51's too.
+       – A snapshot is matched to its Bench model by its Model + S/N PreFix COLUMNS
+         (the prefix listed in the model's snapshot file names, else the model name),
+         never by its file name. Publish files it in 2 In use\Snapshots\ (the one it
+         replaces → 3 Archive\Snapshots\), writes a dated copy to lens\data and a log
+         line. Nothing in the plan changes: Bench shows the differences for review.
+         A snapshot for a model not in the Bench definition goes to Not used.
+       – Snapshots are reference lists, not SAP state: no data date, no age limits.
+       – A Bench definition JSON is filed in 3 Archive\Definitions\ on Publish and
+         handed to Bench's before / after review (host.onDefinition).
 
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
@@ -71,12 +77,17 @@
              recent() → Promise<[{id, cc, clientName, folderName, mode, lastOpened}]>
              savePlan(text, fileName) → Promise<{ok, where, file}> · canSavePlan() · setMode(mode)
              host.onPlan({fileName, json}) — a plan published from 1 New files
+     v0.3.0: host.benchDef() → the plan's Bench definition (matches snapshots at the check)
+             host.benchPreview(snapshot) → {adds, newComps} for the check card (optional)
+             host.onSnapshots([snapshot]) — every snapshot in 2 In use, on each plan open and Publish
+             host.onDefinition({fileName, json}) — a Bench definition published from 1 New files
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.2.1';
+  var VERSION = '0.3.0';
   var AGE = { amber: 7, red: 14, refuse: 30 };
-  var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans' };   // v0.2.0 + plan / Plans
+  var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans',   // v0.2.0 + plan / Plans
+              SNAPS: 'Snapshots', DEFS: 'Definitions' };   // v0.3.0
   var LOG_NAME = 'Refresh log.csv';
   var REGISTER = 'register.js';
 
@@ -166,10 +177,15 @@
   var SOURCES = ['IW39', 'INV_MSTR'];
   // Files we recognise but don't read yet (left where they are, with a note)
   var LATER = [
-    { name: 'MB51 (goods movements)', test: function (N) { return has(N, ['material', 'materialnumber']) && has(N, ['movementtype', 'mvt', 'mvttype']) && has(N, ['postingdate', 'pstngdate']); } },
-    { name: 'Component Snapshot', test: function (N) { return has(N, ['component']) && has(N, ['new04', 'exc04', 'reman04', 'new01']); } }
+    { name: 'MB51 (goods movements)', test: function (N) { return has(N, ['material', 'materialnumber']) && has(N, ['movementtype', 'mvt', 'mvttype']) && has(N, ['postingdate', 'pstngdate']); } }
   ];
   function has(N, list) { for (var i = 0; i < list.length; i++) if (N.indexOf(list[i]) >= 0) return true; return false; }
+  // v0.3.0 — Cat Component Snapshot: Fleet · Model · S/N PreFix · Component · Identifier · New 01–04 · EXC 01–04 · REMAN 01–04 (· Note)
+  var SNAP_PN = /^(new|exc|reman)0?(\d{1,2})$/;
+  function isSnapshot(N) { return has(N, ['component']) && has(N, ['model']) && N.some(function (h) { return SNAP_PN.test(h); }); }
+  // the header-row finder also knows these words (v0.2.0 knew only IW39 / INV_MSTR names, so a snapshot never got that far)
+  var OTHER_HEAD = ['fleet', 'model', 'snprefix', 'serialprefix', 'component', 'identifier', 'note', 'movementtype', 'postingdate',
+    'new01', 'new02', 'new03', 'new04', 'exc01', 'exc02', 'exc03', 'exc04', 'reman01', 'reman02', 'reman03', 'reman04'];
   // header name normalise: lower-case, strip spaces and . , _ - ( ) / # : % '  → EXACT match only
   function norm(h) { return String(h == null ? '' : h).toLowerCase().replace(/[\s.,_\-()\/#:%']/g, ''); }
 
@@ -194,6 +210,7 @@
       if (!rejected && spec.signature(map)) { var score = Object.keys(map).length; if (!best || score > best.score) best = { src: src, map: map, score: score }; }
     });
     if (best) return best;
+    if (isSnapshot(N)) return { snapshot: true };   // v0.3.0
     for (var i = 0; i < LATER.length; i++) if (LATER[i].test(N)) return { later: LATER[i].name };
     return null;
   }
@@ -201,6 +218,7 @@
   function findHeaderRow(rows) {
     var allAliases = {};
     SOURCES.forEach(function (s) { REG[s].fields.forEach(function (f) { f[1].forEach(function (a) { allAliases[norm(a)] = 1; }); }); });
+    OTHER_HEAD.forEach(function (w) { allAliases[w] = 1; });   // v0.3.0
     var best = -1, bestScore = 0;
     for (var r = 0; r < Math.min(20, rows.length); r++) {
       var row = rows[r] || [], hits = 0, filled = 0;
@@ -284,6 +302,54 @@
       if (rec) return { sheet: name, headerRow: hr, headers: headers, rows: rows.slice(hr + 1), rec: rec, sapStamp: sapStamp, resaved: resaved, modifiedProp: props.ModifiedDate || null };
     }
     return { rec: null, sapStamp: sapStamp, resaved: resaved };
+  }
+  // v0.3.0 — a Cat Component Snapshot → {model, prefix, fleet, comps:[{component, identifier, note, pns:[{pn, type, col}]}]}.
+  // Each part number keeps the column it came from (New / EXC / REMAN + generation). "N/A" and blank cells are
+  // skipped and counted; a row with no component name is dropped and counted (never silently).
+  var SNAP_NONE = { 'N/A': 1, 'NA': 1, 'NONE': 1, 'NOT AVL.': 1, 'NOT AVL': 1, 'ITEM OUTPHASED': 1, '-': 1, '—': 1 };
+  function parseSnapshot(wbr, fileName) {
+    var H = wbr.headers, N = H.map(norm);
+    var at = function (names) { for (var i = 0; i < N.length; i++) if (names.indexOf(N[i]) >= 0) return i; return -1; };
+    var iF = at(['fleet']), iM = at(['model']), iP = at(['snprefix', 'serialprefix', 'prefix']), iC = at(['component']), iI = at(['identifier']), iN = at(['note', 'notes']);
+    var pnCols = [];
+    N.forEach(function (h, i) { var m = SNAP_PN.exec(h); if (m) pnCols.push({ i: i, type: m[1].toUpperCase(), col: H[i] }); });
+    var comps = [], rowsIn = 0, drops = { no_component: 0 }, na = 0, count = {}, models = {}, prefixes = {}, fleets = {};
+    var cell = function (r, i) { if (i < 0) return ''; var v = r[i]; if (v == null) return ''; if (typeof v === 'number' && isFinite(v)) v = String(v); return String(v).trim().replace(/\.0+$/, ''); };
+    wbr.rows.forEach(function (r) {
+      if (!r || !r.some(function (v) { return v !== '' && v != null; })) return;
+      rowsIn++;
+      var comp = cell(r, iC); if (!comp) { drops.no_component++; return; }
+      var mo = cell(r, iM), pr = cell(r, iP).toUpperCase(), fl = cell(r, iF);
+      if (mo) models[mo] = (models[mo] || 0) + 1; if (pr) prefixes[pr] = (prefixes[pr] || 0) + 1; if (fl) fleets[fl] = (fleets[fl] || 0) + 1;
+      var pns = [];
+      pnCols.forEach(function (c) { var v = cell(r, c.i); if (!v) return; if (SNAP_NONE[v.toUpperCase()]) { na++; return; } pns.push({ pn: v, type: c.type, col: c.col }); });
+      comps.push({ component: comp, identifier: cell(r, iI), note: cell(r, iN), pns: pns });
+    });
+    var top = function (o) { return Object.keys(o).sort(function (a, b) { return o[b] - o[a]; }); };
+    var ms = top(models), ps = top(prefixes), fs = top(fleets);
+    var total = comps.reduce(function (s, c) { return s + c.pns.length; }, 0);
+    return {
+      meta: { contract: 1, kind: 'workspace.snapshot', schemaVersion: '1.0.0', tool: 'numacore_workspace', toolVersion: VERSION, generatedAt: localStamp(new Date()), tz: tz(), clientCode: S.cc,
+        sources: [{ file: fileName, sheet: wbr.sheet, headerRow: wbr.headerRow + 1, rowsIn: rowsIn, rowsOut: comps.length, drops: drops, naCells: na, resaved: !!wbr.resaved }] },
+      model: ms[0] || '', prefix: ps[0] || '', fleet: fs[0] || '', mixed: ms.length > 1 || ps.length > 1 ? { models: ms, prefixes: ps } : null,
+      columns: pnCols.map(function (c) { return c.col; }), comps: comps, pns: total
+    };
+  }
+  function modelNorm(s) { return String(s || '').toUpperCase().replace(/^CAT\s+/, '').replace(/[^A-Z0-9]/g, ''); }
+  // v0.3.0 — which Bench model a snapshot belongs to: the S/N prefix listed in a model's snapshot file names first
+  // ("775-FY2 Component Snapshot.xlsx" lists FY2 — its file is called 775G-FY2), then the model name.
+  function matchModel(def, snap) {
+    if (!def || !Array.isArray(def.models) || !snap.model) return null;
+    var pre = String(snap.prefix || '').toUpperCase(), mo = modelNorm(snap.model);
+    var byPre = pre ? def.models.filter(function (m) {
+      return (m.snapshots || []).some(function (f) { var s = String(f).toUpperCase(); var k = s.indexOf('-' + pre); return k > 0 && !/[A-Z]/.test(s.charAt(k + 1 + pre.length) || ' '); });
+    }) : [];
+    var sameModel = function (m) { var a = modelNorm(m.lens && m.lens.model), b = modelNorm(m.label), c = modelNorm(m.key); return a === mo || b === mo || c === mo || (a && (a.indexOf(mo) === 0 || mo.indexOf(a) === 0)); };
+    var hit = byPre.filter(sameModel)[0] || byPre[0];
+    if (hit) return { key: hit.key, label: hit.label, how: 'S/N prefix ' + pre + ' is in its snapshot list' };
+    var byName = def.models.filter(function (m) { return m.group !== 'REF' && sameModel(m); });
+    if (byName.length === 1) return { key: byName[0].key, label: byName[0].label, how: 'model name ' + snap.model + ' (S/N prefix ' + (pre || '—') + ' is new for it)', newPrefix: true };
+    return null;
   }
   function buildDigest(wbr, src, ctx) {
     var spec = REG[src], map = wbr.rec.map, cols = [], types = [], idx = [];
@@ -383,7 +449,7 @@
   var S = { host: null, cc: '', handle: null, perm: 'none', folderName: '', register: null, loaded: {}, newFiles: [], stripEl: null, busy: false, cards: null, lastError: '',
             mode: 'edit',     // v0.2.0 — 'edit' (the refresher) | 'view' (everyone else). v0.1.0 connections were all edit.
             pending: null,    // v0.2.0 — a folder opened on the landing page, adopted by the next attach()
-            leftovers: [] };  // v0.2.1 — originals whose checked copy is filed but which could not be removed yet
+            leftovers: [] };  // v0.3.0 — originals whose checked copy is filed but which could not be removed yet
   function toast(msg, sev) { try { if (S.host && S.host.toast) S.host.toast(msg, sev); } catch (e) {} }
   function setState(p) { for (var k in p) S[k] = p[k]; renderStrip(); try { if (S.host && S.host.onState) S.host.onState(publicState()); } catch (e) {} }
   function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded, mode: S.mode, canSavePlan: canSavePlan() }; }
@@ -450,6 +516,23 @@
     return tryN(1);
   }
   // move = copy, verify the size, then remove the original. Never overwrites: a taken name gets " (2)".
+  // v0.3.0 (operator, 2026-09-27, a real OneDrive folder: "it moved the file but the warning on screen says it did not
+  // move") — on a synced folder the original can be briefly locked right after it is dropped (OneDrive still uploading
+  // it), so removing it failed and the whole step was reported as failed although the checked copy was in place.
+  // The removal is now retried for ~9 s; if the original still won't go, the move counts as done (the copy is checked),
+  // the original is listed as a leftover, the refresher is told exactly that, and the next check tries again.
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function removeWithRetry(d, name) {
+    var waits = [0, 500, 1200, 2500, 5000];
+    function attempt(i) {
+      return sleep(waits[i]).then(function () { return d.removeEntry(name); }).catch(function (e) {
+        if (e && e.name === 'NotFoundError') return;   // already gone
+        if (i + 1 < waits.length) return attempt(i + 1);
+        throw e;
+      });
+    }
+    return attempt(0);
+  }
   function moveFile(fromDir, name, toDir, newName) {
     var srcFile;
     return fromDir.getFileHandle(name).then(function (fh) { return fh.getFile(); }).then(function (f) {
@@ -464,28 +547,14 @@
       });
     });
   }
-  // v0.2.1 — on a synced folder the original can be briefly locked right after it is dropped (OneDrive still uploading
-  // it): removing it failed and the whole step was reported as failed although the checked copy was in place.
-  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-  function removeWithRetry(d, name) {
-    var waits = [0, 500, 1200, 2500, 5000];
-    function attempt(i) {
-      return sleep(waits[i]).then(function () { return d.removeEntry(name); }).catch(function (e) {
-        if (e && e.name === 'NotFoundError') return;
-        if (i + 1 < waits.length) return attempt(i + 1);
-        throw e;
-      });
-    }
-    return attempt(0);
-  }
-  // the plans already in lens\plan (name -> size), so a leftover original in 1 New files is not filed twice
+  // v0.3.0 — the plans already in lens\plan (name → size), so a leftover original in 1 New files is not filed twice
   function filedPlans() {
     S.filed = {};
     return path([DIR.LENS, DIR.PLAN], false).then(listJson).then(function (fs) {
       return Promise.all(fs.map(function (e) { return e.getFile().then(function (f) { S.filed[f.name] = f.size; }, function () {}); }));
     }).catch(function () {});
   }
-  // tell the refresher about originals that could not be removed (once), and try them again later
+  // v0.3.0 — tell the refresher about originals that could not be removed (once), and try them again later
   function leftoverWords(list) { return list.map(function (l) { return l.name + ' (in ' + l.where + ')'; }).join(', '); }
   function reportLeftovers() {
     var fresh = S.leftovers.filter(function (l) { return !l.told; }); if (!fresh.length) return '';
@@ -499,9 +568,9 @@
     return S.leftovers.reduce(function (p, l) {
       return p.then(function () {
         return l.dir.getFileHandle(l.name).then(function (fh) { return fh.getFile(); }).then(function (f) {
-          if (f.size !== l.bytes) return;
+          if (f.size !== l.bytes) return;   // a different file has taken the name: leave it alone
           return l.dir.removeEntry(l.name).catch(function () { keep.push(l); });
-        }, function () {});
+        }, function () { /* already gone */ });
       });
     }, Promise.resolve()).then(function () { S.leftovers = keep; });
   }
@@ -614,11 +683,31 @@
             try { if (S.host && S.host.onData) S.host.onData(payload); } catch (e) { console.warn('workspace onData:', e); }
           }).catch(function (e) { toast('Could not read the dated copy for ' + REG[src].short + ' (' + cur.dataFile + '): ' + e.message + '. Refresh from the folder, or check that OneDrive has downloaded lens\\data.', 'error'); });
         });
-      }, Promise.resolve());
+      }, Promise.resolve()).then(function () { return loadSnapshots(dataDir); });   // v0.3.0
     }).catch(function () {});
   }
-  // v0.2.1 — OneDrive can keep listing a file for a moment after it has gone. Each listed file is opened (metadata only)
-  // before it counts: one that is no longer there is skipped, and so is an original whose checked copy Lens has just filed.
+  // v0.3.0 — every snapshot in 2 In use goes to Bench in one call (Bench compares them with the definition)
+  function loadSnapshots(dataDir) {
+    var sn = (S.register && S.register.snapshots) || {}, keys = Object.keys(sn).filter(function (k) { return sn[k] && sn[k].current && sn[k].current.dataFile; }).sort();
+    var sig = keys.map(function (k) { return sn[k].current.dataFile; }).join('|');
+    if (S.loaded.SNAPSHOTS === sig) return Promise.resolve();
+    var out = [];
+    return keys.reduce(function (p, k) {
+      return p.then(function () {
+        var cur = sn[k].current;
+        return readText(dataDir, cur.dataFile).then(parseScript).then(function (d) {
+          d.inUse = { key: k, standardName: cur.standardName, originalName: cur.originalName, refreshedAt: cur.refreshedAt, benchModel: cur.benchModel }; out.push(d);
+        }).catch(function (e) { toast('Could not read the snapshot copy ' + cur.dataFile + ': ' + e.message + '. Check that OneDrive has downloaded lens\\data.', 'error'); });
+      });
+    }, Promise.resolve()).then(function () {
+      S.loaded.SNAPSHOTS = sig;
+      try { if (S.host && S.host.onSnapshots) S.host.onSnapshots(out); } catch (e) { console.warn('workspace onSnapshots:', e); }
+    });
+  }
+  // v0.3.0 (operator, 2026-09-27, a real OneDrive folder: after a plan was moved out, "it says it sees 2 new files and
+  // when I click Check… it shows the BENCH JSON (cannot read) AND the moved JSON as cannot read") — OneDrive can keep
+  // listing a file for a moment after it has gone. Each listed file is now opened (metadata only) before it counts: one
+  // that is no longer there is skipped, and so is an original whose checked copy Lens has just filed (a leftover).
   function scanNew() {
     return path([DIR.NEW], false).then(function (d) {
       var out = [], it = d.values();
@@ -635,7 +724,7 @@
       return step();
     }).catch(function () { return []; }).then(function (list) { setState({ newFiles: list }); return list; });
   }
-  // v0.2.1 — read a new file, retrying while OneDrive (or another program) holds it; a file that has gone is reported as gone
+  // v0.3.0 — read a new file, retrying while OneDrive (or another program) holds it; a file that has gone is reported as gone
   function readNewFile(d, name, asText) {
     var waits = [0, 800, 2000];
     function attempt(i) {
@@ -645,7 +734,7 @@
     }
     return attempt(0);
   }
-  function refreshAll() { return loadRegister().then(loadCopies).then(tidyLeftovers).then(scanNew).then(function () { renderStrip(); }); }   // v0.2.1 + tidyLeftovers
+  function refreshAll() { return loadRegister().then(loadCopies).then(tidyLeftovers).then(scanNew).then(function () { renderStrip(); }); }   // v0.3.0 + tidyLeftovers
 
   // ── check new files → cards ──────────────────────────────────────────────
   function checkNew() {
@@ -653,7 +742,7 @@
     if (S.mode === 'view') { toast('View only: new files are checked and published by the person who refreshes this folder.', 'info'); return; }   // v0.2.0
     S.busy = true; openCards([], 'Reading the new files…');
     var XLSX, newDir, cards = [];
-    // v0.2.1 — first retry any original left behind by an earlier move, and note the plans already filed in lens\plan
+    // v0.3.0 — first retry any original left behind by an earlier move, and note the plans already filed in lens\plan
     return tidyLeftovers().then(scanNew).then(filedPlans).then(ensureXLSX).then(function (X) { XLSX = X; return path([DIR.NEW], false); }).then(function (d) {
       newDir = d;
       return S.newFiles.reduce(function (p, name) {
@@ -663,7 +752,7 @@
           return sleep(60).then(function () { return readNewFile(d, name, isJson); }).then(function (r) {
             if (isJson) cards.push(assessJson(name, r.f, r.body));   // v0.2.0
             else cards.push(assess(XLSX, name, r.f, r.body));
-          }).catch(function (e) {   // v0.2.1 — a file that has gone is not an error; anything else says what to do
+          }).catch(function (e) {   // v0.3.0 — a file that has gone is not an error; anything else says what to do
             if (e && e.name === 'NotFoundError') { cards.push({ name: name, status: 'ignore', reasons: ['It is no longer in 1 New files (moved or deleted while Lens was looking, or OneDrive is finishing a move). Nothing to do.'], warnings: [] }); return; }
             cards.push({ name: name, status: 'error', reasons: ['Could not read the file (' + ((e && e.name) || 'error') + ': ' + (e && e.message || e) + '). Tried three times. If OneDrive shows it syncing (blue arrows), wait for the green tick; if it is open in another program (Excel, Notepad), close it. Then press CHECK again.'], warnings: [] });
           });
@@ -683,7 +772,20 @@
         plans.sort(function (a, b) { return String(b.plan.saved || '').localeCompare(String(a.plan.saved || '')); });
         plans.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A more recently saved plan (' + plans[0].name + ') is in the same drop.'); });
       }
-      if (!cards.length) { S.cards = null; S.busy = false; closeCards(); toast('Nothing new to check in 1 New files.', 'info'); return; }   // v0.2.1 — only a leftover was listed
+      // v0.3.0 — two snapshots of one machine build (model + S/N prefix) in one drop: the newest file is used
+      var byKey = {};
+      cards.filter(function (c) { return c.src === 'SNAPSHOT' && c.status === 'accept'; }).forEach(function (c) { (byKey[c.snapKey] = byKey[c.snapKey] || []).push(c); });
+      Object.keys(byKey).forEach(function (k) {
+        var same = byKey[k]; if (same.length < 2) return;
+        same.sort(function (a, b) { return (b.lastModified || 0) - (a.lastModified || 0); });
+        same.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A newer snapshot of the same machine (' + same[0].name + ') is in the same drop.'); });
+      });
+      var defs = cards.filter(function (c) { return c.src === 'BENCHDEF' && c.status === 'accept'; });
+      if (defs.length > 1) {
+        defs.sort(function (a, b) { return String(b.defInfo.updatedAt || '').localeCompare(String(a.defInfo.updatedAt || '')) || (b.lastModified || 0) - (a.lastModified || 0); });
+        defs.slice(1).forEach(function (c) { c.status = 'refuse'; c.reasons.push('A more recent Bench definition (' + defs[0].name + ') is in the same drop.'); });
+      }
+      if (!cards.length) { S.cards = null; S.busy = false; closeCards(); toast('Nothing new to check in 1 New files.', 'info'); return; }   // v0.3.0 — only a leftover was listed
       S.cards = cards; S.busy = false; openCards(cards, '');
     }).catch(function (e) { S.busy = false; setCardsMsg('Could not read the folder: ' + (e && e.message || e)); });
   }
@@ -703,13 +805,16 @@
     var j; try { j = JSON.parse(text); } catch (e) { c.status = 'error'; c.reasons.push('Not valid JSON: ' + e.message); return c; }
     var pi = planInfo(j), b = j && (j.bench || j);
     if (!pi && b && typeof b.schema === 'string' && b.schema.indexOf('numacore.bench/') === 0 && Array.isArray(b.models)) {
-      c.status = 'ignore'; c.label = 'Bench definition';
-      c.reasons.push('A Bench definition (' + b.models.length + ' models). Its before / after review comes with the next Bench release, so it is left where it is. Until then, import it in Bench (⋯ → Replace the Bench definition…).');
+      // v0.3.0 — filed in 3 Archive\Definitions on Publish and handed to Bench's before / after review
+      c.src = 'BENCHDEF'; c.label = 'Bench definition'; c.text = text;
+      c.defInfo = { models: b.models.length, pockets: b.models.reduce(function (s, m) { return s + ((m.pockets || []).length); }, 0), updatedAt: b.updatedAt || '' };
+      var hasDef = false; try { hasDef = !!(S.host && S.host.benchDef && S.host.benchDef()); } catch (e) {}
+      c.defInfo.replaces = hasDef;
       return c;
     }
     if (!pi) { c.status = 'ignore'; c.reasons.push('Not a fleet plan or a Bench definition, so it is left where it is.'); return c; }
     c.src = 'PLAN'; c.label = 'Plan (fleet JSON)'; c.plan = pi; c.text = text;
-    if (S.filed && S.filed[name] === file.size) { c.status = 'refuse'; c.reasons.push('It is already filed in lens\\plan (same name and size): this is the original an earlier move could not remove.'); return c; }   // v0.2.1
+    if (S.filed && S.filed[name] === file.size) { c.status = 'refuse'; c.reasons.push('It is already filed in lens\\plan (same name and size): this is the original an earlier move could not remove.'); return c; }   // v0.3.0
     if (pi.cc && S.cc && S.cc !== 'DEFAULT' && pi.cc !== S.cc) { c.status = 'refuse'; c.reasons.push('This plan belongs to ' + pi.cc + ', but the plan open in Lens is ' + S.cc + '\'s.'); return c; }
     if (!pi.cc) c.warnings.push('The plan has no client code inside it.');
     return c;
@@ -719,6 +824,7 @@
     var wbr;
     try { wbr = readWorkbook(XLSX, new Uint8Array(buf), name); } catch (e) { c.status = 'error'; c.reasons.push('Excel could not read it: ' + e.message); return c; }
     if (!wbr.rec) { c.status = 'ignore'; c.reasons.push('Not recognised from its columns, so it is left where it is.'); return c; }
+    if (wbr.rec.snapshot) return assessSnapshot(c, wbr, name);   // v0.3.0
     if (wbr.rec.later) { c.status = 'ignore'; c.reasons.push(wbr.rec.later + ' is not read by Lens yet, so it is left where it is.'); return c; }
     var src = wbr.rec.src, spec = REG[src]; c.src = src; c.label = spec.label;
     var missing = spec.required.filter(function (k) { return wbr.rec.map[k] === undefined; }).map(function (k) { var f = spec.fields.filter(function (x) { return x[0] === k; })[0]; return f ? f[1][0] : k; });
@@ -748,6 +854,27 @@
     judgeDate(c, cur);
     return c;
   }
+  // v0.3.0 — a snapshot's check: which Bench model, what it would change (Bench's preview), same as the one in use?
+  function snapKey(model, prefix) { return modelNorm(model) + '-' + String(prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+  function snapSig(sn) { return JSON.stringify(sn.comps.map(function (x) { return [x.component, x.identifier, x.pns.map(function (p) { return p.type + ':' + p.pn; })]; })); }
+  function assessSnapshot(c, wbr, name) {
+    var sn = parseSnapshot(wbr, name), s0 = sn.meta.sources[0];
+    c.src = 'SNAPSHOT'; c.label = 'Component Snapshot'; c.snap = sn; c.rowsIn = s0.rowsIn; c.rowsOut = s0.rowsOut;
+    if (!sn.comps.length) { c.status = 'refuse'; c.reasons.push('No component rows under its headers.'); return c; }
+    if (!sn.model) { c.status = 'refuse'; c.reasons.push('Its Model column is empty, so Lens cannot tell which machine it is for.'); return c; }
+    if (sn.mixed) c.warnings.push('It mixes models or S/N prefixes (' + sn.mixed.models.concat(sn.mixed.prefixes).join(', ') + '). The most common is used: ' + sn.model + ' ' + sn.prefix + '.');
+    if (s0.drops.no_component) c.warnings.push(s0.drops.no_component + ' row' + (s0.drops.no_component > 1 ? 's have' : ' has') + ' part numbers but no component name, so ' + (s0.drops.no_component > 1 ? 'they are' : 'it is') + ' not read.');
+    var def = null; try { def = S.host && S.host.benchDef ? S.host.benchDef() : null; } catch (e) {}
+    if (!def || !Array.isArray(def.models)) { c.status = 'ignore'; c.reasons.push('The plan open in Lens has no Bench definition yet, so there is nothing to compare this snapshot with. Import the definition in Bench and SAVE FILE, then check again. The file is left where it is.'); return c; }
+    var mm = matchModel(def, sn);
+    if (!mm) { c.status = 'refuse'; c.reasons.push('No Bench model for ' + sn.model + (sn.prefix ? ' (S/N prefix ' + sn.prefix + ')' : '') + '. Add the model to the Bench definition first, then drop the snapshot again.'); return c; }
+    c.benchModel = mm; if (mm.newPrefix) c.warnings.push('Matched by model name: S/N prefix ' + sn.prefix + ' is not in ' + mm.label + '\'s snapshot list yet. Check it is the same machine build before you apply anything.');
+    try { if (S.host && S.host.benchPreview) c.preview = S.host.benchPreview(Object.assign({ benchModel: mm.key, fileName: name }, sn)); } catch (e) { console.warn('workspace benchPreview:', e); }
+    var key = snapKey(sn.model, sn.prefix), cur = S.register && S.register.snapshots && S.register.snapshots[key] && S.register.snapshots[key].current;
+    c.snapKey = key; c.inUse = cur || null;
+    if (cur && cur.sig === snapSig(sn)) { c.status = 'refuse'; c.reasons.push('It is the same as the snapshot in use (' + cur.standardName + ').'); return c; }
+    return c;
+  }
   // age + newer-than-in-use; re-run when the refresher enters a date
   function judgeDate(c, cur) {
     c.reasons = c.reasons.filter(function (r) { return !r._date; }); c.override = c.override || false;
@@ -770,7 +897,7 @@
     var cards = S.cards || [], accepted = cards.filter(function (c) { return c.status === 'accept'; }), refused = cards.filter(function (c) { return c.status === 'refuse'; });
     if (!accepted.length && !refused.length) { closeCards(); return Promise.resolve(); }
     S.busy = true; setCardsMsg('Publishing…');
-    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now), planPublished = null;
+    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now), planPublished = null, defPublished = null;
     reg.meta.generatedAt = stamp; reg.meta.toolVersion = VERSION; reg.meta.clientCode = S.cc;
     reg.ageLimits = { amber: AGE.amber, red: AGE.red, refuse: AGE.refuse };
     return path([DIR.NEW], true).then(function (d) { newDir = d; return path([DIR.INUSE], true); }).then(function (d) { inUse = d; return path([DIR.LENS, DIR.DATA], true); })
@@ -784,6 +911,34 @@
                 log.push([stamp, 'PLAN', c.name, DIR.LENS + '\\' + DIR.PLAN + '\\' + placed, '', 'plan', '', '', 'filed as the plan', c.warnings.join(' | '), VERSION]);
                 planPublished = { fileName: placed, text: c.text };
               });
+            }
+            if (c.src === 'BENCHDEF') {   // v0.3.0 — a Bench definition: filed, then reviewed in Bench (nothing in the plan changes here)
+              return path([DIR.ARCHIVE, DIR.DEFS], true).then(function (dd) { return moveFile(newDir, c.name, dd); }).then(function (placed) {
+                log.push([stamp, 'BENCHDEF', c.name, DIR.ARCHIVE + '\\' + DIR.DEFS + '\\' + placed, c.defInfo.updatedAt || '', 'definition (no data date)', c.defInfo.models, c.defInfo.pockets, 'filed for review in Bench', '', VERSION]);
+                defPublished = { fileName: placed, text: c.text };
+              });
+            }
+            if (c.src === 'SNAPSHOT') {   // v0.3.0 — into 2 In use\Snapshots (the one it replaces → 3 Archive\Snapshots) + a copy in lens\data
+              var sn = c.snap, ext0 = (c.name.match(/\.\w+$/) || ['.xlsx'])[0].toLowerCase();
+              var stdS = safeName(sn.model) + '-' + safeName(sn.prefix || 'no prefix') + ' Component Snapshot' + ext0;
+              var dataS = 'SNAPSHOT ' + safeName(sn.model) + '-' + safeName(sn.prefix || 'no prefix') + ' ' + nameDate(localIso(now)) + '.js';
+              var prevS = reg.snapshots && reg.snapshots[c.snapKey] && reg.snapshots[c.snapKey].current, snapDir;
+              sn.meta.sources[0].standardName = stdS; sn.benchModel = c.benchModel.key;
+              return writeFile(dataDir, dataS, toScript(sn, 'snapshot', 'Component Snapshot ' + sn.model + ' ' + sn.prefix + ' · from ' + c.name + ' · written ' + stamp + ' by numacore_workspace ' + VERSION))
+                .then(function () { return path([DIR.INUSE, DIR.SNAPS], true); }).then(function (d) { snapDir = d; })
+                .then(function () {
+                  if (!prevS || !prevS.standardName) return;
+                  return exists(snapDir, prevS.standardName, 'file').then(function (ex) { if (!ex) return; return path([DIR.ARCHIVE, DIR.SNAPS], true).then(function (ad) { return moveFile(snapDir, prevS.standardName, ad); }); });
+                })
+                .then(function () { return moveFile(newDir, c.name, snapDir, stdS); })
+                .then(function (placed) {
+                  reg.snapshots = reg.snapshots || {};
+                  var e = reg.snapshots[c.snapKey] = reg.snapshots[c.snapKey] || { current: null, history: [] };
+                  if (prevS) { e.history.unshift(prevS); e.history = e.history.slice(0, 12); }
+                  e.current = { dataFile: dataS, standardName: placed, originalName: c.name, bytes: c.bytes, model: sn.model, prefix: sn.prefix, fleet: sn.fleet, benchModel: c.benchModel.key,
+                    comps: sn.comps.length, pns: sn.pns, sig: snapSig(sn), refreshedAt: stamp, readerVersion: VERSION, warnings: c.warnings.map(String) };
+                  log.push([stamp, 'SNAPSHOT', c.name, DIR.INUSE + '\\' + DIR.SNAPS + '\\' + placed, '', 'reference list (no data date)', c.rowsIn, c.rowsOut, 'published' + (prevS ? ' (replaced ' + prevS.standardName + ')' : '') + ' · Bench model ' + c.benchModel.label, c.warnings.join(' | '), VERSION]);
+                });
             }
             var src = c.src, ext = (c.name.match(/\.\w+$/) || ['.xlsx'])[0].toLowerCase();
             var dateTag = c.dataAsOf ? nameDate(c.dataAsOf) : 'undated ' + nameDate(localIso(now));
@@ -806,7 +961,7 @@
                 if (prev) { reg.sources[src].history.unshift(prev); reg.sources[src].history = reg.sources[src].history.slice(0, 12); }
                 reg.sources[src].current = entry;
                 if (c.override) reg.overrides.push({ at: stamp, source: src, file: c.name, reason: 'older than the file in use (' + (prev && prev.dataAsOf) + '); used by the refresher' });
-                log.push([stamp, src, c.name, placed, c.dataAsOf || 'unknown', methodWords(c.method), c.rowsIn, c.rowsOut, c.override ? 'published (override)' : 'published', c.warnings.join(' | '), VERSION]);
+                log.push([stamp, src, c.name, DIR.INUSE + '\\' + placed, c.dataAsOf || 'unknown', /* v0.3.0 — with its folder, like the other lines */ methodWords(c.method), c.rowsIn, c.rowsOut, c.override ? 'published (override)' : 'published', c.warnings.join(' | '), VERSION]);
               });
           });
         }, Promise.resolve());
@@ -819,15 +974,16 @@
         }, Promise.resolve());
       })
       .then(function () { return writeFile(dataDir, REGISTER, toScript(reg, 'register', 'Lens client-folder register · ' + S.cc + ' · written ' + stamp)); })
-      .then(function () {   // v0.2.1 — an original that could not be removed is logged as such (its checked copy is filed)
+      .then(function () {   // v0.3.0 — an original that could not be removed is logged as such (its checked copy is filed)
         S.leftovers.filter(function (l) { return !l.logged; }).forEach(function (l) { l.logged = true; log.push([stamp, '', l.name, l.dest, '', '', '', '', 'copied + checked; original left in ' + l.where, 'could not remove it yet: ' + l.reason + ' (retried at the next check)', VERSION]); });
         return appendLog(log);
       })
       .then(function () {
         S.register = reg; S.busy = false; S.cards = null; closeCards();
         setTimeout(reportLeftovers, 5200);   /* after the Published toast */
-        toast('Published: ' + accepted.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
+        toast('Published: ' + accepted.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : c.src === 'SNAPSHOT' ? 'snapshot ' + c.snap.model + ' ' + c.snap.prefix : c.src === 'BENCHDEF' ? 'Bench definition (review it in Bench)' : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
         if (planPublished && S.host && S.host.onPlan) { try { S.host.onPlan({ fileName: planPublished.fileName, json: JSON.parse(planPublished.text) }); } catch (e) { console.warn('workspace onPlan:', e); } }
+        if (defPublished && S.host && S.host.onDefinition) { try { S.host.onDefinition({ fileName: defPublished.fileName, json: JSON.parse(defPublished.text) }); } catch (e) { console.warn('workspace onDefinition:', e); } }   // v0.3.0
         return loadCopies().then(scanNew);
       })
       .catch(function (e) { S.busy = false; setCardsMsg('Publish stopped: ' + (e && e.message || e) + '. Files already moved are listed in the refresh log; nothing was deleted.'); return appendLog(log).catch(function () {}); });
@@ -845,6 +1001,8 @@
       var a = ageDays(cur.dataAsOf);
       lines.push('  ' + REG[src].label + ': data ' + (cur.dataAsOf ? fmtDate(cur.dataAsOf) : 'date unknown') + (a !== null ? ' (' + a + ' day' + (a === 1 ? '' : 's') + ' old' + (a > AGE.red ? ', RED' : a > AGE.amber ? ', amber' : '') + ')' : '') + ' · ' + cur.standardName + ' · dated from ' + methodWords(cur.method) + ' · ' + (cur.rows || 0).toLocaleString() + ' rows');
     });
+    var snIn = reg && reg.snapshots ? Object.keys(reg.snapshots).filter(function (k) { return reg.snapshots[k].current; }) : [];   // v0.3.0
+    if (snIn.length) { lines.push('', 'Component Snapshots in use (reference lists; the part lists in the plan are what Bench counts)'); snIn.forEach(function (k) { var cu = reg.snapshots[k].current; lines.push('  ' + cu.standardName + ' · filed ' + String(cu.refreshedAt || '').slice(0, 10) + ' · ' + cu.comps + ' components, ' + cu.pns + ' part numbers'); }); }
     lines.push('', 'Written by NumaCore Lens ' + (S.host && S.host.lensVersion || '') + ' · numacore_workspace ' + VERSION);
     var txt = lines.join('\r\n') + '\r\n';
     var body = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
@@ -987,6 +1145,8 @@
           ' · ' + cur.standardName + ' · ' + (cur.rows || 0).toLocaleString() + ' rows · refreshed ' + String(cur.refreshedAt || '').slice(0, 16).replace('T', ' ') + ' · amber after ' + AGE.amber + ' days, red after ' + AGE.red + ', not loaded after ' + AGE.refuse;
         h += '<span class="ncw-chip ' + cls + '" title="' + esc(tip) + '">' + esc(REG[src].short) + ' ' + esc(words) + '</span>';
       });
+      var snIn = S.register && S.register.snapshots ? Object.keys(S.register.snapshots).filter(function (k) { return S.register.snapshots[k].current; }) : [];   // v0.3.0
+      if (snIn.length) h += '<span class="ncw-chip" title="' + esc('Component Snapshots in 2 In use\\Snapshots (reference lists: no age limit): ' + snIn.map(function (k) { return S.register.snapshots[k].current.standardName; }).join(', ') + '. Bench compares them with its definition.') + '">Snapshots · ' + snIn.length + '</span>';
       if (S.newFiles.length && S.mode === 'view') h += '<span class="ncw-chip amber" title="' + esc(S.newFiles.join(', ')) + ' — waiting for the person who refreshes the folder">' + S.newFiles.length + ' NEW · FOR THE REFRESHER</span>';   // v0.2.0
       else if (S.newFiles.length) h += '<button class="ncw-btn gold" data-ncw="check" title="' + esc(S.newFiles.join(', ')) + '">' + S.newFiles.length + ' NEW FILE' + (S.newFiles.length > 1 ? 'S' : '') + ': CHECK</button>';
       else h += '<button class="ncw-btn" data-ncw="rescan" title="Folder: ' + esc(S.folderName) + '. Look in 1 New files again.">↻</button>';
@@ -1016,12 +1176,20 @@
     if (!OV) { OV = document.createElement('div'); OV.className = 'ncw-ov'; document.body.appendChild(OV); OV.addEventListener('click', function (e) { if (e.target === OV && !S.busy) closeCards(); }); }
     OV.style.display = 'flex';
     var acc = cards.filter(function (c) { return c.status === 'accept'; }).length, ref = cards.filter(function (c) { return c.status === 'refuse'; }).length;
-    var h = '<div class="ncw-dlg"><h3>New files in ' + esc(S.folderName) + '</h3><div class="ncw-sub">Checked against the ' + AGE.amber + ' / ' + AGE.red + '-day limits and the files in use. Nothing is moved until you press Publish.</div>';
+    var h = '<div class="ncw-dlg"><h3>New files in ' + esc(S.folderName) + '</h3><div class="ncw-sub">SAP exports are checked against the ' + AGE.amber + ' / ' + AGE.red + '-day limits and the files in use; snapshots and definitions against the Bench definition. Nothing is moved until you press Publish.</div>';
     if (msg) h += '<div class="ncw-msg" id="ncw-msg">' + esc(msg) + '</div>';
     cards.forEach(function (c, i) {
       var word = { accept: 'Will be used', refuse: 'Not used', error: 'Could not read', ask: 'Question', older: 'Older than in use', ignore: 'Left in place' }[c.status] || c.status;
       h += '<div class="ncw-card ' + c.status + '"><div class="t"><span>' + esc(c.label || 'File') + ' · ' + esc(c.name) + '</span><span class="w">' + esc(word) + '</span></div>';
       if (c.plan) h += '<div class="m">Client <b>' + esc(c.plan.cc || '—') + '</b>' + (c.plan.client ? ' · ' + esc(c.plan.client) : '') + ' · ' + c.plan.units + ' units · ' + c.plan.comps.toLocaleString() + ' components · ' + esc(c.plan.shape) + (c.plan.saved ? ' · saved ' + esc(fmtDate(localIso(new Date(c.plan.saved)))) : '') + (c.plan.bench ? ' · with its Bench definition' : '') + (c.status === 'accept' ? ' · Publish files it in <code>lens\\plan</code> and offers to open it' : '') + '</div>';   // v0.2.0
+      if (c.snap) {   // v0.3.0
+        var sp = c.snap, pv = c.preview;
+        h += '<div class="m">Model <b>' + esc(sp.model) + '</b>' + (sp.prefix ? ' · S/N prefix <b>' + esc(sp.prefix) + '</b>' : '') + (sp.fleet ? ' · ' + esc(sp.fleet) : '') + ' · ' + sp.comps.length + ' components · ' + sp.pns + ' part numbers' + (sp.meta.sources[0].naCells ? ' (' + sp.meta.sources[0].naCells + ' N/A cells skipped)' : '') +
+          (c.benchModel ? ' · Bench model <b>' + esc(c.benchModel.label) + '</b> (' + esc(c.benchModel.how) + ')' : '') + '</div>';
+        if (c.benchModel && c.status === 'accept') h += '<div class="m">' + (pv ? 'Against the Bench definition: <b>' + pv.adds + '</b> part number' + (pv.adds === 1 ? '' : 's') + ' and <b>' + pv.newComps + '</b> component' + (pv.newComps === 1 ? '' : 's') + ' are not in it yet' + (pv.adds + pv.newComps === 0 ? ' (it agrees with the definition)' : '') + '. ' : '') +
+          'Publish files it in <code>2 In use\\Snapshots</code>' + (c.inUse ? ' (replacing ' + esc(c.inUse.standardName) + ')' : '') + '. Nothing in the plan changes: you review each difference in Bench and apply only what you tick.</div>';
+      }
+      if (c.defInfo) h += '<div class="m">' + c.defInfo.models + ' models · ' + c.defInfo.pockets + ' components' + (c.defInfo.updatedAt ? ' · updated ' + esc(String(c.defInfo.updatedAt).slice(0, 10)) : '') + (c.status === 'accept' ? ' · Publish files it in <code>3 Archive\\Definitions</code> and opens ' + (c.defInfo.replaces ? 'Bench\'s before / after review. Nothing in the plan changes until you apply it there.' : 'it in Bench (the plan has no definition yet).') : '') + '</div>';
       if (c.digest) h += '<div class="m">' + (c.dataAsOf ? 'Data date <b>' + esc(fmtDate(c.dataAsOf)) + '</b> (' + ageDays(c.dataAsOf) + ' days old) · dated from ' + esc(methodWords(c.method)) : 'Data date not known yet') +
         (c.window ? ' · covers ' + esc(fmtDate(c.window.from)) + ' – ' + esc(fmtDate(c.window.to)) : '') + ' · ' + (c.rowsOut || 0).toLocaleString() + ' rows kept of ' + (c.rowsIn || 0).toLocaleString() + (c.unitsInPlan ? ' · ' + c.unitsInPlan + ' plan units found' : '') + '</div>';
       if (c.status === 'ask') h += '<div class="r warn">The INV_MSTR has no date inside it and its file name has none. Enter the date the export was taken: <input type="date" data-ncw-date="' + i + '" value="' + esc(c.suggest || '') + '"> ' +
@@ -1069,9 +1237,11 @@
       '├── 1 New files\\          ← YOU drop SAP exports here\n' +
       '│   └── Not used\\         ← Lens: refused files (reason in the log)\n' +
       '├── 2 In use\\             ← Lens only: the IW39 + INV_MSTR in use now\n' +
+      '│   └── Snapshots\\         ← Lens: the Component Snapshots in use\n' +
       '├── 3 Archive\\            ← Lens only: replaced files, Refresh log.csv\n' +
       '│   └── Meetings\\&lt;date&gt;\\  ← MEETING RECORD: saved plan + "What was in use"\n' +
       '│   └── Plans\\             ← Lens: earlier plans (nothing is deleted)\n' +
+      '│   └── Snapshots\\, Definitions\\ ← Lens: replaced snapshots, definition files after review\n' +
       '└── lens\\\n' +
       '    ├── plan\\             ← the plan: SAVE FILE (edit) keeps it here\n' +
       '    └── data\\             ← Lens only: dated copies. Never edit</pre>' +
@@ -1080,11 +1250,14 @@
       '<tr><td>IW39 export</td><td><code>1 New files</code></td><td><code>IW39 ' + esc(cc) + ' ' + ex + '.xlsx</code> (the export day)</td></tr>' +
       '<tr><td>INV_MSTR export</td><td><code>1 New files</code></td><td><code>INV_MSTR ' + esc(cc) + ' ' + ex + '.xlsx</code>. The date in the name matters most: the file has no date inside, otherwise Lens asks you</td></tr>' +
       '<tr><td>The plan (fleet JSON)</td><td><code>1 New files</code> once; then Lens keeps it in <code>lens\\plan</code></td><td>Publish files it and offers to open it. From then on SAVE FILE (edit) saves it there and moves the previous one to <code>3 Archive\\Plans</code>. Each MEETING RECORD also puts a copy in <code>3 Archive\\Meetings</code></td></tr>' +
-      '<tr><td>Bench definition (.json)</td><td>Import it in Bench for now</td><td>Recognised in <code>1 New files</code> but left there until Bench\'s before / after review arrives</td></tr>' +
-      '<tr><td>MB51, Component Snapshots</td><td>Keep them out for now</td><td>Not read yet (snapshots come with the next Bench release, reviewed before they change anything). If dropped, they are left where they are</td></tr>' +
+      '<tr><td>Cat Component Snapshot (.xlsx)</td><td><code>1 New files</code></td><td>As exported, e.g. <code>775G-FY2 Component Snapshot.xlsx</code>. Matched to its Bench model by the Model and S/N PreFix columns. Publish files it in <code>2 In use\\Snapshots</code>; the plan does not change until you review the differences in Bench and apply what you tick (then SAVE FILE)</td></tr>' +
+      '<tr><td>Bench definition (.json)</td><td><code>1 New files</code></td><td>Publish files it in <code>3 Archive\\Definitions</code> and opens Bench\'s before / after review. Applied only when you say so (then SAVE FILE)</td></tr>' +
+      '<tr><td>MB51</td><td>Keep it out for now</td><td>Not read yet. If dropped, it is left where it is</td></tr>' +
       '</tbody></table>' +
       '<h4>4 · Each refresh (weekly)</h4>' +
       '<p>Drop fresh IW39 + INV_MSTR the same day → press <b>N NEW FILES: CHECK</b> → read the cards → <b>Publish</b>. The header then shows each source\'s data date and age.</p>' +
+      '<h4>When a component list changes (as needed)</h4>' +
+      '<p>Drop the new Cat Component Snapshot in <code>1 New files</code> → CHECK → Publish. Bench then shows <b>Review</b>: each part number or component the snapshot has that the definition doesn\'t, before and after. Tick what to apply → <b>Apply</b> → <b>SAVE FILE</b>. Every change (and every one you decline) is logged in the definition. Stock (INV_MSTR) is never changed by Lens.</p>' +
       '<h4>Rules</h4><ul>' +
       '<li>Save exports <b>straight from SAP</b> as .xlsx, with the same saved layout every time. Don\'t open and re-save them in Excel (it is flagged).</li>' +
       '<li>Age: <span style="color:#34D399">green</span> up to ' + AGE.amber + ' days, <span style="color:#FBBF24">amber</span> after ' + AGE.amber + ', <span style="color:#EF4444">red</span> after ' + AGE.red + '. <b>Nothing older than ' + AGE.refuse + ' days is loaded.</b></li>' +
@@ -1132,6 +1305,7 @@
     _internal: { REG: REG, norm: norm, mapColumns: mapColumns, recognise: recognise, findHeaderRow: findHeaderRow, coerce: coerce, dateFromFileName: dateFromFileName,
       iw39DataDate: iw39DataDate, readWorkbook: readWorkbook, buildDigest: buildDigest, toScript: toScript, parseScript: parseScript, ageDays: ageDays, ageClass: ageClass,
       useHandle: useHandle, refreshAll: refreshAll, publish: publish, assess: assess, S: S,
-      assessJson: assessJson, planInfo: planInfo, findPlan: findPlan, inspectFolder: inspectFolder, placePlan: placePlan, planStamp: planStamp }
+      assessJson: assessJson, planInfo: planInfo, findPlan: findPlan, inspectFolder: inspectFolder, placePlan: placePlan, planStamp: planStamp,
+      parseSnapshot: parseSnapshot, matchModel: matchModel, assessSnapshot: assessSnapshot, snapKey: snapKey, isSnapshot: isSnapshot }   // v0.3.0
   };
 })(typeof window !== 'undefined' ? window : this);
