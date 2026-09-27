@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.1.0 · 2026-09-26
+   v1.1.1 · 2026-09-27
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -15,8 +15,8 @@
        where each major sits on the machine picture. Seeded from Critical Spares
        Review V3; imported once with "Import Bench definition".
      • Stock: read from the INV_MSTR at load time, NEVER stored in the JSON.
-       Until the client-folder reader lands, the operator picks or links the
-       file here (the link is remembered per browser, like Critical Spares V3).
+       It comes from the client folder (numacore_workspace → setStock); without
+       a folder the operator loads the file by hand for the session.
 
    Ported from Critical Spares Review V3 (2026-09-14 build), behaviour-for-
    behaviour so its numbers are the test oracle: buildIndex (valuation split:
@@ -43,6 +43,27 @@
        folder (numacore_workspace → setStock). Stock never carries over to
        another client's plan. The Older / Other Sandvik reference models are
        tables only, listed in their own group.
+     • v1.1.1 (operator, 2026-09-27: "cant have that" — every headline must add
+       up to the rows under it):
+       – Assemblies (sub-part groups, e.g. DI650i Rotary Head) count COMPLETE
+         KITS: the headline is the binding group's own numbers (the group with
+         the least cover after inbound), shelf / on the way / reserved from the
+         same group. V3 took the minimum of each quantity separately and summed
+         reserved over every group, so no set of rows added up to it.
+         The detail rows are grouped per sub-part group, each with a subtotal.
+       – Split components (one pocket per part number, from V3's variant rows)
+         show as one family: the first row, then ↳ rows, each with the units it
+         fits and why it is split. Numbers unchanged (V3 already had a row each).
+       – Headline quantities are the sums of the ROUNDED per-material numbers,
+         so they equal the detail rows exactly. One minus sign (−) everywhere.
+       – A part number that only matches the INV_MSTR once leading zeros are
+         ignored, and then matches two different part numbers ("15200" vs
+         "015200"), is not counted; it is flagged instead.
+       – Tiles follow the Majors / Minors / Needs-attention filter. Repeated
+         component names carry their location. A new client resets the view.
+       – "Link file" is gone (the client folder replaced it). With a folder
+         connected, "Load INV_MSTR" moves into the ⋯ menu with the definition
+         import / export.
 
    API
      NumaCoreBench.render(containerEl, host)
@@ -54,7 +75,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.1.0';
+  var VERSION = '1.1.1';
   var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -70,8 +91,7 @@
     stock: null,            // { fileName, sheet, dataAsOf, method, loadedAt, materials, rowsIn, rowsUsed, lastModified }
     askDate: false,         // show the "enter the stock date" box
     busy: '',               // reading-file message
-    linkTried: false,
-    cc: null,               // v1.1.0 — the client the stock belongs to; a different client's plan clears it
+    cc: null,              // v1.1.0 — the client the stock belongs to; a different client's plan clears it
     prev: null              // v1.1.0 — stock kept while a hand-loaded file waits for its date (restored if refused)
   };
 
@@ -168,10 +188,17 @@
              ledger: { rowsIn: rowsIn, noMaterial: noMat, noPartNumber: noMpn, used: rowsIn - noMat - noMpn } };
   }
   function seeRef(d) { var m = ('' + d).toUpperCase().match(/SEE\s+(\w+)/); return m ? m[1] : null; }
+  // v1.1.1 — the leading-zero fallback only counts when it points at ONE part number. "15200" and "015200" are
+  // different parts in this INV_MSTR; a code that matches neither exactly must not borrow both.
+  function ambiguousCode(idx, code) {
+    code = ('' + code).trim(); if (!code || idx.MPN.get(code.toUpperCase())) return false;
+    var nb = idx.MPNn.get(norm(code)) || [];
+    return new Set(nb.map(function (mat) { return String(idx.MAT.get(mat).mpn).trim().toUpperCase(); })).size > 1;
+  }
   function lookup(idx, code) {
     code = ('' + code).trim(); var u = code.toUpperCase();
     if (!code || u === 'N/A' || u === 'NOT AVL.' || u === 'ITEM OUTPHASED' || u === 'NONE') return [];
-    var base = idx.MPN.get(u) || idx.MPNn.get(norm(code)) || []; var out = [], seen = new Set();
+    var base = idx.MPN.get(u) || (ambiguousCode(idx, code) ? null : idx.MPNn.get(norm(code))) || []; var out = [], seen = new Set();
     for (var i = 0; i < base.length; i++) {
       var mat = base[i]; if (seen.has(mat)) continue; seen.add(mat); var rec = idx.MAT.get(mat); out.push(rec);
       var t = seeRef(rec.desc); if (t && idx.MAT.has(t) && !seen.has(t)) { seen.add(t); out.push(idx.MAT.get(t)); }
@@ -183,7 +210,8 @@
     for (var i = 0; i < vpns.length; i++) { var L = lookup(idx, vpns[i]); for (var j = 0; j < L.length; j++) { if (!seen.has(L[j].material)) { seen.add(L[j].material); mats.push(L[j]); } } }
     return mats;
   }
-  function sumf(mats, k) { return mats.reduce(function (a, m) { return a + (m[k] || 0); }, 0); }
+  // v1.1.1 — sums of the ROUNDED per-material numbers, so a headline always equals the detail rows under it
+  function sumf(mats, k) { return mats.reduce(function (a, m) { return a + Math.round(m[k] || 0); }, 0); }
   // Bench states from cover after inbound. v1.0.1 (operator, 2026-09-26): zero stock with no demand is
   // No spare, not Short; Short needs demand (reserved) that the shelf + inbound cannot meet.
   // (V3 netStatus had `supply <= 0 || net < 0` -> short.)
@@ -196,7 +224,8 @@
     var kept = [], seen = {};
     for (var k = 0; k < mats.length; k++) {
       var mm = mats[k]; if (seen[mm.material]) continue; seen[mm.material] = 1;
-      var isSee = ('' + mm.desc).toUpperCase().indexOf('SEE') >= 0; var hasStock = (mm.soh > 0 || mm.transit > 0 || mm.po > 0);
+      // v1.1.1 — a reservation counts too: a "SEE" placeholder holding only a reservation stays listed (its reservation is in the headline)
+      var isSee = ('' + mm.desc).toUpperCase().indexOf('SEE') >= 0; var hasStock = (mm.soh > 0 || mm.transit > 0 || mm.po > 0 || mm.res > 0);
       if (isSee && !hasStock) continue; kept.push(mm);
     }
     return kept;
@@ -206,20 +235,29 @@
     if (!t) return '—'; if (t === 'PD') return 'PD-' + Math.round(r.ss); if (t[0] === 'V') return t + '-' + Math.round(r.mn) + '-' + Math.round(r.mx);
     return t + '-' + Math.round(r.mn) + '-' + Math.round(r.mx) + '-' + Math.round(r.ss);
   }
-  // One pocket's stock position (V3 compute(), incl. the assembly minimum rule)
+  function detailRow(mm, grp) { var d = { sap: mm.material, desc: ('' + mm.desc), vpn: mm.mpn, cat: catOf(mm.mpn), qoh: Math.round(mm.soh), qoo: Math.round(mm.po), qit: Math.round(mm.transit), rsrv: Math.round(mm.res) }; if (grp != null) d.grp = grp; return d; }
+  // One pocket's stock position (V3 compute()). v1.1.1: an assembly counts COMPLETE KITS — one of every sub-part group.
+  // The headline is the binding group's own numbers (least cover after inbound; ties: least on the shelf), so it
+  // equals that group's subtotal. V3 took the minimum of each quantity separately and summed reserved over all
+  // groups, which no set of detail rows added up to (DI650i Rotary Head: headline 1, rows 2).
   function pocketStock(idx, p) {
     var mats = resolveU(idx, p.vpns || []), s;
     if (p.groups && p.groups.length) {
-      var gs = p.groups.map(function (g) { var gm = resolveU(idx, g); return [sumf(gm, 'soh'), sumf(gm, 'transit'), sumf(gm, 'po')]; });
-      var gsoh = Math.min.apply(null, gs.map(function (x) { return x[0]; })), gtr = Math.min.apply(null, gs.map(function (x) { return x[1]; })), gpo = Math.min.apply(null, gs.map(function (x) { return x[2]; }));
-      var grs = sumf(mats, 'res');
-      s = { soh: gsoh, tr: gtr, po: gpo, res: grs, assembly: true };
+      var gl = p.groups.map(function (g, i) {
+        var gm = resolveU(idx, g), o = { i: i, vpns: g, soh: sumf(gm, 'soh'), tr: sumf(gm, 'transit'), po: sumf(gm, 'po'), res: sumf(gm, 'res'), n: gm.length };
+        o.net = o.soh + o.tr + o.po - o.res; o.rows = keptMats(gm).map(function (mm) { return detailRow(mm, i); }); return o;
+      });
+      var bind = gl.slice().sort(function (a, b) { return (a.net - b.net) || (a.soh - b.soh) || (a.i - b.i); })[0];
+      s = { soh: bind.soh, tr: bind.tr, po: bind.po, res: bind.res, assembly: true, bind: bind.i,
+            groups: gl.map(function (o) { return { i: o.i, vpns: o.vpns, soh: o.soh, tr: o.tr, po: o.po, res: o.res, net: o.net, n: o.n }; }) };
+      s.detail = [].concat.apply([], gl.map(function (o) { return o.rows; }));
     } else {
       s = { soh: sumf(mats, 'soh'), tr: sumf(mats, 'transit'), po: sumf(mats, 'po'), res: sumf(mats, 'res') };
+      s.detail = keptMats(mats).map(function (mm) { return detailRow(mm); });
     }
     s.status = netStatus(s.soh, s.tr, s.po, s.res, mats.length > 0);
     s.net = s.soh + s.tr + s.po - s.res;
-    s.detail = keptMats(mats).map(function (mm) { return { sap: mm.material, desc: ('' + mm.desc), vpn: mm.mpn, cat: catOf(mm.mpn), qoh: Math.round(mm.soh), qoo: Math.round(mm.po), qit: Math.round(mm.transit), rsrv: Math.round(mm.res) }; });
+    s.ambiguous = (p.vpns || []).filter(function (v) { return ambiguousCode(idx, v); });
     s.types = ['NEW', 'EXC', 'REMAN'].filter(function (t) { return s.detail.some(function (d) { return d.cat === t && (d.qoh + d.qoo + d.qit) > 0; }); });
     s.saps = mats.map(function (mm) { return sapKey(mm.material); });
     s.mrp = mrpStr(idx, p.vpn, mats);
@@ -272,32 +310,7 @@
       });
     }, 30);
   }
-  // ── remembered file link (File System Access, Edge / Chrome) ──
-  var IDB = 'numacore_bench';
-  function idbKey() { return 'inv_mstr_' + String((S.host && S.host.clientCode) || 'DEFAULT').replace(/[^A-Z0-9_]/gi, '_'); }
-  function idb(mode, fn) {
-    return new Promise(function (ok) {
-      try {
-        var r = indexedDB.open(IDB, 1);
-        r.onupgradeneeded = function () { r.result.createObjectStore('h'); };
-        r.onsuccess = function () { try { var st = r.result.transaction('h', mode).objectStore('h'); var q = fn(st); q.onsuccess = function () { ok(q.result || null); }; q.onerror = function () { ok(null); }; } catch (e) { ok(null); } };
-        r.onerror = function () { ok(null); };
-      } catch (e) { ok(null); }
-    });
-  }
-  function linkFile() {
-    if (!root.showOpenFilePicker) { toast('Linking a file needs Edge or Chrome — use "Load INV_MSTR" instead', 'warn'); return; }
-    root.showOpenFilePicker({ types: [{ description: 'INV_MSTR', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }] })
-      .then(function (res) { var h = res[0]; idb('readwrite', function (st) { return st.put(h, idbKey()); }); return h.getFile(); })
-      .then(ingestFile).catch(function () {});
-  }
-  function reReadLinked(fromGesture) {
-    return idb('readonly', function (st) { return st.get(idbKey()); }).then(function (h) {
-      if (!h) { if (fromGesture) linkFile(); return false; }
-      var ask = fromGesture && h.requestPermission ? h.requestPermission({ mode: 'read' }) : (h.queryPermission ? h.queryPermission({ mode: 'read' }) : Promise.resolve('granted'));
-      return ask.then(function (p) { if (p === 'granted') { return h.getFile().then(function (f) { ingestFile(f); return true; }); } S.linkPending = h.name || 'INV_MSTR'; rerender(); return false; });
-    }).catch(function () { return false; });
-  }
+  // v1.1.1 — the remembered file link ("⛓ Link file", from Critical Spares V3) is gone: the client folder replaced it.
 
   // ── Lens side ─────────────────────────────────────────────────────────────
   function benchDef() { var r = S.host && S.host.raw; return (r && r.bench && Array.isArray(r.bench.models)) ? r.bench : null; }
@@ -324,13 +337,58 @@
   function toks(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean); }
   function sig(s) { return toks(s).map(function (t) { return t === 'SUSP' ? 'SUSPENSION' : t; }).filter(function (t) { return !STOP[t]; }); }
   function posOf(s) { var p = {}; toks(s).forEach(function (t) { if (t === 'FRONT' || t === 'REAR') p.fr = t; if (POSN[t] === 'L' || POSN[t] === 'R') { if (t !== 'REAR') p.lr = POSN[t]; } }); return p; }
+  // v1.1.1 — display names. V3's split continuation rows were seeded with their "↳" arrow in the name;
+  // the arrow is drawn by the table now, never stored text.
+  function baseName(p) { return String(p.component || '').replace(/^\s*↳\s*/, ''); }
+  // v1.1.1 — split families: V3 gave each part number of a split component its own row (pocket). The first
+  // pocket carries p.split {reason, variants[{vpn, units}]}; the ↳ pockets that follow are its other part numbers.
+  var SPLIT_WHY = {
+    multiple: 'Different parts, all required (e.g. left / right, or different positions): each part number is stocked and counted on its own row.',
+    supersession: 'Supersession: a later part number replaces an earlier one. Each number still has its own row, as in Critical Spares V3.'
+  };
+  function families(m) {
+    var fam = {}, head = null, seq = 0;
+    m.pockets.forEach(function (p) {
+      if (p.split && p.split.variants && p.split.variants.length) {
+        head = p; seq = 1; var v0 = p.split.variants.find(function (sv) { return sv.vpn === p.vpn; }) || p.split.variants[0];
+        fam[p.id] = { head: p.id, n: 1, of: p.split.variants.length, units: v0.units || [], reason: p.split.reason || 'multiple', first: true };
+        return;
+      }
+      var cont = /^\s*↳/.test(p.component || '');
+      var sv = cont && head ? head.split.variants.find(function (x, i) { return i > 0 && x.vpn === p.vpn; }) : null;
+      if (sv) { seq++; fam[p.id] = { head: head.id, n: seq, of: head.split.variants.length, units: sv.units || [], reason: head.split.reason || 'multiple', first: false }; }
+      else if (!cont) head = null;
+    });
+    return fam;
+  }
+  // v1.1.1 — a name that repeats within a model (DI650i "Hydraulic Cylinder, Double-Acting" ×5) carries its location,
+  // then its part number if the location repeats too. Split ↳ rows share their first row's name on purpose.
+  function labels(m, fam) {
+    var byName = {}, out = {};
+    m.pockets.forEach(function (p) { if (fam[p.id] && !fam[p.id].first) return; var k = baseName(p).toLowerCase(); (byName[k] = byName[k] || []).push(p); });
+    Object.keys(byName).forEach(function (k) {
+      var ps = byName[k];
+      ps.forEach(function (p) {
+        var lbl = baseName(p);
+        if (ps.length > 1) {
+          var loc = String(p.location || '').replace(/\s+/g, ' ').trim();
+          var sameLoc = ps.filter(function (q) { return String(q.location || '').replace(/\s+/g, ' ').trim().toLowerCase() === loc.toLowerCase(); }).length > 1;
+          lbl += loc ? ' · ' + loc : ''; if (sameLoc || !loc) lbl += ' · ' + p.vpn;
+        }
+        out[p.id] = lbl;
+      });
+    });
+    m.pockets.forEach(function (p) { if (!out[p.id]) out[p.id] = out[fam[p.id] && fam[p.id].head] || baseName(p); });
+    return out;
+  }
   // Build the per-model view: stock per pocket (if loaded) + Lens components joined to pockets
   function modelView(m) {
+    var fam = families(m), lbl = labels(m, fam);
     var pockets = m.pockets.map(function (p) {
       var st = S.idx ? pocketStock(S.idx, p) : null;
       var keys = new Set((p.vpns || []).map(joinKey));
       (p.groups || []).forEach(function (g) { g.forEach(function (v) { keys.add(joinKey(v)); }); });
-      return { p: p, st: st, keys: keys, saps: st ? new Set(st.saps) : new Set(), lens: [] };
+      return { p: p, st: st, keys: keys, saps: st ? new Set(st.saps) : new Set(), lens: [], fam: fam[p.id] || null, label: lbl[p.id] };
     });
     var comps = fleetModelComps(m.lens.fleet, m.lens.model, m.lens.units);
     var groups = {};
@@ -470,6 +528,24 @@
       '.ncb-hero .u{font-family:var(--nc-font-mono);font-size:13px;color:var(--nc-text);margin-top:8px}',
       '.ncb-legend{position:absolute;right:40px;top:34px;font-family:var(--nc-font-mono);font-size:12px;line-height:1.9;text-align:right;color:var(--nc-text-m)}',
       '.ncb-legend div{display:flex;gap:8px;align-items:center;justify-content:flex-end}.ncb-legend i{width:10px;height:10px;border-radius:2px;display:inline-block}',
+      /* v1.1.1 — split families, unit chips, assembly groups, the ⋯ menu; hover + keyboard focus (UI audit BEN-06) */
+      '.ncb-fb:hover{border-color:rgba(95,168,224,.4);color:var(--nc-text)}',
+      '.ncb-tile.aside{border-style:dashed;background:transparent;margin-left:10px}',
+      /* UI audit BEN-04 / BEN-05 — readable group headers; models outside the review dimmed */
+      '.ncb-grp{font-size:10.5px;font-weight:600;color:var(--nc-text-m);border-bottom:1px solid var(--nc-border);padding-bottom:4px}',
+      '.ncb-mi.gap{opacity:.62}.ncb-mi.gap:hover,.ncb-mi.gap.on{opacity:1}',
+      '.ncb button:focus-visible,.ncb summary:focus-visible,.ncb [data-model]:focus-visible,.ncb tr.ncb-row:focus-visible{outline:2px solid var(--ncb-accent);outline-offset:2px}',
+      '.ncb-uchip{font-family:var(--nc-font-mono);font-size:10px;padding:0 6px;border-radius:3px;border:1px solid rgba(95,168,224,.35);color:#9ccbf0;margin-left:4px;white-space:nowrap;display:inline-block;line-height:16px}',
+      '.ncb-why{font-family:var(--nc-font-mono);font-size:9.5px;color:#9ccbf0;border:1px solid rgba(95,168,224,.35);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;margin-left:6px;cursor:help;vertical-align:1px}',
+      '.ncb tr.ncb-fam td{border-bottom-color:transparent}',
+      '.ncb tr.ncb-cont td{background:rgba(95,168,224,.025)}.ncb tr.ncb-cont .ncb-cname{font-weight:500;font-size:13.5px;color:var(--nc-text-m)}',
+      '.ncb-arrow{color:rgba(95,168,224,.7);margin-right:6px;font-family:var(--nc-font-mono)}',
+      '.ncb table.ncb-mats tr.ncb-grp td{font-family:var(--nc-font-mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#9ccbf0;background:rgba(95,168,224,.05);text-align:left;padding:6px 8px}',
+      '.ncb table.ncb-mats tr.ncb-sub td{font-weight:600;border-bottom:1px solid var(--nc-border);color:var(--nc-text)}.ncb table.ncb-mats tr.ncb-sub.bind td{color:var(--ncb-accent)}',
+      '.ncb-kit{font-family:var(--nc-font-mono);font-size:9.5px;color:var(--nc-text-d);display:block;line-height:1.1}',
+      '.ncb-more{position:relative}.ncb-more>summary{list-style:none;cursor:pointer;font-family:var(--nc-font-head);font-weight:700;font-size:15px;line-height:1;padding:5px 11px;border-radius:4px;border:1px solid var(--nc-border);color:var(--nc-text-m)}.ncb-more>summary::-webkit-details-marker{display:none}.ncb-more[open]>summary,.ncb-more>summary:hover{border-color:rgba(95,168,224,.55);color:var(--ncb-accent)}',
+      '.ncb-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:280px;padding:6px;border:1px solid var(--nc-border);border-radius:8px;background:var(--nc-chrome,#14161D);box-shadow:0 10px 28px rgba(0,0,0,.45)}',
+      '.ncb-menu button{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:5px;color:var(--nc-text);font-family:var(--nc-font-body);font-size:13px;padding:7px 10px;cursor:pointer}.ncb-menu button:hover{background:rgba(95,168,224,.1)}.ncb-menu button small{display:block;color:var(--nc-text-d);font-size:11px}',
       '@media (max-width:1100px){.ncb-list{width:210px}.ncb-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}'
     ].join('\n');
     document.head.appendChild(st);
@@ -519,16 +595,20 @@
     return '<div class="ncb-top"><span class="ncb-eyebrow">Bench · critical spares</span>' +
       (plan ? '<span class="ncb-chip ok">Plan · saved ' + fmtDate(plan) + '</span>' : '') + stockChip() +
       '<span class="ncb-spacer"></span>' +
-      '<button class="ncb-btn" data-act="load"' + (S.stock && S.stock.source === 'folder' ? ' title="Load an INV_MSTR by hand instead of the client folder\'s stock (this session only)"' : '') + '>⬆ Load INV_MSTR</button>' +
-      (root.showOpenFilePicker ? '<button class="ncb-btn ghost" data-act="link" title="Link the INV_MSTR file (e.g. in the client\'s OneDrive folder). This browser remembers it and re-reads it next time.">⛓ Link file</button>' : '') +
-      '<button class="ncb-btn ghost" data-act="import" title="Import a Bench definition (.json) into this fleet file">Import definition</button>' +
-      (benchDef() ? '<button class="ncb-btn ghost" data-act="export" title="Download this fleet file\'s Bench definition as JSON">Export definition</button>' : '') +
+      // v1.1.1 — the client folder is the stock source; loading by hand is the fallback. "Link file" is gone.
+      (folderOn() ? '' : '<button class="ncb-btn" data-act="load" title="Load an INV_MSTR by hand for this session. Connect the client folder (header) to have it read automatically.">⬆ Load INV_MSTR</button>') +
+      '<details class="ncb-more"><summary title="More: definition import / export' + (folderOn() ? ', load stock by hand' : '') + '">⋯</summary><div class="ncb-menu">' +
+      (folderOn() ? '<button data-act="load">Load an INV_MSTR by hand<small>This session only — replaces the client folder\'s stock until reload</small></button>' : '') +
+      '<button data-act="import">' + (benchDef() ? 'Replace the Bench definition…' : 'Import a Bench definition…') + '<small>A bench_definition_*.json: which part numbers fit which component</small></button>' +
+      (benchDef() ? '<button data-act="export">Export the Bench definition<small>Downloads it as JSON</small></button>' : '') +
+      '</div></details>' +
       '<input type="file" id="ncb-file-inv" accept=".xlsx,.xls,.xlsm" hidden><input type="file" id="ncb-file-def" accept=".json" hidden></div>';
   }
+  function folderOn() { try { return !!(root.NumaCoreWorkspace && root.NumaCoreWorkspace.state().connected); } catch (e) { return false; } }
   function banners() {
     var h = '';
     if (S.busy) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span>' + esc(S.busy) + '</div>';
-    if (S.linkPending) h += '<div class="ncb-banner info">The linked file <b>' + esc(S.linkPending) + '</b> needs one click to re-read in this session. <button class="ncb-btn" data-act="reread">Re-read linked INV_MSTR</button></div>';
+    if (!S.stock && !S.busy && benchDef() && folderOn()) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>Stock comes from the client folder, and it has no INV_MSTR yet. Put the export in <b>1 New files</b>, press <b>↻</b> in the header, then <b>NEW FILES: CHECK</b> and Publish.</span></div>';
     if (S.stock && S.askDate) {
       var saved = S.stock.lastModified ? localIso(new Date(S.stock.lastModified)) : '';
       h += '<div class="ncb-banner amber"><b>Stock date needed.</b> The INV_MSTR has no date inside it and its file name has none. Enter the date the export was taken: <input type="date" id="ncb-stockdate" value=""> <button class="ncb-btn" data-act="setdate">Use this date</button> <button class="ncb-btn ghost" data-act="nodate">Don\'t know</button>' + (saved ? ' <span style="color:var(--nc-text-m)">The file was last saved on ' + fmtDate(saved) + ' — use that only if nobody opened and re-saved it in Excel.</span>' : '') + '</div>';
@@ -540,19 +620,38 @@
     }
     return h;
   }
-  function tiles(v) {
-    var s = modelSummary(v);
-    var t = [['spare', s.c.spare, 'cover after inbound > 0'], ['nospare', s.c.nospare, 'cover 0: nothing spare, or no stock and no demand'], ['short', s.c.short, 'demand the shelf + inbound cannot meet'], ['notsap', s.c.notsap, 'no SAP material set up'], ['notin', s.unmatched, 'tracked in Lens, no pocket match']];
-    return '<div class="ncb-tiles">' + t.map(function (x) { return '<div class="ncb-tile"><div class="k" style="color:' + ST[x[0]].c + '"><span class="ncb-dot"></span>' + ST[x[0]].w + '</div><div class="v">' + (S.idx || x[0] === 'notin' ? x[1] : '—') + '</div><div class="d">' + x[2] + '</div></div>'; }).join('') + '</div>';
+  // v1.1.1 — the rows the filter shows; the tiles count exactly these (they ignored the filter before)
+  var FILTER_NAME = { all: 'All', major: 'Majors', minor: 'Minors', attn: 'Needs attention' };
+  function filteredPockets(v) {
+    return v.pockets.filter(function (x) {
+      if (S.filter === 'major' || S.filter === 'minor') return x.p.tier === S.filter;
+      if (S.filter === 'attn') return (x.st && x.st.status !== 'spare') || (!x.lens.length && v.unmatched.some(function (u) { return u.hint === x.p; }));
+      return true;
+    });
   }
+  function tiles(v) {
+    var rows = filteredPockets(v), c = { spare: 0, nospare: 0, short: 0, notsap: 0 };
+    rows.forEach(function (x) { if (x.st) c[x.st.status]++; });
+    // the fifth tile counts LENS components with no pocket — a different thing from the spares components the first
+    // four count, so it stands apart and says so (UI audit: 20 + 11 + 1 + 6 + 9 = 47 on a 38-component model)
+    var t = [['spare', c.spare, 'cover after inbound > 0'], ['nospare', c.nospare, 'cover 0: nothing spare, or no stock and no demand'], ['short', c.short, 'demand the shelf + inbound cannot meet'], ['notsap', c.notsap, 'no SAP material set up'], ['notin', v.unmatched.length, 'Lens components with no spares match — not part of the ' + rows.length]];
+    return '<div class="ncb-meta" style="margin-top:10px">Counting ' + rows.length + ' of ' + v.pockets.length + ' components · ' + FILTER_NAME[S.filter] + (v.pockets.some(function (x) { return x.fam; }) ? ' · each part number of a split component counts once' : '') + '</div>' +
+      '<div class="ncb-tiles">' + t.map(function (x) { return '<div class="ncb-tile' + (x[0] === 'notin' ? ' aside' : '') + '"><div class="k" style="color:' + ST[x[0]].c + '"><span class="ncb-dot"></span>' + ST[x[0]].w + '</div><div class="v">' + (S.idx || x[0] === 'notin' ? x[1] : '—') + '</div><div class="d">' + x[2] + '</div></div>'; }).join('') + '</div>';
+  }
+  // v1.1.1 — one signed-number format for card, table and statement (the card wrote "-3", the table "−3")
+  function signed(n) { return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n); }
   function qtyWords(st) {
     if (!st) return '<span style="color:var(--nc-text-d)">no stock data</span>';
     if (st.status === 'notsap') return 'not set up in SAP';
-    return 'shelf ' + st.soh + ' · on the way ' + (st.po + st.tr) + ' · reserved ' + st.res + ' · cover ' + (st.net > 0 ? '+' : '') + st.net;
+    return (st.assembly ? 'kits · ' : '') + 'shelf ' + st.soh + ' · on the way ' + (st.po + st.tr) + ' · reserved ' + st.res + ' · cover ' + signed(st.net);
   }
   function boardHtml(v) {
     var m = v.m, majors = v.pockets.filter(function (x) { return x.p.tier === 'major'; });
-    if (!majors.length || m.reference || !majors.some(function (x) { return x.p.anchor; })) return '';   // v1.1.0 — reference models are tables only
+    if (!majors.length || m.reference || !majors.some(function (x) { return x.p.anchor; })) {   // v1.1.0 — reference models are tables only
+      // v1.1.1 (UI audit BEN-03) — with no board there was no model name anywhere on the page
+      var u = v.units;
+      return '<div class="ncb-eyebrow" style="margin-top:6px">' + esc(m.brand || '') + (m.group === 'REF' ? ' · ' + GROUP_NAME.REF : '') + '</div><h1 class="ncb-h">' + esc(m.label) + '</h1><div class="ncb-sub">' + esc(m.class || '') + ' · ' + u.length + ' ' + (u.length === 1 ? 'unit' : 'units') + (u.length ? ' (' + esc(u.length > 3 ? u[0] + '–' + u[u.length - 1] : u.join(', ')) + ')' : '') + ' · tables only, no machine board</div>';
+    }
     return '<div class="ncb-boardwrap" id="ncb-boardwrap"><div class="ncb-board" id="ncb-board" data-img="' + esc(S.host.imageBase + m.image) + '"></div></div>';
   }
   // V3 board(): image box, anchors, top row, left/right columns, leader lines
@@ -606,7 +705,7 @@
         svg += '<g style="color:' + col + '"><line x1="' + ex.toFixed(0) + '" y1="' + ey.toFixed(0) + '" x2="' + c.ax.toFixed(0) + '" y2="' + c.ay.toFixed(0) + '" stroke="currentColor" stroke-width="1.5" opacity=".82"/>' +
           '<circle cx="' + ex.toFixed(0) + '" cy="' + ey.toFixed(0) + '" r="3.2" fill="currentColor"/><circle cx="' + c.ax.toFixed(0) + '" cy="' + c.ay.toFixed(0) + '" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="' + c.ax.toFixed(0) + '" cy="' + c.ay.toFixed(0) + '" r="2.8" fill="currentColor"/></g>';
         h += '<div class="ncb-card" data-open="' + esc(c.x.p.id) + '" style="left:' + c.cx.toFixed(0) + 'px;top:' + c.cy.toFixed(0) + 'px"><div class="acc" style="background:' + col + '"></div><div class="in">' + badge(k) +
-          '<div class="nm">' + esc(c.x.p.component) + '</div><div class="pn">' + esc(c.x.p.vpn) + (c.x.lens.length ? ' · ' + c.x.lens.reduce(function (s, l) { return s + l.n; }, 0) + ' in Lens' : '') + '</div><div class="q" style="color:' + col + '">' + qtyWords(c.x.st) + '</div></div></div>';
+          '<div class="nm">' + esc(c.x.label) + '</div><div class="pn">' + esc(c.x.p.vpn) + (c.x.st && c.x.st.assembly ? ' · assembly' : '') + (c.x.lens.length ? ' · ' + c.x.lens.reduce(function (s, l) { return s + l.n; }, 0) + ' in Lens' : '') + '</div><div class="q" style="color:' + col + '">' + qtyWords(c.x.st) + '</div></div></div>';
       });
       svg += '</svg>';
       board.innerHTML = svg + h;
@@ -614,33 +713,45 @@
     }
   }
   function statement(st) {
-    if (!st) return 'No stock data yet — load or link the INV_MSTR.';
+    if (!st) return 'No stock data yet: it comes from the client folder\'s INV_MSTR (or load one by hand from ⋯).';
     if (st.status === 'notsap') return 'No SAP material is set up for any of this pocket\'s part numbers.';
     var way = st.po + st.tr;
-    var s = '<b>' + st.soh + '</b> on the shelf, <b>' + way + '</b> on the way' + (way ? ' (' + st.po + ' on order' + (st.tr ? ', ' + st.tr + ' in transit' : '') + ')' : '') + ', <b>' + st.res + '</b> reserved ';
+    var s = (st.assembly ? '<b>Complete kits</b> (one of every sub-part group, counted by the scarcest group — group ' + (st.bind + 1) + ' of ' + st.groups.length + '): ' : '') +
+      '<b>' + st.soh + '</b> on the shelf, <b>' + way + '</b> on the way' + (way ? ' (' + st.po + ' on order' + (st.tr ? ', ' + st.tr + ' in transit' : '') + ')' : '') + ', <b>' + st.res + '</b> reserved ';
     if (st.status === 'spare') s += '→ <b style="color:var(--ncb-spare)">' + st.net + ' spare</b> after everything inbound arrives.';
     else if (st.status === 'nospare') s += (st.soh + way === 0 ? '→ <b style="color:var(--ncb-nospare)">no spare</b>: nothing on the shelf or on the way, and nothing reserved against it.' : '→ <b style="color:var(--ncb-nospare)">exactly covered</b>: nothing spare once reservations are met.');
     else if (st.soh + way === 0) s += '→ <b style="color:var(--ncb-short)">short by ' + (-st.net) + '</b>: demand, with nothing on the shelf or inbound.';
     else s += '→ <b style="color:var(--ncb-short)">short by ' + (-st.net) + '</b> even after everything inbound arrives.';
-    if (st.assembly) s += ' <span style="color:var(--nc-text-m)">(an assembly: counted as the smallest of its sub-part groups, as in Critical Spares V3)</span>';
+    if (st.assembly) s += ' <span style="color:var(--nc-text-m)">The rows below are grouped by sub-part group; the highlighted subtotal is the one that sets the count.</span>';
     return s;
   }
   function netCell(st) {
     if (!st) return '<span style="color:var(--nc-text-d)">—</span>';
     if (st.status === 'notsap') return '<span style="color:var(--nc-text-d)">—</span>';
     var col = st.status === 'spare' ? 'var(--ncb-spare)' : st.status === 'nospare' ? 'var(--ncb-nospare)' : 'var(--ncb-short)';
-    return '<span class="ncb-net" style="color:' + col + '">' + (st.net > 0 ? '+' : st.net < 0 ? '−' : '') + Math.abs(st.net) + '</span>';
+    return '<span class="ncb-net" style="color:' + col + '">' + signed(st.net) + '</span>';
   }
+  // v1.1.1 — the SAP detail. An assembly's rows come grouped per sub-part group with a subtotal each; the binding
+  // group's subtotal equals the headline. Everything else: the rows add up to the headline.
+  function matsTable(st) {
+    if (!st || !st.detail.length) return '';
+    var head = '<table class="ncb-mats"><thead><tr><th>SAP #</th><th>Type</th><th>VPN</th><th class="l">Description</th><th>On shelf</th><th>On order</th><th>In transit</th><th>Reserved</th></tr></thead><tbody>';
+    var row = function (d) { return '<tr><td class="ncb-mono">' + esc(d.sap) + '</td><td><span class="ncb-pill ' + d.cat + '">' + d.cat + '</span></td><td class="ncb-mono">' + esc(d.vpn) + '</td><td class="l">' + esc(d.desc) + '</td><td class="n">' + d.qoh + '</td><td class="n">' + d.qoo + '</td><td class="n">' + d.qit + '</td><td class="n">' + d.rsrv + '</td></tr>'; };
+    if (!st.assembly) return head + st.detail.map(row).join('') + '</tbody></table>';
+    return head + st.groups.map(function (g) {
+      var rs = st.detail.filter(function (d) { return d.grp === g.i; }), bind = g.i === st.bind;
+      return '<tr class="ncb-grp"><td colspan="8">Sub-part group ' + (g.i + 1) + ' of ' + st.groups.length + ' · ' + esc(g.vpns.join(' / ')) + (g.n ? '' : ' · not set up in SAP') + '</td></tr>' + rs.map(row).join('') +
+        '<tr class="ncb-sub' + (bind ? ' bind' : '') + '"><td colspan="4" class="l">Group ' + (g.i + 1) + ' subtotal · cover ' + signed(g.net) + (bind ? ' · sets the kit count' : '') + '</td><td class="n">' + g.soh + '</td><td class="n">' + g.po + '</td><td class="n">' + g.tr + '</td><td class="n">' + g.res + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function unitChips(units) { return (units || []).map(function (u) { return '<span class="ncb-uchip">' + esc(u) + '</span>'; }).join(''); }
   function tableHtml(v) {
     var today = localIso(new Date());
-    var rows = v.pockets.filter(function (x) {
-      if (S.filter === 'major' || S.filter === 'minor') return x.p.tier === S.filter;
-      if (S.filter === 'attn') return (x.st && x.st.status !== 'spare') || (!x.lens.length && v.unmatched.some(function (u) { return u.hint === x.p; }));
-      return true;
-    });
+    var rows = filteredPockets(v);
     var h = '<div class="ncb-tscroll"><table><thead><tr><th>Status</th><th class="l">Component</th><th class="l">Tracked in Lens</th><th>Worst life</th><th>Next due (plan)</th><th>On shelf</th><th>On the way</th><th>Reserved</th><th>Cover after inbound</th><th>Types in stock</th><th></th></tr></thead><tbody>';
-    rows.forEach(function (x) {
+    rows.forEach(function (x, ri) {
       var p = x.p, st = x.st, k = st ? st.status : 'nostock';
+      var nx = rows[ri + 1], famNext = x.fam && nx && nx.fam && nx.fam.head === x.fam.head && !S.open[p.id];
       var likely = v.unmatched.filter(function (u) { return u.hint === p; });
       var lens = x.lens.length
         ? '<div class="ncb-lens">' + x.lens.map(function (l) { return esc(l.name); }).join(', ') + ' <span style="color:var(--nc-text-d)">· ' + x.lens.reduce(function (s, l) { return s + l.n; }, 0) + ' tracked</span></div><div class="ncb-how">by ' + esc(x.lens[0].how) + '</div>'
@@ -653,16 +764,18 @@
       var open = !!S.open[p.id];
       var types = st && st.types.length ? st.types.map(function (t) { return '<span class="ncb-pill ' + t + '">' + t + '</span>'; }).join('') : '<span style="color:var(--nc-text-d)">—</span>';
       var q = function (n) { return st && st.status !== 'notsap' ? n : '<span style="color:var(--nc-text-d)">—</span>'; };
-      h += '<tr class="ncb-row" data-id="' + esc(p.id) + '"><td>' + badge(k) + '</td><td class="l"><div class="ncb-cname">' + esc(p.component) + '</div><div class="ncb-meta">' + p.tier + (p.location ? ' · ' + esc(p.location) : '') + ' · VPN ' + esc(p.vpn) + (p.split ? ' · split ⓘ' : '') + (p.alsoFits ? ' · also fits other models' : '') + '</div></td>' +
+      var f = x.fam, cont = f && !f.first;
+      var name = (cont ? '<span class="ncb-arrow">↳</span>' : '') + esc(x.label) + (f ? unitChips(f.units) : '') + (f && f.first ? '<span class="ncb-why" title="' + esc(SPLIT_WHY[f.reason] || SPLIT_WHY.multiple) + '">i</span>' : '');
+      h += '<tr class="ncb-row' + (cont ? ' ncb-cont' : '') + (famNext ? ' ncb-fam' : '') + '" data-id="' + esc(p.id) + '"><td>' + badge(k) + '</td><td class="l"><div class="ncb-cname">' + name + '</div><div class="ncb-meta">' + p.tier + (p.location ? ' · ' + esc(p.location) : '') + ' · VPN ' + esc(p.vpn) + (f ? ' · part number ' + f.n + ' of ' + f.of : '') + (st && st.assembly ? ' · assembly · counted in complete kits' : '') + (p.alsoFits ? ' · also fits other models' : '') + '</div></td>' +
         '<td class="l">' + lens + '</td><td class="n">' + worstTxt + '</td><td class="n" style="font-size:12px">' + dueTxt + '</td>' +
-        '<td class="n">' + q(st ? st.soh : 0) + '</td><td class="n">' + q(st ? st.po + st.tr : 0) + '</td><td class="n">' + q(st ? st.res : 0) + '</td><td>' + netCell(st) + '</td><td>' + types + '</td><td style="color:var(--nc-text-d)">' + (open ? '▾' : '▸') + '</td></tr>';
+        '<td class="n">' + q(st ? st.soh : 0) + (st && st.assembly && st.status !== 'notsap' ? '<span class="ncb-kit">kits</span>' : '') + '</td><td class="n">' + q(st ? st.po + st.tr : 0) + '</td><td class="n">' + q(st ? st.res : 0) + '</td><td>' + netCell(st) + '</td><td>' + types + '</td><td style="color:var(--nc-text-d)">' + (open ? '▾' : '▸') + '</td></tr>';
       if (open) {
-        var mats = st && st.detail.length ? '<table class="ncb-mats"><thead><tr><th>SAP #</th><th>Type</th><th>VPN</th><th class="l">Description</th><th>On shelf</th><th>On order</th><th>In transit</th><th>Reserved</th></tr></thead><tbody>' +
-          st.detail.map(function (d) { return '<tr><td class="ncb-mono">' + esc(d.sap) + '</td><td><span class="ncb-pill ' + d.cat + '">' + d.cat + '</span></td><td class="ncb-mono">' + esc(d.vpn) + '</td><td class="l">' + esc(d.desc) + '</td><td class="n">' + d.qoh + '</td><td class="n">' + d.qoo + '</td><td class="n">' + d.qit + '</td><td class="n">' + d.rsrv + '</td></tr>'; }).join('') + '</tbody></table>' : '';
+        var mats = matsTable(st);
         var notes = [];
+        if (st && st.ambiguous && st.ambiguous.length) notes.push('<span class="ncb-warn">Not counted: part number ' + st.ambiguous.map(function (a) { return '<span class="ncb-mono">' + esc(a) + '</span>'; }).join(', ') + ' is not in the INV_MSTR as written, and with leading zeros ignored it matches more than one different part number. Check which one is right.</span>');
         if (st) notes.push('SAP stock rule (MRP): <span class="ncb-mono">' + esc(st.mrp) + '</span>');
         notes.push('Part numbers in this pocket: <span class="ncb-mono">' + esc((p.vpns || []).join(', ')) + '</span>');
-        if (p.split) notes.push('Split (' + esc(p.split.reason || '') + '): ' + p.split.variants.map(function (sv) { return '<span class="ncb-mono">' + esc(sv.vpn) + '</span> on ' + esc((sv.units || []).join(', ')); }).join(' · '));
+        if (f) notes.push('Split component: part number ' + f.n + ' of ' + f.of + ', fits ' + esc(f.units.join(', ') || 'the model') + '. ' + esc(SPLIT_WHY[f.reason] || SPLIT_WHY.multiple));
         if (p.alsoFits) notes.push('Also fits: ' + p.alsoFits.map(function (a) { return esc(a.model) + ' (' + esc((a.comps || []).join(', ')) + ')'; }).join(' · '));
         if (x.lens.length) notes.push('Lens components on this pocket: ' + x.lens.map(function (l) { return esc(l.name) + ' (' + l.n + ', part ' + esc(l.pn) + (l.mm ? ', SAP ' + esc(l.mm) : '') + (l.worst != null ? ', worst ' + Math.round(l.worst * 100) + '%' : '') + ')'; }).join(' · '));
         h += '<tr class="ncb-detail"><td colspan="11"><div class="ncb-stmt">' + statement(st) + '</div>' + mats + notes.map(function (n) { return '<div class="ncb-note">' + n + '</div>'; }).join('') + '</td></tr>';
@@ -674,7 +787,7 @@
     if (!v.unmatched.length) return '';
     return '<section class="ncb-panel"><h3>Tracked in Lens, not matched to a spares pocket (' + v.unmatched.length + ')</h3><p>Neither the SAP number nor the part number of these components appears in any ' + esc(v.m.label) + ' pocket. Where the name points at a pocket, the part number on file differs from that pocket\'s part list, so one of the two is out of date. They count as <b>Not in review</b> — never as covered, never as zero stock.</p>' +
       '<table class="ncb-mats"><thead><tr><th class="l">Lens component</th><th>Units</th><th>Part number</th><th>SAP number</th><th>Worst life</th><th class="l">What to check</th></tr></thead><tbody>' +
-      v.unmatched.map(function (u) { return '<tr><td class="l">' + esc(u.name) + '</td><td class="n">' + u.n + '</td><td class="ncb-mono">' + (esc(u.pn) || '—') + '</td><td class="ncb-mono">' + (esc(u.mm) || '—') + '</td><td class="n">' + (u.worst != null ? Math.round(u.worst * 100) + '%' : '—') + '</td><td class="l">' + (u.hint ? 'Name suggests <b>' + esc(u.hint.component) + '</b> (parts ' + esc((u.hint.vpns || []).slice(0, 3).join(', ')) + (u.hint.vpns.length > 3 ? ', …' : '') + ') — confirm which part number is current' : '<span style="color:var(--nc-text-m)">No pocket for this component on the ' + esc(v.m.label) + ' — add one, or accept the gap</span>') + '</td></tr>'; }).join('') + '</tbody></table></section>';
+      v.unmatched.map(function (u) { return '<tr><td class="l">' + esc(u.name) + '</td><td class="n">' + u.n + '</td><td class="ncb-mono">' + (esc(u.pn) || '—') + '</td><td class="ncb-mono">' + (esc(u.mm) || '—') + '</td><td class="n">' + (u.worst != null ? Math.round(u.worst * 100) + '%' : '—') + '</td><td class="l">' + (u.hint ? 'Name suggests <b>' + esc(baseName(u.hint)) + '</b> (parts ' + esc((u.hint.vpns || []).slice(0, 3).join(', ')) + (u.hint.vpns.length > 3 ? ', …' : '') + ') — confirm which part number is current' : '<span style="color:var(--nc-text-m)">No pocket for this component on the ' + esc(v.m.label) + ' — add one, or accept the gap</span>') + '</td></tr>'; }).join('') + '</tbody></table></section>';
   }
   function summaryHtml(def, views) {
     var h = '<h1 class="ncb-h">Fleet spares cover</h1><div class="ncb-sub">Every critical component per model, judged on <b>cover after inbound</b> (on the shelf + on the way − reserved). Click a model for its board and table.</div>';
@@ -699,7 +812,12 @@
       '<table class="ncb-mats"><thead><tr><th class="l">Lens component</th><th>Tracked</th></tr></thead><tbody>' + Object.keys(names).sort().map(function (n) { return '<tr><td class="l">' + esc(n) + '</td><td class="n">' + names[n] + '</td></tr>'; }).join('') + '</tbody></table>';
   }
   function emptyHtml() {
-    return '<div class="ncb-empty"><h2>No Bench definition in this fleet file</h2><p>Bench needs the spares definition — which part numbers fit which component pocket on each model. Import it once (the <span class="ncb-mono">bench_definition_*.json</span> built from Critical Spares Review V3), then SAVE FILE to keep it in the fleet JSON.</p><p><button class="ncb-btn solid" data-act="import">Import Bench definition</button></p><p style="font-size:12px">Stock is never stored in the fleet file: it is read from the INV_MSTR each session (Load or Link), and later from the client folder.</p></div>';
+    // v1.1.1 — says what the definition is (not a snapshot or SAP file), where it comes from and how often it changes
+    return '<div class="ncb-empty"><h2>No Bench definition in this fleet file</h2>' +
+      '<p>The Bench definition is the <b>critical-spares list</b>: which part numbers fit which component on each model, and where each major sits on the machine picture. It is not a SAP export or a snapshot — it is built once from the Cat component snapshots and the Sandvik parts lists (the Critical Spares Review V3 work), and changes only when that list changes.</p>' +
+      '<p>Import it once (a <span class="ncb-mono">bench_definition_*.json</span> file), then SAVE FILE: it travels inside the fleet JSON from then on.</p>' +
+      '<p><button class="ncb-btn solid" data-act="import">Import Bench definition</button></p>' +
+      '<p style="font-size:12px">Stock is never stored in the fleet file: it is read each session from the INV_MSTR in the client folder (or loaded by hand when there is no folder).</p></div>';
   }
 
   function rerender() { if (S.el && S.host) render(S.el, S.host); }
@@ -708,10 +826,10 @@
     S.el = el; S.host = host;
     if (S.rawRef !== host.raw) { S.rawRef = host.raw; S.model = ''; S.open = {}; }     // a different fleet file was loaded
     var cc = host.clientCode || 'DEFAULT';                                               // v1.1.0 — stock never carries over to another client
-    if (S.cc && S.cc !== cc) { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; S.linkTried = false; S.linkPending = null; }
+    // v1.1.1 — a new client also resets the view (model, open rows, filter), not just the stock
+    if (S.cc && S.cc !== cc) { S.idx = null; S.stock = null; S.prev = null; S.askDate = false; S.model = ''; S.open = {}; S.filter = 'all'; }
     S.cc = cc;
     var def = benchDef();
-    if (!S.linkTried && root.indexedDB) { S.linkTried = true; reReadLinked(false); }
     var main;
     var views = {};
     if (def) def.models.forEach(function (m) { views[m.key] = modelView(m); });
@@ -744,9 +862,8 @@
     el.querySelectorAll('[data-act]').forEach(function (n) {
       n.onclick = function () {
         var a = n.getAttribute('data-act');
+        var menu = n.closest && n.closest('details.ncb-more'); if (menu) menu.open = false;
         if (a === 'load') inv.click();
-        else if (a === 'link') linkFile();
-        else if (a === 'reread') { S.linkPending = null; reReadLinked(true); }
         else if (a === 'import') defIn.click();
         else if (a === 'export') exportDef();
         else if (a === 'setdate') {
@@ -796,7 +913,7 @@
     S.idx = idx; S.prev = null;
     S.stock = { fileName: meta.fileName || 'client folder', sheet: 'folder copy', dataAsOf: meta.dataAsOf || null, method: meta.method || 'unknown',
                 loadedAt: new Date(), materials: idx.nmat, ledger: idx.ledger, lastModified: 0, source: 'folder' };
-    S.askDate = false; S.linkTried = true; S.linkPending = null;   // the folder wins over a remembered file link
+    S.askDate = false;
     rerender();
     return idx.nmat;
   }
@@ -806,6 +923,7 @@
     version: VERSION, render: render, setStock: setStock, clearStock: clearStock,
     // exposed for tests / the folder reader to come
     _internal: { buildIndex: buildIndex, headerAt: headerAt, lookup: lookup, resolveU: resolveU, pocketStock: pocketStock, netStatus: netStatus, catOf: catOf, joinKey: joinKey, dateFromFileName: dateFromFileName, state: S,
+                 ambiguousCode: ambiguousCode, families: families, labels: labels, baseName: baseName, qtyWords: qtyWords, signed: signed,   // v1.1.1 — for the reconcile test
                  setIndex: function (idx, stock) { S.idx = idx; S.stock = stock; S.askDate = !stock.dataAsOf; rerender(); } }
   };
 })(typeof window !== 'undefined' ? window : this);
