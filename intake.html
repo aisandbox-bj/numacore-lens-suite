@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NumaCore Intake v8.12</title>
+<title>NumaCore Intake v8.13</title>
 <script src="numacore_lib.js"></script>
+<!-- v8.13 — the client-folder reader, for its IW39 parser (reused, not rebuilt: the Building Blocks ingest rule).
+     Optional: without it the IW39 input says so, and everything else works. -->
+<script src="numacore_workspace.js"></script>
 <!-- v8.8 FIX-1 (2026-06-10, review P5 Chunk A) — vendored libraries, local-first
      with CDN fallback. SheetJS upgraded 0.18.5 → 0.20.2: cdnjs froze at 0.18.5;
      0.19.3+ fixes CVE-2023-30533 (prototype pollution) + CVE-2024-22363 (ReDoS),
@@ -597,6 +600,20 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
     </div>
   </div>
 
+  <!-- v8.13 — optional IW39: the back-up for replaced components still linked to a Cadence project -->
+  <div class="card" id="iw39Card" style="margin-bottom:16px">
+    <div class="card-title">Work orders (IW39) — optional</div>
+    <div class="card-sub">For <b>Component History</b> and <b>Everything</b>. When a replaced component is still linked to a Cadence project, Intake records the case and lists the work orders on that unit within 14 days of the new install date as its back-up. Best: the dated copy in the client folder, <code>lens\data\IW39 … .js</code>. An IW39 export (.xlsx) works too.</div>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div class="drop-zone" id="dropZoneIW39" style="padding:12px 18px;flex:0 0 auto" onclick="document.getElementById('fileInputIW39').click()" ondragover="onDragOver(event,'iw39')" ondragleave="onDragLeave(event,'iw39')" ondrop="onDrop(event,'iw39')">
+        <p style="font-size:12px;margin:0">📋 Drop the IW39 here or <span>browse</span></p>
+      </div>
+      <input type="file" id="fileInputIW39" accept=".js,.xlsx,.xls" style="display:none" onchange="onFileSelectIW39(event)">
+      <div id="iw39Status" style="font-size:12px;color:var(--text3);flex:1;min-width:240px">No IW39 given. Cases are still recorded, marked "no work orders given".</div>
+      <button class="btn btn-outline btn-sm" id="iw39ClearBtn" style="display:none" onclick="clearUpdateIW39()">Clear</button>
+    </div>
+  </div>
+
   <!-- Update progress area -->
   <div id="updateProgress" style="display:none">
     <div class="card">
@@ -868,7 +885,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.12';
+const VERSION = '8.13';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -1187,6 +1204,8 @@ let state = {
   updateWorkbook: null,
   updateFleetJSON: null,
   updatedFleetJSON: null,
+  updateIW39: null,        // v8.13 — the IW39 back-up {file, dataAsOf, byUnit, byOrder, …}; memory only, never saved to the browser
+  updateSourceName: '',    // v8.13 — the update sheet's file name, named in each replaced-while-linked record
   updateMapping: {},       // colIndex → v5 field (for modes 2 & 3)
   // FEAT-8: Merge Preview
   pendingDiff: [],
@@ -1392,6 +1411,7 @@ function onDragLeave(e, target) { getDropZone(target).classList.remove('dragover
 function getDropZone(target) {
   if (target === 'update')     return document.getElementById('dropZoneUpdate');
   if (target === 'json')       return document.getElementById('dropZoneJSON');
+  if (target === 'iw39')       return document.getElementById('dropZoneIW39');   // v8.13
   if (target === 'conmonJSON') return document.getElementById('dropZoneConmonJSON');
   if (target === 'conmonPDF')  return document.getElementById('dropZoneConmonPDF');
   // v8.6 (Ship 5) — Idling tab drop zones
@@ -1413,6 +1433,7 @@ function onDrop(e, target) {
   // onchange handler). Caught by operator live-test 2026-05-13 late evening.
   if (target === 'idlingJSON') { loadIdlingFleetJSON(file); return; }
   if (target === 'idlingXLSX') { loadIdlingXLSX(file); return; }
+  if (target === 'iw39')       { loadUpdateIW39(file); return; }   // v8.13
   if (target === 'update')     { loadUpdateFile(file); return; }
   if (target === 'json')       { loadJSONFile(file); return; }
   if (target === 'conmonJSON') { loadConmonFleetJSON(file); return; }
@@ -1422,6 +1443,7 @@ function onDrop(e, target) {
 function onFileSelect(e) { if (e.target.files[0]) loadSourceFile(e.target.files[0]); }
 function onFileSelectUpdate(e) { if (e.target.files[0]) loadUpdateFile(e.target.files[0]); }
 function onFileSelectJSON(e)   { if (e.target.files[0]) loadJSONFile(e.target.files[0]); }
+function onFileSelectIW39(e)   { if (e.target.files[0]) loadUpdateIW39(e.target.files[0]); e.target.value = ''; }   // v8.13
 
 function loadSourceFile(file) {
   const reader = new FileReader();
@@ -2475,6 +2497,7 @@ function loadUpdateFile(file) {
     try {
       const data = new Uint8Array(e.target.result);
       state.updateWorkbook = XLSX.read(data, { type: 'array', cellDates: true });
+      state.updateSourceName = file.name;   // v8.13
       const dz = document.getElementById('dropZoneUpdate');
       dz.classList.add('loaded');
       dz.innerHTML = `<div class="drop-icon" style="font-size:24px">✅</div><p style="font-size:12px"><strong>${esc(file.name)}</strong></p>`;  // v8.8 FIX-2 — esc file name
@@ -2684,7 +2707,7 @@ function runSMUUpdate() {
 
   let updatedComponents = 0;
   state.pendingReductions = [];   // v8.11 — reset reduced-hours review for this run
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
   // v8.7 FIX-4 (2026-06-10) — unit matching is now case-insensitive, extending the
   // v8.4 BUILD-boundary CAPS rule to the UPDATE boundary ("ex401" in a source export
   // must match "EX401" in the JSON; raw comparison made the row a silent no-op).
@@ -2837,6 +2860,441 @@ function confirmAndRunUpdate() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// v8.13 — REPLACED COMPONENTS STILL LINKED TO A CADENCE PROJECT
+// Operator 2026-09-27: "when a component was linked to a project and the component gets replaced
+// and the date re-forecasted... it remains connected to the project... there should be a record
+// written into the JSON upon Intake". Decided 2026-09-28 (Option A):
+//   • Intake RECORDS each case in working.replacedWhileLinked[] (V5: workingData.replacedWhileLinked[]).
+//     It never changes Cadence's links, date overrides or decision log. Cadence, which owns the links,
+//     reviews them (Keep / Release / Postpone: a later Cadence release, with the operator's consent).
+//   • Each case is classified by dates alone (14 days either side of the project) and carries its
+//     back-up: the work orders on that unit within 14 days of the new install date, from the IW39
+//     (a fixed filter, nearest first; "names the component" is a marker only, never used to decide).
+//     The back-up is frozen with the IW39's file name and data date.
+//   • Cases still open or postponed from earlier updates are listed on every Component / Full Update.
+// Also (decided 2026-09-28): one componentHistory shape. Records Intake writes carry Cadence's
+// HISTORIC field names too (same values), so Cadence's History export and Lens read them all.
+// Scope + rollback: Review docs/Replaced components still linked to projects - scoping + rollback plan - 2026-09-27.md
+// ═══════════════════════════════════════════════════════════════
+const RWL_WINDOW_DAYS = 14;
+const RWL_CASE_WORDS = {
+  done_by_project: 'Done by the project',
+  before_project:  'Replaced before the project',
+  after_project:   'Replaced after the project',
+  no_date:         'No date to compare',
+};
+const RWL_MAX_WOS = 25;
+function _pad2(n) { return (n < 10 ? '0' : '') + n; }
+// Local calendar date. Never toISOString() for a date: on the operator's machine (Vancouver) it flips to tomorrow at 5 pm.
+function _localISO(d) { d = d || new Date(); return d.getFullYear() + '-' + _pad2(d.getMonth() + 1) + '-' + _pad2(d.getDate()); }
+function _localStamp(d) {
+  d = d || new Date();
+  const o = -d.getTimezoneOffset(), a = Math.abs(o);
+  return _localISO(d) + 'T' + _pad2(d.getHours()) + ':' + _pad2(d.getMinutes()) + ':' + _pad2(d.getSeconds()) + (o >= 0 ? '+' : '-') + _pad2(Math.floor(a / 60)) + ':' + _pad2(a % 60);
+}
+// Calendar arithmetic on YYYY-MM-DD strings, done in UTC so no time zone can shift a day.
+function _isoMs(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; }
+function _isoDays(a, b) { const x = _isoMs(a), y = _isoMs(b); return x === null || y === null ? null : Math.round((y - x) / 86400000); }
+function _isoAddDays(iso, n) { const x = _isoMs(iso); if (x === null) return null; const d = new Date(x + n * 86400000); return d.getUTCFullYear() + '-' + _pad2(d.getUTCMonth() + 1) + '-' + _pad2(d.getUTCDate()); }
+function _fmtD(iso) { const x = _isoMs(iso); if (x === null) return '—'; const d = new Date(x); return d.getUTCDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+
+// ── one componentHistory shape ──────────────────────────────────
+// [Cadence HISTORIC name, Intake name]. Only a MISSING Cadence name is added, copied from the record's own
+// Intake field; nothing is overwritten, and records Cadence wrote are never touched.
+const HIST_ALIASES = [['unit_id', 'unit'], ['component_name', 'component'], ['machine_down_date', 'removed_date'], ['removal_hours', 'removed_smu'], ['life_achieved', 'hours_consumed'], ['life_pct', 'pct_consumed']];
+function _histAliases(h) {
+  if (!h || typeof h !== 'object') return false;
+  let n = 0;
+  HIST_ALIASES.forEach(([a, b]) => { if (h[a] == null && h[b] != null) { h[a] = h[b]; n++; } });
+  return n > 0;
+}
+// Older records written by Intake (EAM_import / HISTORIC_import) get the same names. Returns how many changed.
+function _histFillShape(histArray) {
+  let n = 0;
+  (histArray || []).forEach(h => { if (h && (h.source === 'EAM_import' || h.source === 'HISTORIC_import') && _histAliases(h)) n++; });
+  return n;
+}
+
+// ── projects, links, records (V4 Flat: working.* · V5: workingData.*) ──
+function _rwlIsV4(fj) { return Array.isArray(fj.components); }
+function _rwlProjects(fj) { const w = _rwlIsV4(fj) ? fj.working : fj.workingData; return (w && Array.isArray(w.projects)) ? w.projects : []; }
+function _rwlRecords(fj, create) {
+  const k = _rwlIsV4(fj) ? 'working' : 'workingData';
+  if (!fj[k] || typeof fj[k] !== 'object') { if (!create) return []; fj[k] = {}; }
+  if (!Array.isArray(fj[k].replacedWhileLinked)) { if (!create) return []; fj[k].replacedWhileLinked = []; }
+  return fj[k].replacedWhileLinked;
+}
+// component id → the projects that list it in linkedIds (a component can sit in more than one)
+function _rwlStart(fj, histArray) {
+  const links = {};
+  _rwlProjects(fj).forEach(p => (p.linkedIds || []).forEach(id => { const k = String(id); (links[k] = links[k] || []).push(p); }));
+  return { links, pending: [], histFilled: histArray ? _histFillShape(histArray) : 0 };
+}
+// Called on each detected replacement, after the old fitting is archived. Stamps the history record with
+// the project; the case record itself is built at the end (_rwlFinish), when the component's hours,
+// benchmark and use rate are final for this update.
+function _rwlOnReplace(ctx, c, info) {
+  const ps = ctx.links[String(c.id)];
+  if (!ps || !ps.length) return;
+  const h = info.histRec;
+  if (h) { h.project_id = ps[0].id; h.project_name = ps[0].name || String(ps[0].id); if (ps.length > 1) h.project_ids = ps.map(p => p.id); }
+  ctx.pending.push({ c, ps, info });
+}
+// The same sum Cadence uses for its forecast (the shadow date): last read + (benchmark − hours used) ÷ hours per day.
+function _rwlForecast(c) {
+  const bm = Number(c.benchmark || 0), ur = Number(c.util_rate || 0);
+  if (!(bm > 0)) return { date: null, note: 'no benchmark on file' };
+  if (!(ur > 0)) return { date: null, note: 'no use rate on file' };
+  const used = Number(c.last_smu || 0) - Number(c.install_hours || 0);
+  const ref = _isoMs(c.last_read) !== null ? String(c.last_read).slice(0, 10) : _localISO();
+  return { date: _isoAddDays(ref, Math.floor((bm - used) / ur)), note: '' };
+}
+// "Names the component" (a marker only): the description holds every significant word of the component
+// name, as whole words (never parts of words, never likeness).
+const RWL_STOP = { AND: 1, THE: 1, OF: 1, FOR: 1, WITH: 1, TO: 1, ON: 1, IN: 1, AT: 1 };
+function _rwlWords(t) { return String(t || '').toUpperCase().split(/[^A-Z0-9]+/).filter(w => w.length >= 2 && !RWL_STOP[w]); }
+function _rwlNamesComponent(desc, comp) { const need = _rwlWords(comp); if (!need.length) return false; const have = new Set(_rwlWords(desc)); return need.every(w => have.has(w)); }
+// The back-up: work orders on the same unit whose actual finish (else basic start) is within 14 days of the
+// anchor date, nearest first. A work order named in the component sheet is listed first, whatever its date.
+function _rwlEvidence(unit, compName, anchor, sheetWo, iw) {
+  const ev = { iw39File: iw ? iw.file : null, iw39Original: iw ? iw.original : null, iw39DataDate: iw ? iw.dataAsOf : null, iw39DateMethod: iw ? iw.method : null,
+    anchor_date: anchor || null, window_days: RWL_WINDOW_DAYS, sheetWo: sheetWo || null, wos: [], more: 0, note: '' };
+  if (!iw) { ev.note = 'no work orders given'; return ev; }
+  const toWo = (r, isSheet) => {
+    const when = r.completionDate || r.basicStart;
+    const d = anchor && when ? _isoDays(anchor, when) : null;
+    return { order: r.order, type: r.orderType || null, description: r.description || '', status: r.systemStatus || '', unit: r.unit || null,
+      basicStart: r.basicStart || null, actualFinish: r.completionDate || null, actualCost: r.actualCost != null ? r.actualCost : null,
+      dateUsed: r.completionDate ? 'actual finish' : 'basic start', daysFromInstall: d, namesComponent: _rwlNamesComponent(r.description, compName), fromSheet: !!isSheet };
+  };
+  const hits = [];
+  const sheetRow = sheetWo && iw.byOrder[String(sheetWo)];
+  if (sheetRow) hits.push(toWo(sheetRow, true));
+  if (!iw.hasUnit) ev.note = 'the IW39 has no Sort field (unit) column, so no work orders could be matched to the unit';
+  else if (!anchor) ev.note = 'no date to match work orders against';
+  else (iw.byUnit[unit] || []).forEach(r => {
+    if (sheetRow && r.order === sheetRow.order) return;
+    const w = toWo(r, false);
+    if (w.daysFromInstall !== null && Math.abs(w.daysFromInstall) <= RWL_WINDOW_DAYS) hits.push(w);
+  });
+  const far = w => w.daysFromInstall === null ? 1e9 : Math.abs(w.daysFromInstall);
+  hits.sort((a, b) => (b.fromSheet - a.fromSheet) || (far(a) - far(b)) || String(a.order).localeCompare(String(b.order)));
+  ev.more = Math.max(0, hits.length - RWL_MAX_WOS);
+  ev.wos = hits.slice(0, RWL_MAX_WOS);
+  if (sheetWo && !sheetRow) ev.note = (ev.note ? ev.note + '; ' : '') + 'the component sheet names work order ' + sheetWo + ', which is not in this IW39';
+  if (!hits.length && !ev.note) ev.note = 'no work orders on ' + unit + ' within ' + RWL_WINDOW_DAYS + ' days of ' + _fmtD(anchor);
+  return ev;
+}
+// Build the case records (one per component and project), skipping any already on file (a re-run).
+function _rwlFinish(ctx, fj, mode) {
+  if (!ctx.pending.length) return [];
+  const list = _rwlRecords(fj, true), have = new Set(list.map(r => r.id)), out = [];
+  const today = _localISO(), stamp = _localStamp(), iw = state.updateIW39, by = 'Intake v' + VERSION;
+  ctx.pending.forEach(({ c, ps, info }) => {
+    const unit = String(c.unit || c.unit_id || '').toUpperCase(), comp = c.component || c.name || '';
+    const anchor = info.dateChanged ? info.newInstallDate : (info.prevRead || null);
+    const anchorBasis = info.dateChanged ? 'the new install date' : (info.prevRead ? 'the last reading before this update (the sheet gave no new install date)' : null);
+    const fc = _rwlForecast(c);
+    const bm = Number(c.benchmark || 0);
+    const life = bm > 0 ? Math.max(0, Math.round((Number(c.last_smu || 0) - Number(c.install_hours || 0)) / bm * 1000) / 10) : null;
+    const ev = _rwlEvidence(unit, comp, anchor, info.sheetWo, iw);
+    ps.forEach(p => {
+      const id = ['RWL', c.id, p.id, info.newInstallDate || ('h' + info.newInstallHours)].join('|');
+      if (have.has(id)) return;
+      let kase = 'no_date';
+      if (anchor && p.start_date && p.end_date) {
+        const lo = _isoAddDays(p.start_date, -RWL_WINDOW_DAYS), hi = _isoAddDays(p.end_date, RWL_WINDOW_DAYS);
+        kase = anchor < lo ? 'before_project' : anchor > hi ? 'after_project' : 'done_by_project';
+      }
+      const rec = {
+        id, component_id: c.id, unit: c.unit || c.unit_id, component: comp,
+        project_id: p.id, project_name: p.name || String(p.id), project_start: p.start_date || null, project_end: p.end_date || null,
+        old_install_date: info.oldInstallDate || null, old_install_hours: info.oldInstallHours,
+        new_install_date: info.newInstallDate || null, new_install_hours: info.newInstallHours,
+        removed_date: info.histRec ? info.histRec.removed_date : null, removed_smu: info.histRec ? info.histRec.removed_smu : null,
+        anchor_date: anchor, anchor_basis: anchorBasis, case: kase, window_days: RWL_WINDOW_DAYS,
+        new_forecast: fc.date, forecast_note: fc.note || null, life_pct_now: life,
+        still_due: fc.date && p.end_date ? fc.date <= p.end_date : null,
+        evidence: JSON.parse(JSON.stringify(ev)),
+        date_checks: (info.checks || []).slice(),   // v8.13 — the sense checks on this replacement (flags)
+        history_id: info.histRec ? info.histRec.id : null,
+        detected_date: today, detected_at: stamp, source_file: state.updateSourceName || null, update_mode: mode, tool: by,
+        status: 'open',
+        log: [{ at: stamp, by, action: 'raised', note: RWL_CASE_WORDS[kase] }],
+      };
+      list.push(rec); have.add(id); out.push(rec);
+    });
+  });
+  return out;
+}
+
+// ── the results panel (both update modes) ───────────────────────
+function _rwlWoLine(w) {
+  const when = w.actualFinish ? 'finished ' + _fmtD(w.actualFinish) : (w.basicStart ? 'basic start ' + _fmtD(w.basicStart) : 'no dates');
+  const gap = w.daysFromInstall === null ? '' : ' (' + (w.daysFromInstall === 0 ? 'same day' : Math.abs(w.daysFromInstall) + ' d ' + (w.daysFromInstall > 0 ? 'after' : 'before')) + ')';
+  const cost = w.actualCost != null && w.actualCost !== '' ? ' · $' + Number(w.actualCost).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '';
+  const tags = (w.fromSheet ? ' <span style="color:var(--gold);font-weight:700">· from the component sheet</span>' : '') + (w.namesComponent ? ' <span style="color:var(--green)">· names the component</span>' : '');
+  return `<div style="margin:2px 0"><b>${esc(String(w.order))}</b> ${esc(w.type || '')} · ${esc(w.status || '—')} · ${esc(when)}${esc(gap)} · ${esc(w.description || '')}${esc(cost)}${tags}</div>`;
+}
+function _rwlEvidenceCell(r) {
+  const ev = r.evidence || {}, n = (ev.wos || []).length;
+  const src = ev.iw39File ? `<div style="color:var(--text3);margin-top:3px">From ${esc(ev.iw39File)} · data date ${esc(_fmtD(ev.iw39DataDate))} · work orders within ${RWL_WINDOW_DAYS} days of ${esc(_fmtD(ev.anchor_date))}</div>` : '';
+  const sheet = ev.sheetWo && !(ev.wos || []).some(w => w.fromSheet) ? `<div>Component sheet WO <b>${esc(ev.sheetWo)}</b></div>` : '';
+  if (!n) return `${sheet}<span style="color:var(--text3)">${esc(ev.note || 'none')}</span>${src}`;
+  return `<details><summary style="cursor:pointer">${n} work order${n === 1 ? '' : 's'}${ev.more ? ' (+' + ev.more + ' more)' : ''}</summary><div style="text-align:left;margin-top:4px">${sheet}${ev.wos.map(_rwlWoLine).join('')}${ev.note ? `<div style="color:var(--text3)">${esc(ev.note)}</div>` : ''}${src}</div></details>`;
+}
+function _rwlTable(recs, withStatus) {
+  const th = (t, left) => `<th style="padding:4px 10px;text-align:${left ? 'left' : 'center'};border-bottom:1px solid var(--border2)">${t}</th>`;
+  const td = (h, left, extra) => `<td style="padding:4px 10px;text-align:${left ? 'left' : 'center'};vertical-align:top;${extra || ''}">${h}</td>`;
+  const rows = recs.map(r => {
+    const hoursOnly = !r.anchor_basis || r.anchor_basis.indexOf('last reading') >= 0;
+    const inst = !hoursOnly ? `${esc(_fmtD(r.new_install_date))} @ ${Number(r.new_install_hours || 0).toLocaleString()} h` : `${Number(r.new_install_hours || 0).toLocaleString()} h<div style="color:var(--text3)">install date not changed in the sheet</div>`;
+    const due = r.still_due === true ? '<span style="color:var(--yellow);font-weight:700">Still due</span>' : r.still_due === false ? 'Not due' : '<span style="color:var(--text3)">—</span>';
+    const fc = r.new_forecast ? esc(_fmtD(r.new_forecast)) : `<span style="color:var(--text3)">can't tell (${esc(r.forecast_note || 'no forecast')})</span>`;
+    const st = withStatus ? td(esc(r.status === 'postponed' ? 'postponed' + (r.postponed_at ? ' ' + _fmtD(String(r.postponed_at).slice(0, 10)) : '') : r.status) + `<div style="color:var(--text3)">raised ${esc(_fmtD(r.detected_date))}</div>`) : '';
+    return `<tr style="border-bottom:1px solid var(--border)">
+      ${td('<b>' + esc(String(r.unit)) + '</b>', true)}${td(esc(r.component), true)}
+      ${td(esc(r.project_name) + `<div style="color:var(--text3)">${esc(_fmtD(r.project_start))} – ${esc(_fmtD(r.project_end))}</div>`, true)}
+      ${td(inst + (hoursOnly && r.anchor_date ? `<div style="color:var(--text3)">dated by the last reading, ${esc(_fmtD(r.anchor_date))}</div>` : ''))}
+      ${td(esc(RWL_CASE_WORDS[r.case] || r.case) + ((r.date_checks || []).length ? `<div style="color:var(--yellow);margin-top:3px" title="${esc(r.date_checks.join(' · '))}">⚠ ${r.date_checks.length} date check${r.date_checks.length === 1 ? '' : 's'}</div>` : ''))}${td(r.life_pct_now != null ? r.life_pct_now + ' %' : '—')}${td(fc)}${td(due)}${st}
+      ${td(_rwlEvidenceCell(r), false, 'min-width:280px;max-width:420px')}
+    </tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr style="color:var(--text3)">${th('Unit', 1)}${th('Component', 1)}${th('Project', 1)}${th('New install')}${th('Case')}${th('Life now')}${th('New forecast')}${th('By project end')}${withStatus ? th('Status') : ''}${th('Work orders (back-up)')}</tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+function _rwlPanel(fj, fresh, histFilled) {
+  const freshIds = new Set(fresh.map(r => r.id));
+  const earlier = _rwlRecords(fj, false).filter(r => !freshIds.has(r.id) && (r.status === 'open' || r.status === 'postponed'));
+  let html = '';
+  if (fresh.length) {
+    const due = fresh.filter(r => r.still_due === true).length;
+    html += `<div class="alert alert-warn" style="margin-top:12px;display:block">
+      <div style="font-weight:700;margin-bottom:4px">⚠ ${fresh.length} replaced component${fresh.length === 1 ? ' is' : 's are'} still linked to a Cadence project${due ? ` (${due} still due by the project end)` : ''}</div>
+      <div style="font-size:11px;color:var(--text3)">Recorded in the plan file for review. Intake changed no Cadence link, date or log. Until Cadence's review list arrives, release a link in Cadence by hand if the project no longer needs it. Case: the new install date against the project dates (${RWL_WINDOW_DAYS} days either side). By project end: the new forecast (Cadence's sum) on or before the project end.${state.updateIW39 ? '' : ' No IW39 was given, so the cases carry no work orders.'}</div>
+      ${_rwlTable(fresh, false)}
+    </div>`;
+  }
+  if (earlier.length) {
+    html += `<div class="alert alert-info" style="margin-top:12px;display:block">
+      <div style="font-weight:700;margin-bottom:4px">${earlier.length} case${earlier.length === 1 ? '' : 's'} from earlier updates still waiting for review in Cadence</div>
+      ${_rwlTable(earlier, true)}
+    </div>`;
+  }
+  if (histFilled) html += `<div class="alert alert-info" style="margin-top:8px">ℹ ${histFilled} older history record${histFilled === 1 ? '' : 's'} written by Intake now also carr${histFilled === 1 ? 'ies' : 'y'} Cadence's field names (unit_id, component_name, machine_down_date, removal_hours, life_achieved, life_pct), so Cadence's History export shows ${histFilled === 1 ? 'it' : 'them'}. No value changed.</div>`;
+  return html;
+}
+function _rwlStat(fj, fresh) {
+  const open = _rwlRecords(fj, false).filter(r => r.status === 'open' || r.status === 'postponed').length;
+  if (!open) return '';
+  return `<div class="stat-pill"><div class="stat-num s-yellow">${open}</div><div class="stat-lbl">Linked Replacements${fresh.length && fresh.length !== open ? ` (${fresh.length} new)` : ''}</div></div>`;
+}
+
+// ── the IW39 input (read with the client-folder reader's own parser) ──
+const IW39_METHOD_WORDS = { 'file_name+created_on': 'file name, matching the newest Created On', 'created_on': 'newest Created On in the file', 'file_name': 'file name', 'entered': 'entered at refresh' };
+// ── v8.13 — DATES IN AN UPDATE SHEET: must be dates, and must make sense ──
+// Operator 2026-09-28: "to qualify as a date, there is at least a month and year required... this can come in various
+// formats... 2001 in the context of every other date just does not make sense... basic reasonability checks can flag risks".
+// Found by the v8.13 tests: CS301 Engine's install date is the text "install 5/"; the shared parseDate hands text to
+// new Date(), which read it as 1 May 2001, so every update "replaced" that engine and wrote the made-up date.
+// 1. A cell is a date only with a MONTH and a YEAR, read by fixed patterns (never the browser's lenient parser):
+//    Excel dates and serials; 2026-04-03 (± a time); 2026-04; 2026/04/03; 03.04.2026 (SAP); 4/3/2026 (month first, as
+//    before; day first when the first number is over 12); 04/2026; 3 Apr 2026, 3-Apr-2026, 3-Apr-26, Apr 3, 2026,
+//    April 2026, Fri 3 Apr 2026 10:00. Month and year only → the 1st, noted. Anything else is NOT a date: the value on
+//    file is kept and the cell is listed.
+// 2. Sense checks on the dates and hours an update CHANGES (replacements; new components): after today; earlier than the
+//    fitting it replaces; out of line with the unit's other install dates (over 2 years before the earliest; before 1990);
+//    the last meter reading older than the install; install hours lower than the fitting it replaces. They FLAG (results
+//    screen, merge preview, the replaced-while-linked record); the value is still applied.
+// Component / Full Update and their preview only. BUILD, Historical Import and numacore_lib.parseDate are unchanged (Backlog).
+const _MON3 = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+const _MONFULL = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const _DAYWORD = /^(mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday|of)$/i;
+function _monthOf(w) { w = String(w).toLowerCase(); return _MON3[w] || (_MONFULL.indexOf(w) + 1); }
+function _ymd(y, m, d) {
+  if (!(y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCMonth() === m - 1 ? y + '-' + _pad2(m) + '-' + _pad2(d) : null;
+}
+// → { iso, monthOnly } or null
+function _readDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) { const iso = isNaN(v) ? null : parseDate(v); return iso ? { iso, monthOnly: false } : null; }
+  if (typeof v === 'number') { if (!(v >= 20000 && v <= 80000)) return null; const iso = parseDate(v); return iso ? { iso, monthOnly: false } : null; }
+  const t = String(v).trim(); if (!t) return null;
+  let m, iso;
+  const day = (y, mo, d) => { const x = _ymd(y, mo, d); return x ? { iso: x, monthOnly: false } : null; };
+  const mon = (y, mo) => { const x = _ymd(y, mo, 1); return x ? { iso: x, monthOnly: true } : null; };
+  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|[T\s])/.exec(t))) return day(+m[1], +m[2], +m[3]);
+  if ((m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(t))) return day(+m[1], +m[2], +m[3]);
+  if ((m = /^(\d{4})[-\/](\d{1,2})$/.exec(t))) return mon(+m[1], +m[2]);
+  if ((m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(t))) return day(+m[3], +m[2], +m[1]);
+  if ((m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?)?$/i.exec(t))) return +m[1] > 12 ? day(+m[3], +m[2], +m[1]) : day(+m[3], +m[1], +m[2]);
+  if ((m = /^(\d{1,2})[\/.\-](\d{4})$/.exec(t))) return mon(+m[2], +m[1]);
+  // month names: "3 Apr 2026", "3-Apr-26", "Apr 3, 2026", "April 2026", "Fri 3 Apr 2026 10:00", "3rd April 2026"
+  const cleaned = t.replace(/(\d)(st|nd|rd|th)\b/gi, '$1').replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?/gi, ' ').replace(/,/g, ' ');
+  const tokens = cleaned.split(/[\s\-\/.]+/).filter(Boolean);
+  let mo = 0, moAt = -1, bad = false; const nums = [];
+  tokens.forEach((k, i) => {
+    if (/^\d+$/.test(k)) nums.push({ n: +k, len: k.length, i });
+    else { const x = _monthOf(k); if (x && !mo) { mo = x; moAt = i; } else if (!_DAYWORD.test(k)) bad = true; }
+  });
+  if (bad || !mo) return null;
+  const y4 = nums.filter(x => x.len === 4);
+  if (y4.length === 1) {
+    const rest = nums.filter(x => x !== y4[0]);
+    if (rest.length > 1 || (rest.length === 1 && rest[0].len > 2)) return null;
+    return rest.length ? day(y4[0].n, mo, rest[0].n) : mon(y4[0].n, mo);
+  }
+  // day-Mon-yy (3-Apr-26): the day before the month, a 2-digit year after it
+  if (!y4.length && nums.length === 2 && nums[0].i < moAt && nums[1].i > moAt && nums[1].len === 2 && nums[0].len <= 2) return day(2000 + nums[1].n, mo, nums[0].n);
+  return null;   // no year, or no month: not a date ("May 23", "Apr 3", "Q3 2026", "install 5/")
+}
+
+// The collector: [] while an update runs (listed on its results screen); null in the preview.
+let _sheetDateIssues = null;
+function _dateIssue(where, value, why, kind) {
+  if (!_sheetDateIssues) return;
+  const w = typeof where === 'function' ? where() : where;
+  if (typeof why === 'function') why = why(w.field || '');
+  const it = { unit: String(w.unit || ''), component: String(w.component || ''), field: w.field || '', value: value == null ? '' : String(value), why, kind, comps: w.comp ? [String(w.comp)] : [] };
+  const same = _sheetDateIssues.find(x => x.unit === it.unit && x.component === it.component && x.field === it.field && x.why === it.why);
+  if (!same) _sheetDateIssues.push(it);
+  else if (w.comp && same.comps.indexOf(String(w.comp)) < 0) same.comps.push(String(w.comp));
+}
+// Read a date cell from an update sheet → ISO or null (null = blank or not a date; the value on file is kept).
+function parseSheetDate(val, where) {
+  const r = _readDate(val);
+  if (!r) {
+    if (val != null && String(val).trim() !== '') _dateIssue(where, val instanceof Date ? parseDate(val) : val, f => 'not a date (a month and a year are needed): ' + (/last read/.test(f) ? 'not used; a newer reading is dated today, as for a blank cell' : 'the value on file was kept'), 'not_date');
+    return null;
+  }
+  if (r.monthOnly) _dateIssue(where, val, 'month and year only: read as ' + _fmtD(r.iso), 'note');
+  return r.iso;
+}
+// Install dates on file, per unit (the context for the checks). Text that is not a date is left out.
+function _dateCtx(compArray) {
+  const byUnit = {}, all = [];
+  (compArray || []).forEach(c => { const d = _readDate(c.install_date); if (!d) return; const k = String(c.unit || c.unit_id || '').toUpperCase(); (byUnit[k] = byUnit[k] || []).push({ id: String(c.id), iso: d.iso }); all.push(d.iso); });
+  all.sort();
+  return { byUnit, min: all[0] || null };
+}
+function _isoAddYears(iso, n) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? (+m[1] + n) + '-' + m[2] + '-' + (m[2] === '02' && m[3] === '29' ? '28' : m[3]) : null; }
+// Sense checks on a replacement / new component. c = the component as it will be written (its reading after this update).
+// Returns the reasons (and lists them when collecting). Fixed rules; they flag, never change a value.
+function _installChecks(ctx, c, info, where) {
+  const why = [], today = _localISO();
+  const nd = info.dateChanged || info.isNew ? info.newInstallDate : null;
+  const unit = String(c.unit || c.unit_id || '').toUpperCase();
+  if (nd) {
+    if (nd > today) why.push('install date after today');
+    const od = _readDate(info.oldInstallDate);
+    if (!info.isNew && od && nd < od.iso) why.push('install date earlier than the fitting it replaces (installed ' + _fmtD(od.iso) + ')');
+    const others = ((ctx && ctx.byUnit[unit]) || []).filter(x => x.id !== String(c.id)).map(x => x.iso).sort();
+    const base = others.length >= 3 ? others[0] : (ctx && ctx.min);
+    if (nd < '1990-01-01') why.push('install date before 1990');
+    else if (base && nd < _isoAddYears(base, -2)) why.push('install date more than 2 years before any other install date on ' + (others.length >= 3 ? 'this unit' : 'this file') + ' (earliest ' + _fmtD(base) + ')');
+  }
+  let lr = null, smu = 0;
+  if (!info.isNew) {
+    lr = _readDate(c.last_read); smu = Number(c.last_smu || 0);
+    const nh = Number(info.newInstallHours || 0), oh = Number(info.oldInstallHours || 0);
+    const installIso = nd || (_readDate(c.install_date) || {}).iso || null;
+    if ((lr && installIso && installIso > lr.iso) || nh > smu) why.push('the last meter reading on file (' + (lr ? _fmtD(lr.iso) : 'no date') + ', ' + smu.toLocaleString() + ' h) is older than this install: life and forecast count from it until a newer reading');
+    if (nh > 0 && oh > 0 && nh < oh) why.push('install hours went down (' + oh.toLocaleString() + ' h → ' + nh.toLocaleString() + ' h): they are the unit\'s hours at the change');
+  }
+  if (where && _sheetDateIssues) {
+    const W0 = typeof where === 'function' ? where() : where;
+    why.forEach(w => {
+      if (w.indexOf('the last meter') === 0) {   // a last read date is the machine's: one row per machine (operator 2026-09-28)
+        _dateIssue({ unit: W0.unit, component: '(machine)', field: 'last read date', comp: W0.component }, lr ? lr.iso + ' · ' + smu.toLocaleString() + ' h' : '',
+          'the last meter reading on file is older than the new install of the components named: their life and forecast count from it until a newer reading', 'check');
+      } else _dateIssue(W0, w.indexOf('install hours') === 0 ? (info.newInstallHours != null ? info.newInstallHours + ' h' : '') : nd, w, 'check');
+    });
+  }
+  return why;
+}
+function _isBlankCell(v) { return v == null || String(v).trim() === ''; }
+function _sheetDateHTML() {
+  const L = _sheetDateIssues || [];
+  if (!L.length) return '';
+  const n = k => L.filter(x => x.kind === k).length;
+  const kindWord = { not_date: '<span style="color:var(--red);font-weight:700">not a date</span>', check: '<span style="color:var(--yellow);font-weight:700">check</span>', note: '<span style="color:var(--text3)">note</span>' };
+  const order = { not_date: 0, check: 1, note: 2 };
+  const rows = L.slice().sort((a, b) => order[a.kind] - order[b.kind] || a.unit.localeCompare(b.unit)).slice(0, 60).map(x => `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:4px 10px;font-weight:700">${esc(x.unit)}</td><td style="padding:4px 10px">${x.comps.length && x.component === '(machine)' ? esc(x.comps.length + ' component' + (x.comps.length === 1 ? '' : 's') + ': ' + x.comps.join(', ')) : esc(x.component)}</td>
+      <td style="padding:4px 10px;text-align:center">${esc(x.field)}</td><td style="padding:4px 10px;text-align:center">${esc(x.value)}</td>
+      <td style="padding:4px 10px;text-align:center">${kindWord[x.kind] || ''}</td><td style="padding:4px 10px">${esc(x.why)}</td></tr>`).join('');
+  const head = [n('not_date') ? n('not_date') + ' not a date' : '', n('check') ? n('check') + ' to check (applied)' : '', n('note') ? n('note') + ' note' + (n('note') === 1 ? '' : 's') : ''].filter(Boolean).join(' · ');
+  return `<div class="alert alert-warn" style="margin-top:8px;display:block">
+    <div style="font-weight:700;margin-bottom:4px">⚠ Dates in the sheet: ${head}</div>
+    <div style="font-size:11px;color:var(--text3)">A date needs at least a month and a year. The checks compare each changed date with today, the fitting it replaces, the unit's other install dates and its last meter reading. Fix the source sheet where a row is wrong.</div>
+    <div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="color:var(--text3)"><th style="padding:4px 10px;text-align:left">Unit</th><th style="padding:4px 10px;text-align:left">Component</th><th style="padding:4px 10px">Field</th><th style="padding:4px 10px">In the sheet</th><th style="padding:4px 10px">Kind</th><th style="padding:4px 10px;text-align:left">Why</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>${L.length > 60 ? `<div style="font-size:11px;color:var(--text3)">+${L.length - 60} more</div>` : ''}
+  </div>`;
+}
+function _iw39Reader() { const W = window.NumaCoreWorkspace; return W && W._internal && W._internal.parseScript && W._internal.readWorkbook && W._internal.buildDigest ? W._internal : null; }
+function _iw39Status(html, sev) {
+  const el = document.getElementById('iw39Status'); if (!el) return;
+  el.innerHTML = html; el.style.color = sev === 'warn' ? 'var(--yellow)' : sev === 'ok' ? 'var(--text)' : 'var(--text3)';
+  const b = document.getElementById('iw39ClearBtn'); if (b) b.style.display = state.updateIW39 ? '' : 'none';
+}
+function _iw39FromDigest(dg, fileName) {
+  const src = (dg.meta && dg.meta.sources && dg.meta.sources[0]) || {};
+  const cols = dg.columns || [], at = k => cols.indexOf(k);
+  const P = { order: at('order'), orderType: at('orderType'), description: at('description'), systemStatus: at('systemStatus'), basicStart: at('basicStart'), completionDate: at('completionDate'), actualCost: at('actualCost'), unit: at('unit') };
+  const byUnit = {}, byOrder = {};
+  let n = 0;
+  (dg.rows || []).forEach(r => {
+    const o = {}; Object.keys(P).forEach(k => { o[k] = P[k] >= 0 && r[P[k]] != null ? r[P[k]] : null; });
+    if (o.order == null || o.order === '') return;
+    o.order = String(o.order); n++;
+    if (o.unit) { o.unit = String(o.unit).toUpperCase(); (byUnit[o.unit] = byUnit[o.unit] || []).push(o); }
+    byOrder[o.order] = o;
+  });
+  return { file: fileName, original: src.originalFile || src.file || null, dataAsOf: src.dataAsOf || null, method: src.asOfMethod || null,
+    rows: n, units: Object.keys(byUnit).length, hasUnit: P.unit >= 0, hasFinish: P.completionDate >= 0, byUnit, byOrder, warn: (src.warnings || [])[0] || '' };
+}
+function loadUpdateIW39(file) {
+  const R = _iw39Reader();
+  if (!R) { state.updateIW39 = null; _iw39Status('The IW39 reader (numacore_workspace.js) is not beside this Intake file, so the IW39 can\'t be read. Cases are still recorded without it.', 'warn'); return; }
+  const isJs = /\.js$/i.test(file.name);
+  _iw39Status('Reading ' + esc(file.name) + ' …', '');
+  const rd = new FileReader();
+  rd.onerror = () => { state.updateIW39 = null; _iw39Status('Could not read ' + esc(file.name) + ' (' + esc((rd.error && rd.error.name) || 'read error') + '). If it is in a OneDrive folder, set it to "Always keep on this device", wait for the green tick, and try again.', 'warn'); };
+  rd.onload = e => {
+    try {
+      let dg;
+      if (isJs) {
+        dg = R.parseScript(e.target.result);
+        if (!dg || !dg.meta || dg.meta.kind !== 'intake.digest.iw39') throw new Error('this dated copy is not an IW39 (it is ' + ((dg && dg.meta && dg.meta.kind) || 'unknown') + ')');
+      } else {
+        if (!window.XLSX) throw new Error('the spreadsheet reader (SheetJS) did not load');
+        const wbr = R.readWorkbook(XLSX, new Uint8Array(e.target.result), file.name);
+        if (!wbr.rec || wbr.rec.src !== 'IW39') throw new Error('its columns are not an IW39\'s' + (wbr.rec && wbr.rec.src ? ' (they look like ' + wbr.rec.src + ')' : ''));
+        dg = R.buildDigest(wbr, 'IW39', { fileName: file.name, standardName: file.name, bytes: file.size });
+      }
+      const iw = _iw39FromDigest(dg, file.name);
+      if (!iw.rows) throw new Error('it holds no work orders');
+      state.updateIW39 = iw;
+      _iw39ShowLoaded();
+    } catch (err) { state.updateIW39 = null; _iw39Status('Could not use ' + esc(file.name) + ': ' + esc(err.message) + '.', 'warn'); }
+  };
+  if (isJs) rd.readAsText(file); else rd.readAsArrayBuffer(file);
+}
+function _iw39ShowLoaded() {
+  const iw = state.updateIW39; if (!iw) return;
+  const bits = [`✓ <b>${esc(iw.file)}</b> · data date <b>${esc(_fmtD(iw.dataAsOf))}</b>${iw.method && IW39_METHOD_WORDS[iw.method] ? ' (' + esc(IW39_METHOD_WORDS[iw.method]) + ')' : ''} · ${iw.rows.toLocaleString()} work orders on ${iw.units.toLocaleString()} units`];
+  if (!iw.hasUnit) bits.push('<span style="color:var(--yellow)">No Sort field (unit) column: work orders can\'t be matched to units.</span>');
+  else if (!iw.hasFinish) bits.push('<span style="color:var(--text3)">No Actual finish column: basic start dates are used.</span>');
+  if (iw.warn) bits.push('<span style="color:var(--yellow)">' + esc(iw.warn) + '</span>');
+  _iw39Status(bits.join('<br>'), iw.hasUnit ? 'ok' : 'warn');
+}
+function clearUpdateIW39() { state.updateIW39 = null; _iw39Status('No IW39 given. Cases are still recorded, marked "no work orders given".', ''); }
+
+// ═══════════════════════════════════════════════════════════════
 // FEAT-5 — COMPONENT HISTORY UPDATE
 // ═══════════════════════════════════════════════════════════════
 function runComponentHistoryUpdate() {
@@ -2869,7 +3327,7 @@ function runComponentHistoryUpdate() {
     ? fleetJSON.componentHistory
     : (fleetJSON.masterData.componentHistory = fleetJSON.masterData.componentHistory || []);
 
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
 
   // Build XLSX lookup: "UNIT||COMPONENT" → row
   const xlMap = {};
@@ -2882,6 +3340,9 @@ function runComponentHistoryUpdate() {
   let replacements  = 0;
   let fieldUpdates  = 0;
   const replacementLog = [];
+  const _rwl = _rwlStart(fleetJSON, histArray);   // v8.13 — project links + older history records given one shape
+  _sheetDateIssues = [];                     // v8.13 — dates that are not dates / don't make sense, listed on the results screen
+  const _dctx = _dateCtx(compArray);         // v8.13 — the unit's install dates as loaded, for the checks
 
   compArray.forEach(c => {
     const unitKey = String(c.unit || c.unit_id || '').toUpperCase();
@@ -2892,7 +3353,7 @@ function runComponentHistoryUpdate() {
     // Skip records the user excluded in the merge review
     if (state.mergeExcluded && state.mergeExcluded.size > 0 && state.mergeExcluded.has(xlKey)) return;
 
-    const newInstallDate  = parseDate(getVal(row, 'install_date'));
+    const newInstallDate  = parseSheetDate(getVal(row, 'install_date'), () => ({ unit: getVal(row, 'unit_id'), component: getVal(row, 'comp_name'), field: 'install date' }));   // v8.13
     const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = c.install_date || null;
     const oldInstallHours = c.install_hours || 0;
@@ -2929,9 +3390,17 @@ function runComponentHistoryUpdate() {
         detected_date:  now,
       });
 
+      _histAliases(histArray[histArray.length - 1]);   // v8.13 — Cadence's HISTORIC field names too (one shape)
+
       // Update component with new install data
-      c.install_date  = newInstallDate;
+      c.install_date  = newInstallDate || (_isBlankCell(getVal(row, 'install_date')) ? newInstallDate : oldInstallDate);   // v8.13 — a cell that is not a date keeps the date on file
       c.install_hours = newInstallHours;
+      // v8.13 — linked to a Cadence project? Record the case (Intake never changes the link).
+      const _chk = _installChecks(_dctx, c, { oldInstallDate, oldInstallHours, newInstallDate, newInstallHours, dateChanged: !!dateChanged },
+        { unit: c.unit || c.unit_id, component: c.component || c.name, field: 'install date / hours' });   // v8.13 — flag only
+      _rwlOnReplace(_rwl, c, { oldInstallDate, oldInstallHours, newInstallDate, newInstallHours, dateChanged: !!dateChanged,
+        prevRead: c.last_read || null, sheetWo: String(getVal(row, 'install_wo') || '').trim().replace(/\.0+$/, '') || null,
+        histRec: histArray[histArray.length - 1], checks: _chk });
       replacements++;
       replacementLog.push({
         unit:      c.unit || c.unit_id,
@@ -2956,6 +3425,8 @@ function runComponentHistoryUpdate() {
     if (newNotes     && newNotes     !== c.notes)            { c.notes        = newNotes;     fieldUpdates++; }
     if (newPlannedWO && newPlannedWO !== c.planned_wo)       { c.planned_wo   = newPlannedWO; fieldUpdates++; }
   });
+
+  const _rwlNew = _rwlFinish(_rwl, fleetJSON, 'component');   // v8.13
 
   fleetJSON.meta.lastSaved      = new Date().toISOString();
   fleetJSON.meta.lastImportDate = now;
@@ -3002,9 +3473,10 @@ function runComponentHistoryUpdate() {
     <div class="stat-pill"><div class="stat-num s-green">${replacements}</div><div class="stat-lbl">Replacements</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${fieldUpdates}</div><div class="stat-lbl">Fields Synced</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${histArray.length}</div><div class="stat-lbl">History Records</div></div>
+    ${_rwlStat(fleetJSON, _rwlNew)}
   `;
   document.getElementById('updateResultDetail').innerHTML  =
-    `<div class="alert alert-ok">✓ Component history update complete — ${replacements} replacement(s) detected, ${fieldUpdates} field(s) synced.</div>${logHTML}`;
+    `<div class="alert alert-ok">✓ Component history update complete — ${replacements} replacement(s) detected, ${fieldUpdates} field(s) synced.</div>${_sheetDateHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3040,8 +3512,10 @@ function runFullUpdate() {
     ? fleetJSON.componentHistory
     : (fleetJSON.masterData.componentHistory = fleetJSON.masterData.componentHistory || []);
 
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
 
+  _sheetDateIssues = [];                     // v8.13 — before the sheet is read (the unit map reads the last read dates)
+  const _dctx = _dateCtx(compArray);         // v8.13 — the unit's install dates as loaded, for the checks
   // Build XLSX lookup maps
   const xlUnitMap = {};    // unit_id → { smu, date, utilRate, upDown, model, fleetType }
   const xlCompMap = {};    // "UNIT||COMP" → row
@@ -3062,7 +3536,7 @@ function runFullUpdate() {
       const idle3MoRaw  = parseNum(getVal(row, 'idle_pct_3mo'));
       xlUnitMap[unit] = {
         smu:          parseNum(getVal(row, 'last_smu'))   || null,
-        date:         parseDate(getVal(row, 'last_read_date')),
+        date:         parseSheetDate(getVal(row, 'last_read_date'), () => ({ unit, component: '(machine)', field: 'last read date' })),   // v8.13
         utilRate:     parseNum(getVal(row, 'util_rate'))  || null,
         upDown:       String(getVal(row, 'unit_active') || '').trim().toUpperCase(),
         model:        String(getVal(row, 'model') || '').trim(),
@@ -3076,18 +3550,20 @@ function runFullUpdate() {
 
   let smuUpdates = 0, replacements = 0, fieldUpdates = 0, newUnits = 0, newComponents = 0;
   const replacementLog = [];
+  const _rwl = _rwlStart(fleetJSON, histArray);   // v8.13 — project links + older history records given one shape
   const erpDateLog     = [];
   const _redMap = {};                 // v8.11 — per-unit SMU reductions (source below current)
   state.pendingReductions = [];       // reset reduced-hours review for this run
 
   // Build project-link lookup: compId → project object (from working.projects in the loaded JSON)
   const projectLinks = {};
-  ((fleetJSON.working && fleetJSON.working.projects) || []).forEach(p => {
+  _rwlProjects(fleetJSON).forEach(p => {   // v8.13 — V5 workingData.projects too (was V4 working.projects only)
     (p.linkedIds || []).forEach(id => { projectLinks[id] = p; });
   });
 
   // ── Pass 1: Update existing components ────────────────────────
   compArray.forEach(c => {
+    const _prevRead = c.last_read || null, _prevSmu = c.last_smu || 0;   // v8.13 FIX — the reading on file BEFORE this update's SMU refresh
     const unitKey  = String(c.unit || c.unit_id || '').toUpperCase();
     const compKey  = String(c.component || c.name || '').toUpperCase();
     const unitData = xlUnitMap[unitKey]; // v8.7 FIX-4 — case-normalised lookup (was raw c.unit; missed on case)
@@ -3113,7 +3589,7 @@ function runFullUpdate() {
     if (!row) return;
 
     // Component replacement detection
-    const newInstallDate  = parseDate(getVal(row, 'install_date'));
+    const newInstallDate  = parseSheetDate(getVal(row, 'install_date'), () => ({ unit: getVal(row, 'unit_id'), component: getVal(row, 'comp_name'), field: 'install date' }));   // v8.13
     const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = c.install_date || null;
     const oldInstallHours = c.install_hours || 0;
@@ -3121,7 +3597,9 @@ function runFullUpdate() {
     const hoursChanged    = newInstallHours > 0 && newInstallHours !== oldInstallHours;
 
     if (dateChanged || hoursChanged) {
-      const hoursConsumed = Math.max(0, (c.last_smu || 0) - oldInstallHours);
+      // v8.13 FIX — the old fitting's removal point is the reading on file BEFORE this update, as in Component
+      // Update. It was the SMU just refreshed from this sheet, which counted the NEW fitting's hours as the old one's life.
+      const hoursConsumed = Math.max(0, _prevSmu - oldInstallHours);
       const pctConsumed   = (c.benchmark && c.benchmark > 0)
         ? Math.round(hoursConsumed / c.benchmark * 100 * 10) / 10 : null;
       const maxId = histArray.reduce((m, h) => Math.max(m, h.id || 0), 0);
@@ -3131,15 +3609,22 @@ function runFullUpdate() {
         unit_floc: c.unit_floc || c.unit || c.unit_id,
         fleet: c.fleet || c.fleet_id || '',
         component: c.component || c.name,
-        removed_date: c.last_read || now, removed_smu: c.last_smu || 0,
+        removed_date: _prevRead || now, removed_smu: _prevSmu,   // v8.13 FIX — was the just-refreshed reading
         install_date: oldInstallDate, install_hours: oldInstallHours,
         hours_consumed: hoursConsumed, pct_consumed: pctConsumed,
         benchmark: c.benchmark || null, cost: c.cost || null,
         part_number: c.part_number || null, serial_number: c.serial_number || null,
         source: 'EAM_import', detected_date: now,
       });
-      c.install_date  = newInstallDate;
+      _histAliases(histArray[histArray.length - 1]);   // v8.13 — Cadence's HISTORIC field names too (one shape)
+      c.install_date  = newInstallDate || (_isBlankCell(getVal(row, 'install_date')) ? newInstallDate : oldInstallDate);   // v8.13 — a cell that is not a date keeps the date on file
       c.install_hours = newInstallHours;
+      // v8.13 — linked to a Cadence project? Record the case (Intake never changes the link).
+      const _chk = _installChecks(_dctx, c, { oldInstallDate, oldInstallHours, newInstallDate, newInstallHours, dateChanged: !!dateChanged },
+        { unit: c.unit || c.unit_id, component: c.component || c.name, field: 'install date / hours' });   // v8.13 — flag only
+      _rwlOnReplace(_rwl, c, { oldInstallDate, oldInstallHours, newInstallDate, newInstallHours, dateChanged: !!dateChanged,
+        prevRead: _prevRead, sheetWo: String(getVal(row, 'install_wo') || '').trim().replace(/\.0+$/, '') || null,
+        histRec: histArray[histArray.length - 1], checks: _chk });
       replacements++;
       replacementLog.push({ unit: c.unit || c.unit_id, component: c.component || c.name,
         old_date: oldInstallDate, new_date: newInstallDate,
@@ -3165,7 +3650,7 @@ function runFullUpdate() {
     //     with ERP so the diamond tracks the new theoretical and no ghost appears.
     //   - If the planner HAS adjusted it (changeout_date !== original_date), leave it
     //     alone — the ghost will correctly show the new ERP anchor.
-    const newERPDate = parseDate(getVal(row, 'changeout_date_erp'));
+    const newERPDate = parseSheetDate(getVal(row, 'changeout_date_erp'), () => ({ unit: getVal(row, 'unit_id'), component: getVal(row, 'comp_name'), field: 'predicted change-out' }));   // v8.13
     const oldERPDate = isV17 ? c.original_date : c.changeout_date_erp;
     if (newERPDate && newERPDate !== oldERPDate) {
       if (isV17) {
@@ -3287,17 +3772,18 @@ function runFullUpdate() {
       // Skip new records excluded in merge review
       if (state.mergeExcluded && state.mergeExcluded.size > 0 && state.mergeExcluded.has(`${unit.toUpperCase()}||${comp_name.toUpperCase()}`)) return;
 
-      const install_date  = parseDate(getVal(row, 'install_date'));
+      const install_date  = parseSheetDate(getVal(row, 'install_date'), () => ({ unit, component: comp_name, field: 'install date' }));   // v8.13
       const install_hours = parseNum(getVal(row, 'install_hours')) || 0;
       const benchmark     = parseNum(getVal(row, 'benchmark'))     || 0;
       const cost          = parseNum(getVal(row, 'comp_cost'))      || null;
       const part_number   = String(getVal(row, 'part_number') || '').trim() || null;
       const mm_number     = String(getVal(row, 'mm_number')   || '').trim() || null;
       const notes         = String(getVal(row, 'comp_notes')  || '').trim() || null;
-      const changeout_erp = parseDate(getVal(row, 'changeout_date_erp'));
+      const changeout_erp = parseSheetDate(getVal(row, 'changeout_date_erp'), () => ({ unit, component: comp_name, field: 'predicted change-out' }));   // v8.13
       const category      = categorizeComponent(comp_name);
       const strategy      = autoStrategy(category);
       const comp_id       = makeComponentId(unit, comp_name, null);
+      if (install_date) _installChecks(_dctx, { id: comp_id, unit }, { isNew: true, newInstallDate: install_date }, { unit, component: comp_name, field: 'install date' });   // v8.13 — flag only
 
       if (isV17) {
         compArray.push({
@@ -3383,6 +3869,8 @@ function runFullUpdate() {
       return true;                                       // genuine planner override — keep it
     });
   }
+
+  const _rwlNew = _rwlFinish(_rwl, fleetJSON, 'full');   // v8.13 — after Pass 1, so hours / benchmark / use rate are final
 
   state.updatedFleetJSON        = fleetJSON;
   _setSessionJSON(fleetJSON, 'Full update'); // v8.8 FEAT-1 — retain for chaining
@@ -3490,6 +3978,7 @@ function runFullUpdate() {
     <div class="stat-pill"><div class="stat-num s-blue">${histArray.length}</div><div class="stat-lbl">History Records</div></div>
     ${materialERPLog.length > 0 ? `<div class="stat-pill"><div class="stat-num ${linkedERPChanges.length > 0 ? 's-yellow' : 's-blue'}">${materialERPLog.length}</div><div class="stat-lbl">Date Shifts${linkedERPChanges.length > 0 ? ` (${linkedERPChanges.length} linked)` : ''}</div></div>` : ''}
     ${orphanedOverridesKept.length > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${orphanedOverridesKept.length}</div><div class="stat-lbl">Orphaned Overrides Kept</div></div>` : ''}
+    ${_rwlStat(fleetJSON, _rwlNew)}
   `;
   // v8.7 FIX-3 — planner-override audit trail: orphaned entries are kept and
   // surfaced here instead of being silently dropped from working.componentDates.
@@ -3503,7 +3992,7 @@ function runFullUpdate() {
          </div>
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML  =
-    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
+    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${_sheetDateHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
 
   // [TWEAK-2] Click-to-sort on result tables (in-place DOM sort, date/number/text autodetect)
   attachTableSort(document.getElementById('updateResultDetail'));
@@ -3592,6 +4081,9 @@ function buildAndShowDiffReport() {
 
   const xlsxKeys = new Set();
   const diff = [];
+  const _rwlLinks = _rwlStart(fleetJSON).links;   // v8.13 — flag replacements of components linked to a Cadence project
+  _sheetDateIssues = null;                   // v8.13 — the preview reads with the same rules; the update lists the cells
+  const _dctx = _dateCtx(compArray);
 
   // Field comparison helper
   const FIELD_LABELS = {
@@ -3625,7 +4117,7 @@ function buildAndShowDiffReport() {
     }
 
     // Check for replacement (install_date or install_hours change)
-    const newInstallDate  = parseDate(getVal(row, 'install_date'));
+    const newInstallDate  = parseSheetDate(getVal(row, 'install_date'), () => ({ unit: getVal(row, 'unit_id'), component: getVal(row, 'comp_name'), field: 'install date' }));   // v8.13
     const newInstallHours = parseNum(getVal(row, 'install_hours')) || 0;
     const oldInstallDate  = existing.install_date || null;
     const oldInstallHours = existing.install_hours || 0;
@@ -3652,6 +4144,9 @@ function buildAndShowDiffReport() {
     });
 
     const status = changedFields.length === 0 ? 'MATCH' : (isReplacement ? 'REPLACEMENT' : 'UPDATED');
+    const _lp = isReplacement ? _rwlLinks[String(existing.id)] : null;
+    const _pc = isReplacement ? _installChecks(_dctx, existing, { oldInstallDate, oldInstallHours, newInstallDate, newInstallHours, dateChanged: !!(newInstallDate && newInstallDate !== oldInstallDate) }, null) : [];   // v8.13
+    const _pcNote = _pc.length ? `⚠ Check: ${esc(_pc.join('; '))}.` : '';
     diff.push({
       status,
       unit_id, component: comp_name,
@@ -3659,6 +4154,8 @@ function buildAndShowDiffReport() {
       changedFields,
       isReplacement,
       include: true,
+      // v8.13 — escaped here: the preview prints notes as HTML
+      note: [(_lp && _lp.length ? `Linked to Cadence project ${esc(_lp.map(p => p.name || p.id).join(', '))}: Intake will record this for review in Cadence. The link is not changed.` : ''), _pcNote].filter(Boolean).join(' ') || undefined,
     });
   });
 
@@ -3938,7 +4435,7 @@ function buildAndShowHistoricDiffReport() {
     histByUnitComp.get(uc).push({ ...h, _histIdx: i });
   });
 
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
   const diff = [];
   const matchedHistKeys = new Set();
 
@@ -4172,7 +4669,7 @@ function runHistoricImport(diff, excluded) {
   const histArray = isV17
     ? fleetJSON.componentHistory
     : (fleetJSON.masterData.componentHistory = fleetJSON.masterData.componentHistory || []);
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
   let maxId = histArray.reduce((m, h) => Math.max(m, h.id || 0), 0);
   let imported = 0, enriched = 0, conflictsResolved = 0;
   const findCompId = (uid, cn) => {
@@ -4192,6 +4689,7 @@ function runHistoricImport(diff, excluded) {
         benchmark: item.benchmark, cost: item.comp_cost, mm_number: item.mm_number,
         install_wo: item.install_wo, replacement_wo: item.replace_wo, exchange_part: item.exchange_part,
         serial_number: item.comp_sn, source: 'HISTORIC_import', detected_date: now });
+      _histAliases(histArray[histArray.length - 1]);   // v8.13 — Cadence's HISTORIC field names too (one shape)
       imported++;
     } else if ((item.status==='ENRICHED'||item.status==='CONFLICT') && item.existing) {
       const u = item.unit_id.toUpperCase(); const n = item.component.toUpperCase();
@@ -4400,7 +4898,7 @@ function processHistoricForBuild() {
 function buildHistoricSeeds() {
   if (!state.histEnable || !state.historicRows.length) return [];
   const seeds = processHistoricForBuild();
-  const now = new Date().toISOString().split('T')[0];
+  const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
   let id = 1;
   return seeds.filter(s => s.status === 'LINKED' && s.include).map(s => ({
     // --- Schema v5 canonical field names (what CPT v17+ reads) ---
