@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.15 — Mission Control</title>
+<title>NumaCore Lens v4.16 — Mission Control</title>
 <script src="numacore_lib.js"></script>
-<script src="numacore_bench.js?v=1.3.0"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.1"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -463,6 +463,64 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #comp-drill-modal .cd-close { margin-top:14px; text-align:right; }
 #comp-drill-modal button { background:#0f6e56; border:none; color:#e0faf2; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:0.72rem; font-weight:600; letter-spacing:0.5px; }
 #comp-drill-modal button:hover { background:#3dc9a0; color:#030f0c; }
+/* v4.16 — Horizon: machine timeline, fleet classes, planned machines */
+#tab-horizon .hz-head { display:flex; align-items:baseline; gap:18px; flex-wrap:wrap; margin-bottom:8px; }
+#tab-horizon .hz-title { font-size:22px; font-weight:700; color:#85b7eb; letter-spacing:0.04em; }
+#tab-horizon .hz-sub { font-size:11px; color:#5dcaa5; letter-spacing:0.18em; text-transform:uppercase; }
+#tab-horizon .hz-tools { margin-left:auto; display:flex; gap:12px; align-items:center; font-size:12px; color:#b8ede0; flex-wrap:wrap; }
+#tab-horizon select, #hz-ov select, #hz-ov input, #hz-ov textarea { background:#040e1c; color:#e0faf2; border:1px solid rgba(55,138,221,0.35); border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit; }
+.hz-btn { background:rgba(55,138,221,0.15); border:1px solid rgba(55,138,221,0.5); color:#e0faf2; border-radius:4px; padding:5px 12px; cursor:pointer; font-size:12px; }
+.hz-btn:hover { background:rgba(55,138,221,0.3); }
+.hz-btn.hz-pri { background:#378add; border-color:#378add; color:#fff; font-weight:600; }
+.hz-btn.hz-danger { border-color:rgba(226,75,74,0.6); color:#f09595; background:rgba(226,75,74,0.1); }
+.hz-btn.hz-sm { padding:2px 8px; font-size:11px; }
+#tab-horizon .hz-legend { display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:#8b8fa3; margin:0 0 8px; align-items:center; }
+#tab-horizon .hz-legend i { display:inline-block; width:22px; height:8px; border-radius:4px; vertical-align:middle; margin-right:5px; }
+#tab-horizon .hz-grid { border:1px solid rgba(255,255,255,0.07); border-radius:8px; background:rgba(8,26,21,0.6); }
+#tab-horizon .hz-row { display:grid; grid-template-columns:190px 170px 190px 1fr; align-items:center; min-height:30px; border-bottom:1px solid rgba(255,255,255,0.04); font-size:12px; color:#b8ede0; cursor:pointer; }
+#tab-horizon .hz-row:hover { background:rgba(55,138,221,0.05); }
+#tab-horizon .hz-row > div { padding:3px 10px; }
+#tab-horizon .hz-row.hz-dim { opacity:0.5; }
+#tab-horizon .hz-axisrow { position:sticky; top:0; z-index:2; background:#06151c; font-size:10px; letter-spacing:0.1em; color:#5dcaa5; text-transform:uppercase; cursor:default; }
+#tab-horizon .hz-axis, #tab-horizon .hz-track { position:relative; height:22px; }
+#tab-horizon .hz-yr { position:absolute; top:4px; transform:translateX(-50%); font-size:10px; letter-spacing:0.04em; color:#5dcaa5; }
+#tab-horizon .hz-yrl { position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.06); }
+#tab-horizon .hz-today { position:absolute; top:0; bottom:0; width:1px; background:#e24b4a; z-index:1; }
+#tab-horizon .hz-bar { position:absolute; top:6px; height:10px; border-radius:5px; background:linear-gradient(90deg,#1d9e75,#3dc9a0); }
+#tab-horizon .hz-bar.hz-arrive { background:linear-gradient(90deg,#378add,#5fa8e0); }
+#tab-horizon .hz-bar.hz-planned { background:repeating-linear-gradient(90deg,#9b97e8 0 10px,#7f77dd 10px 20px); }
+#tab-horizon .hz-bar.hz-parked { background:linear-gradient(90deg,#1d9e75,#3dc9a0); }
+#tab-horizon .hz-park { position:absolute; top:6px; height:10px; background:repeating-linear-gradient(45deg,rgba(0,0,0,0.65) 0 4px,rgba(255,213,79,0.45) 4px 8px); border-radius:2px; }
+#tab-horizon .hz-h { position:absolute; top:1px; width:8px; height:20px; margin-left:-4px; border-radius:3px; background:#e0faf2; cursor:ew-resize; z-index:3; box-shadow:0 0 0 1px rgba(0,0,0,0.5); }
+#tab-horizon .hz-h.hz-hend { background:#f09595; }
+#tab-horizon .hz-h.hz-open { background:rgba(224,250,242,0.35); }
+#tab-horizon .hz-grp { display:flex; align-items:center; gap:12px; padding:7px 10px; background:rgba(55,138,221,0.08); border-bottom:1px solid rgba(55,138,221,0.2); font-size:12px; color:#e0faf2; cursor:pointer; }
+#tab-horizon .hz-grp .hz-n { color:#8b8fa3; font-size:11px; }
+#tab-horizon .hz-grp .hz-cl { margin-left:auto; font-size:11px; color:#8b8fa3; cursor:default; }
+#tab-horizon .hz-sw { width:10px; height:10px; border-radius:2px; display:inline-block; }
+#tab-horizon .hz-mdl { color:#8b8fa3; font-size:11px; }
+#tab-horizon select.hz-inh { color:#6a7fa0; border-color:rgba(55,138,221,0.15); background:transparent; }
+#tab-horizon .hz-tag { font-size:10px; color:#c9c6f5; border:1px solid rgba(155,151,232,0.5); border-radius:8px; padding:0 6px; }
+#tab-horizon .hz-st-arrive { color:#85b7eb; } #tab-horizon .hz-st-planned { color:#c9c6f5; } #tab-horizon .hz-st-parked { color:#ffd54f; } #tab-horizon .hz-st-gone { color:#f09595; }
+#tab-horizon .hz-empty { padding:24px; color:#5dcaa5; opacity:0.7; font-size:12px; }
+#hz-ov { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9100; display:none; align-items:center; justify-content:center; }
+#hz-ov.open { display:flex; }
+#hz-ov .hz-modal { background:#040e1c; border:1px solid rgba(55,138,221,0.5); border-radius:10px; padding:18px 22px; width:min(720px,94vw); max-height:88vh; overflow-y:auto; color:#e0faf2; font-size:12px; }
+#hz-ov h3 { margin:0 0 12px; font-size:16px; color:#85b7eb; } #hz-ov h3 small { color:#8b8fa3; font-weight:400; font-size:12px; }
+#hz-ov .hz-f { display:flex; align-items:center; gap:10px; margin:7px 0; flex-wrap:wrap; }
+#hz-ov .hz-f > label { width:150px; color:#8b8fa3; }
+#hz-ov .hz-hint { color:#8b8fa3; font-size:11px; }
+#hz-ov .hz-pk { margin:2px 0; }
+#hz-ov .hz-x { background:none; border:none; color:#f09595; cursor:pointer; font-size:14px; }
+#hz-ov textarea { width:420px; }
+#hz-ov .hz-log { margin-top:10px; font-size:11px; color:#8b8fa3; border-top:1px solid rgba(255,255,255,0.08); padding-top:6px; }
+#hz-ov .hz-btns { display:flex; gap:8px; margin-top:14px; align-items:center; }
+#hz-ov .hz-clist { max-height:300px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); border-radius:6px; margin-top:6px; }
+#hz-ov .hz-clist table { width:100%; border-collapse:collapse; font-size:11px; }
+#hz-ov .hz-clist th, #hz-ov .hz-clist td { padding:3px 8px; text-align:center; border-bottom:1px solid rgba(255,255,255,0.05); }
+#hz-ov .hz-clist .l { text-align:left; }
+#hz-ov .hz-cl-bar { display:flex; gap:8px; align-items:center; }
+#hz-tip { position:fixed; z-index:9200; background:#040e1c; border:1px solid #378add; color:#e0faf2; font-size:11px; padding:3px 8px; border-radius:4px; pointer-events:none; display:none; }
 /* v4.15 — history + replaced-while-linked on the tile panel */
 #comp-drill-modal .cd-sec { margin-top:14px; font-size:0.66rem; letter-spacing:1px; text-transform:uppercase; color:#3dc9a0; opacity:0.85; }
 #comp-drill-modal .cd-note { font-size:0.7rem; color:#6a7fa0; margin-top:4px; line-height:1.45; }
@@ -1857,22 +1915,26 @@ body { background: #030f0c; }
       <div style="display:flex;align-items:center;justify-content:center;height:100%;opacity:0.15;font-size:0.7rem;letter-spacing:2px;text-transform:uppercase;color:#3dc9a0">FLEET HEALTH — RETIRED</div>
     </div>
 
-    <!-- HORIZON PANEL SCAFFOLD (v4-alpha, Chunk 5) -->
-    <!-- Long-range capital planning per unit: rebuild/PCR plans vs end-of-useful-life.
-         Chunk 5 ships scaffold + per-unit grid stub; Chunk 10 populates the chart. -->
+    <!-- HORIZON (v4.16): every machine on a timeline — arrival, end (decommissioned), parked periods; fleet classes; planned machines -->
     <div id="tab-horizon" class="tab-page" style="flex-direction:column;padding:18px 24px;overflow:auto">
-      <div style="display:flex;align-items:baseline;gap:18px;margin-bottom:14px">
-        <div style="font-size:22px;font-weight:700;color:#85b7eb;letter-spacing:0.04em">HORIZON</div>
-        <div style="font-size:11px;color:#5dcaa5;letter-spacing:0.18em;text-transform:uppercase">Capital Planning &middot; per-unit lifecycle view</div>
-      </div>
-      <div id="horizon-cap-banner" style="display:none;background:rgba(255,213,79,0.08);border:1px solid rgba(255,213,79,0.3);border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#ffd54f"></div>
-      <div id="horizon-grid" style="border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(8,26,21,0.6);padding:0">
-        <div id="horizon-grid-header" style="display:grid;grid-template-columns:200px 1fr 140px;gap:0;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.07);font-size:10px;letter-spacing:0.1em;color:#5dcaa5;text-transform:uppercase">
-          <div>UNIT</div><div>LIFECYCLE BAR &mdash; 5-YEAR HORIZON</div><div style="text-align:right">EOL REMAINING</div>
+      <div class="hz-head">
+        <div class="hz-title">HORIZON</div>
+        <div class="hz-sub">Machine timeline &middot; fleet classes &middot; planned machines</div>
+        <div class="hz-tools">
+          <label>Budget horizon: today until <select id="hz-end"></select></label>
+          <select id="hz-fleet"></select>
+          <button class="hz-btn" id="hz-add">+ Add planned machine</button>
         </div>
-        <div id="horizon-grid-body" style="padding:6px 0;font-size:13px;color:#b8ede0"></div>
       </div>
-      <div style="margin-top:14px;font-size:11px;color:#5dcaa5;opacity:0.6">v4-alpha scaffold &mdash; populated chart logic ships in Chunk 10.</div>
+      <div class="hz-legend">
+        <span><i style="background:linear-gradient(90deg,#1d9e75,#3dc9a0)"></i>on site</span>
+        <span><i style="background:linear-gradient(90deg,#378add,#5fa8e0)"></i>arrives (not on site yet)</span>
+        <span><i style="background:repeating-linear-gradient(90deg,#9b97e8 0 10px,#7f77dd 10px 20px)"></i>planned machine</span>
+        <span><i style="background:repeating-linear-gradient(45deg,rgba(0,0,0,0.65) 0 4px,rgba(255,213,79,0.45) 4px 8px)"></i>parked</span>
+        <span><i style="background:#f09595;width:8px"></i>end handle (decommissioned after it)</span>
+        <span>Drag a handle to move a date; click a machine to edit it. The fleet class sets Pulse's and Bench's order.</span>
+      </div>
+      <div class="hz-grid" id="hz-body"></div>
     </div>
     <!-- BENCH PANEL — critical spares (v4.10 FEAT-1). Content is rendered by numacore_bench.js. -->
     <div id="tab-bench" class="tab-page" style="flex-direction:row;overflow:hidden"></div>
@@ -1922,7 +1984,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.15';
+const VERSION = '4.16';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2110,7 +2172,8 @@ function _renderBench() {
   if (!lensRawData) { el.innerHTML = '<div style="padding:40px;color:#b8ede0;font-size:14px">Load a fleet file first (LOAD FILE), then open Bench.</div>'; return; }
   window.NumaCoreBench.render(el, {
     raw:        lensRawData,
-    fleetData:  FLEET_DATA,
+    fleetData:  _benchFleetData(),   // v4.16 — without machines past their end date
+    classRank:  function (f, u) { return _hzRank(f, u); },   // v4.16 — Horizon's fleet classes (0 = primary production … 5 = no class)
     imageBase:  IMAGE_BASE,
     planSaved:  (lensRawData.meta && lensRawData.meta.lastSaved) || '',
     clientCode: (lensMeta && lensMeta.clientCode) || (lensRawData.meta && lensRawData.meta.clientCode) || 'DEFAULT',
@@ -3352,7 +3415,7 @@ function getVisFleets() {
       const allU  = FLEET_DATA[f][m];
       const hideU = (typeof lensHideUnits !== 'undefined' && lensHideUnits[f] && lensHideUnits[f][m]) || {};
       const visU  = {};
-      Object.keys(allU).forEach(u => { if (hideU[u] !== false) visU[u] = _visComps(f, m, u, allU[u]); });   // v4.14 — hidden components left out
+      Object.keys(allU).forEach(u => { if (_hzGone[String(u).toUpperCase()]) return; if (hideU[u] !== false) visU[u] = _visComps(f, m, u, allU[u]); });   // v4.14 — hidden components left out; v4.16 — so are machines past their end date
       if (Object.keys(visU).length) { if (!result[f]) result[f] = {}; result[f][m] = visU; }
     });
   });
@@ -3698,6 +3761,7 @@ function switchTab(tab){
   if(tab==='horizon') { if(typeof renderHorizon==='function') renderHorizon(); }
   if(tab==='bench') { _renderBench(); }   // v4.10 FEAT-1
   if(tab==='cadence' || tab==='deploy') { if(typeof switchToEmbedded==='function') switchToEmbedded(tab); }
+  if(tab==='cadence' && _hzCadenceNote) { _hzCadenceNote = false; showToast('Horizon changed machines (a planned machine or an arrival). Cadence shows them once the plan is saved (SAVE FILE) and opened again.', 'info', 7000); }   // v4.16
   // v3.1 TWEAK-3 — ensure the global fleet-col is restored when leaving
   // Vitals so a prior Heat Map sub-tab does not leave it hidden.
   if(tab !== 'vitals') {
@@ -4564,6 +4628,18 @@ function buildFleetData(json) {
     Object.keys(_u).forEach(k => { if (!(_u[k].smu > 0) && _u[k].read && _u[k].read > _today) _lensNotOnSite[k] = _u[k].read; });
   }
   _buildHistIndex(json);   // v4.15 — the component history, for the tile panel
+  // v4.16 — Horizon: end dates (decommissioned) and parked periods, from the plan's horizon section
+  _hzGone = {};
+  const _hzEndOf = {}, _hzPkOf = {}, _hzLinked = {};
+  ((_wk && _wk.projects) || []).forEach(p => (p && p.linkedIds || []).forEach(id => { _hzLinked[String(id)] = 1; }));   // Cadence's project links
+  {
+    const _h = json && json.horizon, _t = _lensTodayISO();
+    if (_h && _h.machines) Object.keys(_h.machines).forEach(k => {
+      const m = _h.machines[k] || {}, K = String(k).toUpperCase();
+      if (m.active_to) { _hzEndOf[K] = String(m.active_to).slice(0, 10); if (_hzEndOf[K] < _t) _hzGone[K] = _hzEndOf[K]; }
+      if (Array.isArray(m.parked)) _hzPkOf[K] = m.parked.filter(p => p && p.from && p.to).map(p => ({ from: String(p.from).slice(0, 10), to: String(p.to).slice(0, 10) })).sort((a, b) => a.from.localeCompare(b.from));
+    });
+  }
 
   _readComponents(json).forEach(c => {
     // FIX-1 — resolve fleet/unit/component names from V5 fields when V4 fields are missing.
@@ -4631,6 +4707,17 @@ function buildFleetData(json) {
       serial_number:        c.serial_number,
       notes:                c.notes,
     });
+    // v4.16 — Horizon windows: a parked period pushes every later plan date out by its length (no hours while parked),
+    // except a component linked to a Cadence project (the project's date is a deliberate plan); nothing is planned after
+    // the machine's end date; past it, the machine is decommissioned.
+    {
+      const _arr = fd[fleet][model][unit], rec = _arr[_arr.length - 1], K = String(unit).toUpperCase();
+      const inProject = c.id != null && _hzLinked[String(c.id)];
+      if (rec.pred_changeout && !inProject && _hzPkOf[K]) rec.pred_changeout = _hzShiftParked(String(rec.pred_changeout).slice(0, 10), String(c.last_read || '').slice(0, 10), _hzPkOf[K]);
+      if (_hzEndOf[K]) { rec.active_to = _hzEndOf[K]; if (rec.pred_changeout && String(rec.pred_changeout).slice(0, 10) > _hzEndOf[K]) { rec.after_end = true; rec.pred_changeout = null; } }
+      if (_hzGone[K]) rec.decommissioned = _hzGone[K];
+      if (c.planned) { rec.planned = true; rec.like = c.like || null; }
+    }
   });
   return fd;
 }
@@ -5673,98 +5760,384 @@ window.addEventListener('message', function onEmbedMessage(ev) {
 // Long-range capital planning per unit. Scaffold lists every unit with a
 // 5-year lifecycle bar stub and an "EOL remaining" estimate driven from
 // expected_life_hours and current SMU. Real chart logic lands in Chunk 10.
+// ══ v4.16 — HORIZON: MACHINE TIMELINE · FLEET CLASSES · PLANNED MACHINES ═════════════════════════════════════════
+// Operator 2026-09-28: "each machine in the component sheet has to be on there, with a timeline... active from / to
+// dates and a gantt style line that can be dragged. A budget timeline (today until which year)"; "we can also add a new
+// unit (not in the component sheet)... 'assume it is like...'"; "classify fleet... primary production; secondary
+// production; primary support; secondary support; Ancillary... pulse will pull the priority from this fleet
+// classification". Decided the same day: the plan's own `horizon` section (V4 and V5 alike); parked = a from–to gap
+// (no hours, so later change-outs move out by its length); decommissioned = the end date (nothing is planned after it;
+// once it has passed the machine leaves Pulse, Vitals and Bench; Horizon keeps it); a machine may take its own class;
+// Bench uses the same order; a planned machine "like X" gets the components you keep ticked.
+// An arrival is ONE date: a machine not on site yet keeps it as its components' last read date (Intake v8.14, option A),
+// so moving it here moves Cadence's forecast too, with no Cadence change.
+// Scope: Review docs/Horizon - machine timeline, planned machines, budget - scope - 2026-09-28.md (sections 0a, 0b).
+const HZ_CLASSES = [
+  ['primary_production',   'Primary production',   '#e24b4a'],
+  ['secondary_production', 'Secondary production', '#ef9f27'],
+  ['primary_support',      'Primary support',      '#378add'],
+  ['secondary_support',    'Secondary support',    '#5fa8e0'],
+  ['ancillary',            'Ancillary',            '#8b8fa3']
+];
+const HZ_RANK = {}; HZ_CLASSES.forEach(function (c, i) { HZ_RANK[c[0]] = i; });
+let _hzGone = {};            // UNIT → its end date, once passed (left out of Pulse, Vitals and Bench)
+let _hzFleetFilter = '';
+let _hzClosed = {};          // fleet → folded in the Horizon view
+let _hzCadenceNote = false;  // components changed here: Cadence (embedded) sees them after SAVE FILE and reopening
+function _hzPad(n) { return (n < 10 ? '0' : '') + n; }
+function _hz() { return (lensRawData && lensRawData.horizon && typeof lensRawData.horizon === 'object') ? lensRawData.horizon : null; }
+function _hzEnsure() {
+  if (!_hz()) lensRawData.horizon = { version: 1, horizonEnd: new Date().getFullYear() + 10, fleetClass: {}, machines: {}, log: [] };
+  const h = lensRawData.horizon; h.fleetClass = h.fleetClass || {}; h.machines = h.machines || {}; h.log = h.log || []; return h;
+}
+function _hzM(unit, create) {
+  const K = String(unit || '').toUpperCase(), h = create ? _hzEnsure() : _hz();
+  if (!h || !h.machines) return null;
+  if (!h.machines[K] && create) h.machines[K] = { log: [] };
+  return h.machines[K] || null;
+}
+function _hzLog(target, action, note) { target.log = target.log || []; target.log.push({ at: _hideStamp(), action: action, note: note || '' }); }
+function _hzClassOf(fleet, unit) { const m = _hzM(unit); if (m && m.class) return m.class; const h = _hz(); return (h && h.fleetClass && h.fleetClass[fleet]) || null; }
+function _hzRank(fleet, unit) { const c = _hzClassOf(fleet, unit); return (c && HZ_RANK[c] != null) ? HZ_RANK[c] : HZ_CLASSES.length; }
+function _hzClassName(c) { const x = HZ_CLASSES.find(function (k) { return k[0] === c; }); return x ? x[1] : ''; }
+function _hzClassColor(c) { const x = HZ_CLASSES.find(function (k) { return k[0] === c; }); return x ? x[2] : ''; }
+// Pulse: a thin class edge on each item (and its name on hover)
+function _hzEdge(c) { const k = _hzClassOf(c.fleet, c.unit); return k ? ' style="box-shadow:inset 3px 0 0 ' + _hzClassColor(k) + '" title="' + esc(_hzClassName(k)) + '"' : ''; }
+function _hzSortRank(a, b) { return _hzRank(a.fleet, a.unit) - _hzRank(b.fleet, b.unit); }
+// No hours while parked: a change-out forecast after a parked period's start moves out by the period's length.
+function _hzShiftParked(d, fromRef, parked) {
+  let x = d;
+  parked.forEach(function (p) { if (p.from > (fromRef || '') && p.from <= x) x = _lensIsoAdd(x, Math.round((_lensIsoMs(p.to) - _lensIsoMs(p.from)) / 86400000) + 1); });
+  return x;
+}
+// Bench gets Lens's machines without those past their end date
+function _benchFleetData() {
+  if (!Object.keys(_hzGone).length) return FLEET_DATA;
+  const out = {};
+  Object.keys(FLEET_DATA).forEach(function (f) { Object.keys(FLEET_DATA[f]).forEach(function (m) { Object.keys(FLEET_DATA[f][m]).forEach(function (u) {
+    if (_hzGone[String(u).toUpperCase()]) return; ((out[f] = out[f] || {})[m] = out[f][m] || {})[u] = FLEET_DATA[f][m][u]; }); }); });
+  return out;
+}
+
+// ── the axis: from the start of this month to the end of the budget horizon's year ──
+function _hzAxis() {
+  const t = new Date(), h = _hz(), y0 = t.getFullYear();
+  const endY = (h && Number(h.horizonEnd) > y0) ? Number(h.horizonEnd) : y0 + 10;
+  return { start: y0 + '-' + _hzPad(t.getMonth() + 1) + '-01', end: endY + '-12-31', endY: endY, y0: y0 };
+}
+function _hzPct(iso, ax) {
+  const s = _lensIsoMs(ax.start), e = _lensIsoMs(ax.end), x = _lensIsoMs(iso);
+  if (x === null) return 0;
+  return Math.max(0, Math.min(100, (x - s) / (e - s) * 100));
+}
+// one row per machine in the plan (all of them, including those past their end date)
+function _hzRows() {
+  const rows = [], h = _hz();
+  Object.keys(FLEET_DATA || {}).forEach(function (f) { Object.keys(FLEET_DATA[f]).forEach(function (m) { Object.keys(FLEET_DATA[f][m]).forEach(function (u) {
+    const K = String(u).toUpperCase(), cs = FLEET_DATA[f][m][u] || [], mm = (h && h.machines && h.machines[K]) || {};
+    const planned = !!mm.planned || cs.some(function (c) { return c.planned; });
+    rows.push({ fleet: f, model: m, unit: u, K: K, n: cs.length, planned: planned, like: mm.like || (cs.find(function (c) { return c.like; }) || {}).like || null,
+      arrival: _lensNotOnSite[K] || null, end: mm.active_to || null,
+      parked: (Array.isArray(mm.parked) ? mm.parked : []).filter(function (p) { return p && p.from && p.to; }).slice().sort(function (a, b) { return a.from.localeCompare(b.from); }),
+      own: mm.class || '', cls: _hzClassOf(f, u), notes: mm.notes || '' });
+  }); }); });
+  return rows;
+}
+function _hzStatus(r) {
+  const t = _lensTodayISO();
+  if (r.end && r.end < t) return { kind: 'gone', text: 'decommissioned ' + _lensFmtD(r.end) };
+  const pk = r.parked.find(function (p) { return p.from <= t && p.to >= t; });
+  if (pk) return { kind: 'parked', text: 'parked to ' + _lensFmtD(pk.to) };
+  if (r.arrival) return { kind: r.planned ? 'planned' : 'arrive', text: (r.planned ? 'planned · ' : '') + 'arrives ' + _lensFmtD(r.arrival) + (r.end ? ' · to ' + _lensFmtD(r.end) : '') };
+  return { kind: 'on', text: 'on site' + (r.end ? ' · to ' + _lensFmtD(r.end) : '') };
+}
+
 function renderHorizon() {
-  const body = document.getElementById('horizon-grid-body');
-  const banner = document.getElementById('horizon-cap-banner');
+  const body = document.getElementById('hz-body');
   if (!body) return;
-  // Capability gating — Horizon needs SMU + Utilization + Benchmarks for forecasts.
-  // Without them the panel still renders, but with a banner explaining what's
-  // missing, per the ADR locked-but-visible pattern.
-  const cap = requiresCaps('Horizon', 'hasSMU', 'hasUtilization', 'hasBenchmarks');
-  if (banner) {
-    if (cap.ok) { banner.style.display = 'none'; }
-    else {
-      banner.style.display = 'block';
-      banner.textContent = cap.message + '. Forecast bars rendered with limited fidelity until these capabilities are provided.';
-    }
-  }
-  if (!FLEET_DATA || !Object.keys(FLEET_DATA).length) {
-    body.innerHTML = '<div style="padding:20px;color:#5dcaa5;opacity:0.6;font-size:12px">Load a fleet file to populate the Horizon view.</div>';
+  const endSel = document.getElementById('hz-end'), fSel = document.getElementById('hz-fleet'), ax = _hzAxis();
+  if (!lensRawData || !FLEET_DATA || !Object.keys(FLEET_DATA).length) {
+    body.innerHTML = '<div class="hz-empty">Load a fleet file to see every machine on its timeline.</div>';
     return;
   }
-  // FIX-3 (2026-05-06 hotfix): the prior placeholder used two different
-  // bases for the lifecycle bar and EOL hours, so they didn't reconcile
-  // (BD306 showed 52% bar but 0 hrs EOL — internally inconsistent).
-  // New rule:
-  //   horizonHrs = expected_life_hours from masterData.units[] if set
-  //              ELSE util_rate × 365 × 5 (5-year placeholder)
-  //   lifecycle %  = clamp(0..1, smu / horizonHrs)
-  //   EOL hrs       = max(0, horizonHrs − smu)
-  // Both numbers now share the same denominator, so 100% bar ⇔ 0 hrs EOL,
-  // 50% bar ⇔ ~half the horizon left. Real chart logic still ships in
-  // Chunk 10 — this is the consistent placeholder.
-  const _unitMap = (function() {
-    const m = {};
-    const units = (lensRawData && lensRawData.masterData && lensRawData.masterData.units) || [];
-    units.forEach(function(u) { if (u && u.id) m[String(u.id).toUpperCase()] = u; });
-    return m;
-  })();
-  // Build per-unit summary rows. Each row aggregates units' components into a
-  // single lifecycle bar + EOL remaining estimate.
-  const rows = [];
-  Object.keys(FLEET_DATA).sort().forEach(function(fleet) {
-    Object.keys(FLEET_DATA[fleet]).sort().forEach(function(model) {
-      Object.keys(FLEET_DATA[fleet][model]).sort().forEach(function(unit) {
-        const comps = _visComps(fleet, model, unit, FLEET_DATA[fleet][model][unit] || []);   // v4.14 — hidden left out
-        if (!comps.length) return;
-        // Highest pct = most-due component on this unit; used for bar colour.
-        let topPct = 0; let smu = 0; let util = 0;
-        comps.forEach(function(c) {
-          if (c.pct != null && c.pct > topPct) topPct = c.pct;
-          if (c.last_smu && c.last_smu > smu) smu = c.last_smu;
-          if (c.util_rate && c.util_rate > util) util = c.util_rate;
-        });
-        const u = _unitMap[String(unit).toUpperCase()];
-        const expectedLife = u && Number(u.expected_life_hours) > 0 ? Number(u.expected_life_hours) : null;
-        const horizonHrs   = expectedLife != null ? expectedLife
-                           : (util > 0 ? util * 365 * 5 : null);
-        const fillPct = (horizonHrs != null && horizonHrs > 0)
-                      ? Math.max(0, Math.min(1, (smu || 0) / horizonHrs))
-                      : null;
-        const eolHrs  = (horizonHrs != null) ? Math.max(0, horizonHrs - (smu || 0)) : null;
-        rows.push({
-          fleet: fleet, model: model, unit: unit,
-          smu: smu, topPct: topPct,
-          fillPct: fillPct, eolHrs: eolHrs,
-          source: expectedLife != null ? 'expected_life_hours' : (horizonHrs != null ? '5yr placeholder' : 'unknown')
-        });
-      });
-    });
+  if (endSel) {
+    let o = ''; for (let y = ax.y0 + 1; y <= ax.y0 + 30; y++) o += '<option value="' + y + '"' + (y === ax.endY ? ' selected' : '') + '>' + y + '</option>';
+    endSel.innerHTML = o;
+  }
+  const rows = _hzRows();
+  const fleets = {};
+  rows.forEach(function (r) { (fleets[r.fleet] = fleets[r.fleet] || []).push(r); });
+  if (fSel) {
+    fSel.innerHTML = '<option value="">All fleets</option>' + Object.keys(fleets).sort().map(function (f) { return '<option value="' + esc(f) + '"' + (f === _hzFleetFilter ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('');
+  }
+  const h = _hz(), fc = (h && h.fleetClass) || {};
+  const order = Object.keys(fleets).filter(function (f) { return !_hzFleetFilter || f === _hzFleetFilter; })
+    .sort(function (a, b) { const ra = fc[a] && HZ_RANK[fc[a]] != null ? HZ_RANK[fc[a]] : 9, rb = fc[b] && HZ_RANK[fc[b]] != null ? HZ_RANK[fc[b]] : 9; return (ra - rb) || a.localeCompare(b); });
+  // the axis row: years, today
+  let yrs = '';
+  for (let y = ax.y0; y <= ax.endY; y++) {
+    // a year's label sits in the middle of its span; the part of this year that is left is labelled only if there is room
+    const a = _hzPct(y === ax.y0 ? ax.start : y + '-01-01', ax), b = _hzPct(y === ax.endY ? ax.end : (y + 1) + '-01-01', ax);
+    if (y > ax.y0) yrs += '<i class="hz-yrl" style="left:' + a + '%"></i>';
+    if (b - a >= 4) yrs += '<span class="hz-yr" style="left:' + ((a + b) / 2) + '%">' + y + '</span>';
+  }
+  const today = _hzPct(_lensTodayISO(), ax);
+  let html = '<div class="hz-row hz-axisrow"><div>Machine</div><div>Class</div><div>Status</div><div class="hz-axis">' + yrs + '<i class="hz-today" style="left:' + today + '%" title="today"></i></div></div>';
+  const clsOpts = function (sel, fleetDefault) {
+    return '<option value="">' + (fleetDefault != null ? 'Fleet: ' + esc(fleetDefault || 'no class') : '— no class') + '</option>' +
+      HZ_CLASSES.map(function (k) { return '<option value="' + k[0] + '"' + (sel === k[0] ? ' selected' : '') + '>' + k[1] + '</option>'; }).join('');
+  };
+  order.forEach(function (f) {
+    const list = fleets[f].slice().sort(function (a, b) { return a.model.localeCompare(b.model) || a.unit.localeCompare(b.unit); });
+    const gone = list.filter(function (r) { return _hzStatus(r).kind === 'gone'; }).length;
+    html += '<div class="hz-grp" data-fleet="' + esc(f) + '"><span class="hz-fold">' + (_hzClosed[f] ? '&#9656;' : '&#9662;') + '</span><b>' + esc(f) + '</b><span class="hz-n">' + list.length + ' machine' + (list.length === 1 ? '' : 's') + (gone ? ' · ' + gone + ' decommissioned' : '') + '</span>' +
+      '<span class="hz-cl">Fleet class <select class="hz-fclass" data-fleet="' + esc(f) + '">' + clsOpts(fc[f] || '', null) + '</select></span>' +
+      (fc[f] ? '<i class="hz-sw" style="background:' + _hzClassColor(fc[f]) + '"></i>' : '') + '</div>';
+    if (_hzClosed[f]) return;
+    list.forEach(function (r) { html += _hzRowHTML(r, ax, today, clsOpts(r.own, fc[f] ? _hzClassName(fc[f]) : '')); });
   });
-  // Render
-  body.innerHTML = rows.map(function(r) {
-    const pctTxt = (r.fillPct != null) ? (r.fillPct * 100).toFixed(0) + '%' : '—';
-    const eolTxt = (r.eolHrs  != null) ? r.eolHrs.toLocaleString() + ' hrs' : '— (set expected_life_hours in FleetConfig)';
-    // Colour ramp follows component-pct (most-due component on this unit),
-    // not lifecycle, so a unit can be late-life but still green if no
-    // component is overdue, and vice versa.
-    const colour = r.topPct >= 1 ? '#f44336' : (r.topPct >= 0.9 ? '#ff7043' : (r.topPct >= 0.75 ? '#ffc107' : '#4caf50'));
-    const fillStyle = (r.fillPct != null)
-      ? 'width:' + (r.fillPct * 100).toFixed(0) + '%;height:100%;background:linear-gradient(90deg,' + colour + ',' + colour + 'aa)'
-      : 'width:0;height:100%';
-    return '<div style="display:grid;grid-template-columns:200px 1fr 140px;gap:0;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);align-items:center" title="lifecycle source: ' + esc(r.source) + '">' +
-      '<div style="color:#e0faf2"><span style="color:#5dcaa5;font-size:10px;letter-spacing:0.08em">' + esc(r.fleet) + '/' + esc(r.model) + '</span><br>' + esc(r.unit) + '</div>' +
-      '<div style="height:18px;background:rgba(0,0,0,0.35);border-radius:9px;overflow:hidden;position:relative">' +
-        '<div style="' + fillStyle + '"></div>' +
-        '<span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:10px;letter-spacing:0.08em;color:#e0faf2;text-shadow:0 0 4px rgba(0,0,0,0.6)">' + esc(pctTxt) + '</span>' +
-      '</div>' +
-      '<div style="text-align:right;color:#85b7eb">' + esc(eolTxt) + '</div>' +
-      '</div>';
-  }).join('');
-  if (!rows.length) {
-    body.innerHTML = '<div style="padding:20px;color:#5dcaa5;opacity:0.6;font-size:12px">No units to display.</div>';
+  body.innerHTML = html;
+}
+function _hzRowHTML(r, ax, today, clsOpts) {
+  const st = _hzStatus(r);
+  const from = r.arrival || ax.start, to = r.end || ax.end;
+  const x0 = _hzPct(from, ax), x1 = _hzPct(to, ax);
+  const movable = !!r.arrival;
+  let track = '<i class="hz-today" style="left:' + today + '%"></i>';
+  if (!(r.end && r.end < ax.start)) {
+    track += '<div class="hz-bar hz-' + st.kind + '" style="left:' + x0 + '%;width:' + Math.max(0.4, x1 - x0) + '%"></div>';
+    r.parked.forEach(function (p) {
+      const a = _hzPct(p.from > from ? p.from : from, ax), b = _hzPct(p.to < to ? p.to : to, ax);
+      if (b > a) track += '<div class="hz-park" style="left:' + a + '%;width:' + (b - a) + '%" title="parked ' + esc(_lensFmtD(p.from)) + ' – ' + esc(_lensFmtD(p.to)) + '"></div>';
+    });
+    if (movable) track += '<i class="hz-h" data-u="' + esc(r.unit) + '" data-w="from" style="left:' + x0 + '%" title="arrival: drag to move"></i>';
+    track += '<i class="hz-h hz-hend' + (r.end ? '' : ' hz-open') + '" data-u="' + esc(r.unit) + '" data-w="to" style="left:' + x1 + '%" title="' + (r.end ? 'end ' + esc(_lensFmtD(r.end)) + ': drag to move, or to the far right for no end' : 'no end date: drag left to set one') + '"></i>';
+  }
+  return '<div class="hz-row' + (st.kind === 'gone' ? ' hz-dim' : '') + '" data-u="' + esc(r.unit) + '">' +
+    '<div><b>' + esc(r.unit) + '</b> <span class="hz-mdl">' + esc(r.model) + '</span>' + (r.planned ? ' <span class="hz-tag">planned' + (r.like ? ' · like ' + esc(r.like) : '') + '</span>' : '') + '</div>' +
+    '<div><select class="hz-uclass' + (r.own ? '' : ' hz-inh') + '" data-u="' + esc(r.unit) + '" title="' + (r.own ? 'its own class' : 'the fleet\'s class; choose one to give this machine its own') + '">' + clsOpts + '</select></div>' +
+    '<div class="hz-st hz-st-' + st.kind + '">' + esc(st.text) + '</div>' +
+    '<div class="hz-track" data-u="' + esc(r.unit) + '">' + track + '</div></div>';
+}
+
+// ── changes (each one logged on the machine, or on the horizon section for a fleet class) ──
+function _hzAfterChange(msg, compsChanged) {
+  FLEET_DATA = buildFleetData(lensRawData);
+  _lensAutosaveDirty = true; _updateUnsavedDot();
+  renderHorizon();
+  if (typeof renderFleetCol === 'function') { try { renderFleetCol(); } catch (e) {} }
+  if (compsChanged) _hzCadenceNote = true;
+  if (msg) showToast(msg, 'success', 4500);
+}
+// the arrival of a machine not on site yet = its components' last read date (0 h)
+function _hzSetArrival(unit, iso) {
+  const K = String(unit).toUpperCase(); let n = 0;
+  _readComponents(lensRawData).forEach(function (c) {
+    if (String(c.unit || c.unit_id || '').toUpperCase() !== K || Number(c.last_smu) > 0) return;
+    if (c.last_read !== iso) { c.last_read = iso; n++; }
+    if (c.planned) c.install_date = iso;   // a planned machine's components are installed on arrival
+  });
+  const m = _hzM(unit, true), before = m.active_from || null;
+  m.active_from = iso; _hzLog(m, 'arrival', (before ? _lensFmtD(before) + ' → ' : '') + _lensFmtD(iso));
+  return n;
+}
+function _hzSetEnd(unit, iso) {
+  const m = _hzM(unit, true), before = m.active_to || null;
+  if (iso) m.active_to = iso; else delete m.active_to;
+  _hzLog(m, iso ? 'end' : 'end cleared', (before ? _lensFmtD(before) : 'none') + ' → ' + (iso ? _lensFmtD(iso) : 'none'));
+}
+function _hzCommitDrag(unit, which, iso) {
+  const t = _lensTodayISO(), ax = _hzAxis(), row = _hzRows().find(function (r) { return r.unit === unit; }) || {};
+  if (which === 'from') {
+    if (iso <= t) { iso = _lensIsoAdd(t, 1); showToast('An arrival has to be after today; set to ' + _lensFmtD(iso) + '.', 'warn', 4000); }
+    if (row.end && iso >= row.end) { showToast('The arrival has to be before the end date (' + _lensFmtD(row.end) + ').', 'warn', 4500); renderHorizon(); return; }
+    _hzSetArrival(unit, iso);
+    _hzAfterChange(unit + ' arrives ' + _lensFmtD(iso) + '. Its components are planned from then. SAVE FILE keeps it.', true);
+  } else {
+    if (iso >= _lensIsoAdd(ax.end, -10)) { _hzSetEnd(unit, null); _hzAfterChange(unit + ': no end date.'); return; }
+    if (row.arrival && iso <= row.arrival) { showToast('The end date has to be after the arrival (' + _lensFmtD(row.arrival) + ').', 'warn', 4500); renderHorizon(); return; }
+    if (iso < t && !confirm('Decommission ' + unit + ' from ' + _lensFmtD(iso) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it; clear the end date to bring it back).')) { renderHorizon(); return; }
+    _hzSetEnd(unit, iso);
+    _hzAfterChange(unit + ': end date ' + _lensFmtD(iso) + '. Nothing is planned for it after that date.');
   }
 }
+
+// ── the machine editor ──
+function _hzOverlay(html) {
+  let ov = document.getElementById('hz-ov');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'hz-ov'; document.body.appendChild(ov); ov.addEventListener('click', function (e) { if (e.target === ov) _hzClose(); }); }
+  ov.innerHTML = '<div class="hz-modal">' + html + '</div>'; ov.classList.add('open');
+  return ov;
+}
+function _hzClose() { const ov = document.getElementById('hz-ov'); if (ov) { ov.classList.remove('open'); ov.innerHTML = ''; } }
+function _hzOpenEditor(unit) {
+  const r = _hzRows().find(function (x) { return x.unit === unit; }); if (!r) return;
+  const st = _hzStatus(r), fc = (_hz() && _hz().fleetClass && _hz().fleetClass[r.fleet]) || '';
+  const pk = r.parked.map(function (p, i) { return '<div class="hz-pk"><input type="date" class="hz-pf" value="' + esc(p.from) + '"> to <input type="date" class="hz-pt" value="' + esc(p.to) + '"> <button class="hz-x" data-i="' + i + '" title="remove">&times;</button></div>'; }).join('');
+  const log = (((_hzM(unit) || {}).log) || []).slice(-6).reverse().map(function (l) { return '<div>' + esc(l.at) + ' · ' + esc(l.action) + (l.note ? ': ' + esc(l.note) : '') + '</div>'; }).join('');
+  _hzOverlay(
+    '<h3>' + esc(r.unit) + ' <small>' + esc(r.fleet) + ' · ' + esc(r.model) + (r.planned ? ' · planned' + (r.like ? ' (like ' + esc(r.like) + ')' : '') : '') + '</small></h3>' +
+    '<div class="hz-f"><label>Status</label><span>' + esc(st.text) + '</span></div>' +
+    '<div class="hz-f"><label>Arrives</label>' + (r.arrival ? '<input type="date" id="hz-e-from" value="' + esc(r.arrival) + '"> <span class="hz-hint">not on site yet: its components are planned from this date</span>' : '<span class="hz-hint">on site (hours on file). A machine with no hours gets an arrival date in the update sheet (last read date) or here once it has one.</span>') + '</div>' +
+    '<div class="hz-f"><label>End (decommissioned)</label><input type="date" id="hz-e-to" value="' + esc(r.end || '') + '"> <button class="hz-btn hz-sm" id="hz-e-noend">no end</button> <span class="hz-hint">nothing is planned after it</span></div>' +
+    '<div class="hz-f"><label>Parked</label><div id="hz-e-pk">' + (pk || '<span class="hz-hint">none</span>') + '</div></div>' +
+    '<div class="hz-f"><label></label><button class="hz-btn hz-sm" id="hz-e-addpk">+ parked period</button> <span class="hz-hint">no hours while parked: later change-outs move out by its length</span></div>' +
+    '<div class="hz-f"><label>Class</label><select id="hz-e-cls">' + '<option value="">Fleet: ' + esc(fc ? _hzClassName(fc) : 'no class') + '</option>' + HZ_CLASSES.map(function (k) { return '<option value="' + k[0] + '"' + (r.own === k[0] ? ' selected' : '') + '>' + k[1] + '</option>'; }).join('') + '</select></div>' +
+    '<div class="hz-f"><label>Notes</label><textarea id="hz-e-notes" rows="2">' + esc(r.notes) + '</textarea></div>' +
+    (log ? '<div class="hz-log"><b>Changes</b>' + log + '</div>' : '') +
+    '<div class="hz-btns">' + (r.planned ? '<button class="hz-btn hz-danger" id="hz-e-remove">Remove this planned machine</button>' : '') +
+    '<span style="flex:1"></span><button class="hz-btn" id="hz-e-cancel">Cancel</button><button class="hz-btn hz-pri" id="hz-e-save" data-u="' + esc(unit) + '">Save</button></div>');
+  document.getElementById('hz-e-noend').onclick = function () { document.getElementById('hz-e-to').value = ''; };
+  document.getElementById('hz-e-addpk').onclick = function () {
+    const box = document.getElementById('hz-e-pk'); if (!box.querySelector('.hz-pk')) box.innerHTML = '';
+    const d = document.createElement('div'); d.className = 'hz-pk'; d.innerHTML = '<input type="date" class="hz-pf"> to <input type="date" class="hz-pt"> <button class="hz-x" title="remove">&times;</button>'; box.appendChild(d);
+  };
+  document.getElementById('hz-e-pk').onclick = function (e) { if (e.target.classList.contains('hz-x')) e.target.parentElement.remove(); };
+  document.getElementById('hz-e-cancel').onclick = _hzClose;
+  document.getElementById('hz-e-save').onclick = function () { _hzSaveEditor(unit); };
+  const rm = document.getElementById('hz-e-remove'); if (rm) rm.onclick = function () { _hzRemovePlanned(unit); };
+}
+function _hzSaveEditor(unit) {
+  const r = _hzRows().find(function (x) { return x.unit === unit; }); if (!r) return;
+  const t = _lensTodayISO(), fromEl = document.getElementById('hz-e-from');
+  const from = fromEl ? fromEl.value : null, to = document.getElementById('hz-e-to').value || null;
+  const parked = []; let bad = '';
+  document.querySelectorAll('#hz-e-pk .hz-pk').forEach(function (p) {
+    const a = p.querySelector('.hz-pf').value, b = p.querySelector('.hz-pt').value;
+    if (!a && !b) return; if (!a || !b || b < a) bad = 'Each parked period needs a start and an end, the end on or after the start.'; else parked.push({ from: a, to: b });
+  });
+  if (fromEl && (!from || from <= t)) bad = bad || 'The arrival has to be a date after today.';
+  if (to && from && to <= from) bad = bad || 'The end date has to be after the arrival.';
+  if (bad) { showToast(bad, 'warn', 5000); return; }
+  if (to && to < t && to !== r.end && !confirm('Decommission ' + unit + ' from ' + _lensFmtD(to) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it).')) return;
+  const m = _hzM(unit, true); let comps = false; const said = [];
+  if (fromEl && from !== r.arrival) { _hzSetArrival(unit, from); comps = true; said.push('arrives ' + _lensFmtD(from)); }
+  if ((to || null) !== (r.end || null)) { _hzSetEnd(unit, to); said.push(to ? 'end ' + _lensFmtD(to) : 'no end date'); }
+  const pkS = JSON.stringify(parked.sort(function (a, b) { return a.from.localeCompare(b.from); }));
+  if (pkS !== JSON.stringify(r.parked.map(function (p) { return { from: p.from, to: p.to }; }))) {
+    if (parked.length) m.parked = parked; else delete m.parked;
+    _hzLog(m, 'parked', parked.length ? parked.map(function (p) { return _lensFmtD(p.from) + ' – ' + _lensFmtD(p.to); }).join(', ') : 'none'); said.push(parked.length + ' parked period' + (parked.length === 1 ? '' : 's'));
+  }
+  const cls = document.getElementById('hz-e-cls').value;
+  if (cls !== (r.own || '')) { if (cls) m.class = cls; else delete m.class; _hzLog(m, 'class', cls ? _hzClassName(cls) : 'the fleet\'s'); said.push('class ' + (cls ? _hzClassName(cls) : 'the fleet\'s')); }
+  const notes = document.getElementById('hz-e-notes').value.trim();
+  if (notes !== (r.notes || '')) { if (notes) m.notes = notes; else delete m.notes; _hzLog(m, 'notes', ''); said.push('notes'); }
+  _hzClose();
+  if (said.length) _hzAfterChange(unit + ': ' + said.join(', ') + '. SAVE FILE keeps it.', comps);
+}
+
+// ── planned machines ("assume it is like…") ──
+function _hzOpenAdd() {
+  const rows = _hzRows().filter(function (r) { return !r.planned; });
+  const byF = {}; rows.forEach(function (r) { (byF[r.fleet + ' · ' + r.model] = byF[r.fleet + ' · ' + r.model] || []).push(r.unit); });
+  const likeOpts = '<option value="">— choose a machine —</option>' + Object.keys(byF).sort().map(function (g) { return '<optgroup label="' + esc(g) + '">' + byF[g].sort().map(function (u) { return '<option value="' + esc(u) + '">' + esc(u) + '</option>'; }).join('') + '</optgroup>'; }).join('');
+  _hzOverlay('<h3>Add a planned machine</h3>' +
+    '<div class="hz-f"><label>Unit id</label><input type="text" id="hz-a-unit" placeholder="e.g. TD601"> <span class="hz-hint">a new id, not in the plan</span></div>' +
+    '<div class="hz-f"><label>Arrives</label><input type="date" id="hz-a-from" value="' + _lensIsoAdd(_lensTodayISO(), 90) + '"></div>' +
+    '<div class="hz-f"><label>Assume it is like</label><select id="hz-a-like">' + likeOpts + '</select></div>' +
+    '<div class="hz-f"><label>Class</label><select id="hz-a-cls"><option value="">the fleet\'s</option>' + HZ_CLASSES.map(function (k) { return '<option value="' + k[0] + '">' + k[1] + '</option>'; }).join('') + '</select></div>' +
+    '<div id="hz-a-comps" class="hz-hint" style="margin:8px 0">Choose the machine it is like: its components are listed here, all ticked. Untick the ones the new machine won\'t have.</div>' +
+    '<div class="hz-btns"><span style="flex:1"></span><button class="hz-btn" id="hz-a-cancel">Cancel</button><button class="hz-btn hz-pri" id="hz-a-ok">Add planned machine</button></div>');
+  document.getElementById('hz-a-cancel').onclick = _hzClose;
+  document.getElementById('hz-a-like').onchange = function () {
+    const u = this.value, box = document.getElementById('hz-a-comps');
+    if (!u) { box.innerHTML = ''; return; }
+    const cs = _readComponents(lensRawData).filter(function (c) { return String(c.unit || c.unit_id || '') === u; });
+    box.className = '';
+    box.innerHTML = '<div class="hz-cl-bar"><b>' + cs.length + ' components of ' + esc(u) + '</b> <button class="hz-btn hz-sm" id="hz-a-all">tick all</button> <button class="hz-btn hz-sm" id="hz-a-none">untick all</button></div>' +
+      '<div class="hz-clist"><table><thead><tr><th></th><th class="l">Component</th><th>Benchmark</th><th>Cost</th><th>Part #</th></tr></thead><tbody>' +
+      cs.map(function (c, i) { return '<tr><td><input type="checkbox" class="hz-a-c" data-i="' + i + '" checked></td><td class="l">' + esc(c.component || c.name || '') + '</td><td>' + _lensNum(c.benchmark, ' h') + '</td><td>' + (c.cost ? '$' + _lensNum(c.cost) : '—') + '</td><td>' + esc(c.part_number || '—') + '</td></tr>'; }).join('') +
+      '</tbody></table></div>';
+    document.getElementById('hz-a-all').onclick = function () { box.querySelectorAll('.hz-a-c').forEach(function (x) { x.checked = true; }); };
+    document.getElementById('hz-a-none').onclick = function () { box.querySelectorAll('.hz-a-c').forEach(function (x) { x.checked = false; }); };
+  };
+  document.getElementById('hz-a-ok').onclick = _hzCreatePlanned;
+}
+function _hzCompId(unit, name, position, taken) {
+  let id = (window.NumaCoreLib && NumaCoreLib.makeComponentId) ? NumaCoreLib.makeComponentId(unit, name, position || null) : (String(unit) + '_' + String(name)).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  let k = id, i = 2; while (taken[String(k)]) k = id + '_' + (i++);
+  taken[String(k)] = 1; return k;
+}
+function _hzCreatePlanned() {
+  const unit = document.getElementById('hz-a-unit').value.trim().toUpperCase(), from = document.getElementById('hz-a-from').value, like = document.getElementById('hz-a-like').value, cls = document.getElementById('hz-a-cls').value;
+  const t = _lensTodayISO(), all = _readComponents(lensRawData);
+  let bad = '';
+  if (!/^[A-Z0-9][A-Z0-9 _\-\/.]*$/.test(unit)) bad = 'Give the new machine a unit id (letters and numbers).';
+  else if (all.some(function (c) { return String(c.unit || c.unit_id || '').toUpperCase() === unit; })) bad = unit + ' is already in the plan.';
+  else if (!from || from <= t) bad = 'The arrival has to be a date after today.';
+  else if (!like) bad = 'Choose the machine it is like.';
+  const src = all.filter(function (c) { return String(c.unit || c.unit_id || '') === like; });
+  const ticked = []; document.querySelectorAll('#hz-a-comps .hz-a-c').forEach(function (x) { if (x.checked) ticked.push(src[+x.dataset.i]); });
+  if (!bad && !ticked.length) bad = 'Keep at least one component ticked.';
+  if (bad) { showToast(bad, 'warn', 5000); return; }
+  const v5 = !!(lensRawData.masterData && Array.isArray(lensRawData.masterData.components)), taken = {};
+  all.forEach(function (c) { taken[String(c.id)] = 1; });
+  ticked.forEach(function (s) {
+    const c = {}; Object.keys(s).forEach(function (k) { if (k.charAt(0) !== '_' || k === '_lensResolved') c[k] = s[k]; });
+    c.id = _hzCompId(unit, s.component || s.name, s.position, taken);
+    if (v5) { c.unit_id = unit; if ('unit' in c) c.unit = unit; } else c.unit = unit;
+    if ('unit_floc' in c) c.unit_floc = unit;
+    c.install_date = from; c.install_hours = 0; c.last_smu = 0; c.last_read = from;
+    ['changeout_date', 'original_date', 'changeout_date_erp'].forEach(function (k) { if (k in c) c[k] = null; });
+    ['serial_number', 'sn', 'new_component_sn'].forEach(function (k) { if (k in c) c[k] = null; });
+    ['install_wo', 'planned_wo', 'comments', 'notes'].forEach(function (k) { if (k in c) c[k] = ''; });
+    c.planned = true; c.like = like;
+    all.push(c);
+  });
+  if (v5 && Array.isArray(lensRawData.masterData.units)) {
+    const lu = lensRawData.masterData.units.find(function (u) { return String(u.id || u.unit_id || '') === like; }) || {};
+    lensRawData.masterData.units.push({ id: unit, floc: unit, fleet_id: lu.fleet_id || null, model: lu.model || src[0].model || '', status: 'active', planned: true, like: like, notes: 'Planned machine (like ' + like + '), added in Horizon' });
+  }
+  const m = _hzM(unit, true); m.planned = true; m.like = like; m.active_from = from; if (cls) m.class = cls;
+  _hzLog(m, 'added', 'planned, like ' + like + ', ' + ticked.length + ' of ' + src.length + ' components, arrives ' + _lensFmtD(from));
+  _hzClose();
+  _hzAfterChange(unit + ' added: planned, like ' + like + ', ' + ticked.length + ' components, arriving ' + _lensFmtD(from) + '. SAVE FILE keeps it.', true);
+}
+function _hzRemovePlanned(unit) {
+  const K = String(unit).toUpperCase(), arr = _readComponents(lensRawData);
+  const n = arr.filter(function (c) { return c.planned && String(c.unit || c.unit_id || '').toUpperCase() === K; }).length;
+  if (!confirm('Remove the planned machine ' + unit + ' and its ' + n + ' components from the plan?')) return;
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i].planned && String(arr[i].unit || arr[i].unit_id || '').toUpperCase() === K) arr.splice(i, 1);
+  if (lensRawData.masterData && Array.isArray(lensRawData.masterData.units)) lensRawData.masterData.units = lensRawData.masterData.units.filter(function (u) { return !(u.planned && String(u.id || '').toUpperCase() === K); });
+  const h = _hzEnsure(); delete h.machines[K]; _hzLog(h, 'planned machine removed', unit + ' (' + n + ' components)');
+  _hzClose();
+  _hzAfterChange(unit + ' removed from the plan.', true);
+}
+
+// ── events (Horizon's own controls; delegated, bound once) ──
+(function _hzBind() {
+  document.addEventListener('change', function (e) {
+    const t = e.target; if (!t.closest || !t.closest('#tab-horizon')) return;
+    if (t.id === 'hz-end') { const h = _hzEnsure(); const b = h.horizonEnd; h.horizonEnd = Number(t.value); _hzLog(h, 'budget horizon', (b || '—') + ' → ' + h.horizonEnd); _hzAfterChange('Budget horizon: today until ' + h.horizonEnd + '.'); }
+    else if (t.id === 'hz-fleet') { _hzFleetFilter = t.value; renderHorizon(); }
+    else if (t.classList.contains('hz-fclass')) { const h = _hzEnsure(), f = t.dataset.fleet; if (t.value) h.fleetClass[f] = t.value; else delete h.fleetClass[f]; _hzLog(h, 'fleet class', f + ': ' + (t.value ? _hzClassName(t.value) : 'none')); _hzAfterChange(f + ': ' + (t.value ? _hzClassName(t.value) : 'no class') + '. Pulse and Bench list it in that order.'); }
+    else if (t.classList.contains('hz-uclass')) { const m = _hzM(t.dataset.u, true); if (t.value) m.class = t.value; else delete m.class; _hzLog(m, 'class', t.value ? _hzClassName(t.value) : 'the fleet\'s'); _hzAfterChange(t.dataset.u + ': ' + (t.value ? _hzClassName(t.value) : 'the fleet\'s class') + '.'); }
+  });
+  document.addEventListener('click', function (e) {
+    const t = e.target; if (!t.closest || !t.closest('#tab-horizon')) return;
+    if (t.id === 'hz-add') { if (lensRawData) _hzOpenAdd(); return; }
+    const g = t.closest('.hz-grp'); if (g && !t.closest('select')) { const f = g.dataset.fleet; _hzClosed[f] = !_hzClosed[f]; renderHorizon(); return; }
+    const tr = t.closest('.hz-track'); if (tr && !t.classList.contains('hz-h')) { _hzOpenEditor(tr.dataset.u); return; }
+    const rw = t.closest('.hz-row'); if (rw && rw.dataset.u && !t.closest('select') && !t.classList.contains('hz-h')) _hzOpenEditor(rw.dataset.u);
+  });
+  document.addEventListener('mousedown', function (ev) {
+    const hd = ev.target.closest && ev.target.closest('#tab-horizon .hz-h'); if (!hd) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const track = hd.parentElement, rect = track.getBoundingClientRect(), ax = _hzAxis(), s0 = _lensIsoMs(ax.start), e0 = _lensIsoMs(ax.end);
+    const bar = track.querySelector('.hz-bar'), which = hd.dataset.w, unit = hd.dataset.u;
+    let tip = document.getElementById('hz-tip'); if (!tip) { tip = document.createElement('div'); tip.id = 'hz-tip'; document.body.appendChild(tip); }
+    let cur = null, moved = false;
+    const at = function (x) { const f = Math.max(0, Math.min(1, (x - rect.left) / rect.width)); const d = new Date(s0 + f * (e0 - s0)); return { f: f, iso: d.getUTCFullYear() + '-' + _hzPad(d.getUTCMonth() + 1) + '-' + _hzPad(d.getUTCDate()) }; };
+    const move = function (e) {
+      moved = true; const p = at(e.clientX); cur = p.iso; hd.style.left = (p.f * 100) + '%';
+      if (bar) { const l = parseFloat(bar.style.left), w = parseFloat(bar.style.width); if (which === 'from') { bar.style.left = (p.f * 100) + '%'; bar.style.width = Math.max(0.4, l + w - p.f * 100) + '%'; } else bar.style.width = Math.max(0.4, p.f * 100 - l) + '%'; }
+      tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px';
+      tip.textContent = (which === 'from' ? 'arrives ' : (p.iso >= _lensIsoAdd(ax.end, -10) ? 'no end date' : 'end ')) + (which === 'to' && p.iso >= _lensIsoAdd(ax.end, -10) ? '' : _lensFmtD(p.iso));
+    };
+    const up = function () { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); tip.style.display = 'none'; if (moved && cur) _hzCommitDrag(unit, which, cur); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  }, true);
+})();
 
 // ══════════════════════════════════════════════
 //  FLEET SELECTOR COLUMN
@@ -6098,11 +6471,11 @@ function renderPulse() {
   // ── Overdue ──
   // Only flag as overdue if benchmark exists (else it's "no benchmark" risk)
   var hasBench = filtered.filter(c => c.benchmark && c.benchmark > 0);
-  var noBench  = filtered.filter(c => !c.benchmark || c.benchmark <= 0);
+  var noBench  = filtered.filter(c => !c.benchmark || c.benchmark <= 0).sort(_hzSortRank);   // v4.16 — fleet class first
   // v4.14 (operator 2026-09-27: overdue comes from component hours only, as in Bench) — life over 100 %; a passed plan
   // date alone is not overdue (it was: life >= 100 % OR the plan date before today)
   var overdue  = hasBench.filter(c => c.pct > 1.0);
-  overdue.sort((a,b) => (b.pct||0)-(a.pct||0));
+  overdue.sort((a,b) => _hzSortRank(a, b) || ((b.pct||0)-(a.pct||0)));   // v4.16 — fleet class first (Horizon)
   var ob = document.getElementById('pw-overdue-body');
   var oc = document.getElementById('pw-overdue-count');
   if (oc) oc.textContent = overdue.length || '';
@@ -6114,7 +6487,7 @@ function renderPulse() {
       ob.innerHTML = overdue.slice(0,20).map(c => {
         var clr = getHex(getColor(c.pct||0));
         var pctTxt = (c.pct !== null) ? Math.round((c.pct||0)*100)+'%' : '<span class="nb-tag">NB</span>'; // DR-003
-        return '<div class="pw-item"'+_hAttr(c)+' data-f="'+esc(c.fleet)+'" data-m="'+esc(c.model)+'" data-u="'+esc(c.unit)+'" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)">'+
+        return '<div class="pw-item"'+_hAttr(c)+_hzEdge(c)+' data-f="'+esc(c.fleet)+'" data-m="'+esc(c.model)+'" data-u="'+esc(c.unit)+'" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)">'+
           '<span class="pw-dot" style="background:'+clr+'"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -6127,7 +6500,7 @@ function renderPulse() {
   // ── Near-due ──
   var neardue = hasBench.filter(c => c.pct<=1.0 && c.pred_changeout   /* v4.14 — not overdue: life up to 100 % */
     && new Date(c.pred_changeout)>=today && new Date(c.pred_changeout)<=future30);
-  neardue.sort((a,b) => new Date(a.pred_changeout)-new Date(b.pred_changeout));
+  neardue.sort((a,b) => _hzSortRank(a, b) || (new Date(a.pred_changeout)-new Date(b.pred_changeout)));   // v4.16 — fleet class first
   var nb = document.getElementById('pw-neardue-body');
   var nc = document.getElementById('pw-neardue-count');
   if (nc) nc.textContent = neardue.length || '';
@@ -6139,7 +6512,7 @@ function renderPulse() {
       nb.innerHTML = neardue.slice(0,20).map(c => {
         var clr = getHex(getColor(c.pct||0));
         var ds = c.pred_changeout ? c.pred_changeout.slice(0,10) : '—';
-        return '<div class="pw-item"'+_hAttr(c)+'>'+
+        return '<div class="pw-item"'+_hAttr(c)+_hzEdge(c)+'>'+
           '<span class="pw-dot" style="background:'+clr+'"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -6159,7 +6532,7 @@ function renderPulse() {
     } else {
       // FIX-1: c.component, c.unit JSON-derived.
       nb_b.innerHTML = noBench.slice(0,20).map(c => {
-        return '<div class="pw-item"'+_hAttr(c)+'>'+
+        return '<div class="pw-item"'+_hAttr(c)+_hzEdge(c)+'>'+
           '<span class="pw-dot" style="background:#b8ede0"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -6213,7 +6586,7 @@ function renderPulse() {
     // Include no-benchmark items in risk table (they are unscheduled = risk)
     var withBench = filtered.filter(c=>c.benchmark&&c.benchmark>0&&(c.pct||0)>=0.70);
     var noBenchRisk = filtered.filter(c=>!c.benchmark||c.benchmark<=0);
-    var highrisk = [...withBench.sort((a,b)=>(b.pct||0)-(a.pct||0)), ...noBenchRisk];
+    var highrisk = [...withBench.sort((a,b)=>_hzSortRank(a, b) || ((b.pct||0)-(a.pct||0))), ...noBenchRisk.sort(_hzSortRank)];   // v4.16 — fleet class first
     if (!highrisk.length) {
       // FIX-1: pulseFleetFilter is JSON-derived (a fleet name) — escape on display.
       rl.innerHTML = '<div class="pr-no-data">No high-risk components found'+(pulseFleetFilter?' for '+esc(pulseFleetFilter):'')+'.</div>';

@@ -264,9 +264,10 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <header class="manual-header">
   <div class="eyebrow">NumaCore Lens Suite</div>
   <h1>User Manual <span class="version">v1</span></h1>
-  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-09-28 — covers <strong>Lens v4.15 · numacore_workspace.js v0.3.1 · numacore_bench.js v1.3.0 · Cadence v18.13.1 · Deploy v8.20 · Intake v8.14 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
+  <p style="text-align:center;color:var(--text-dim,#8a9aa3);font-size:11px;margin-top:-8px;letter-spacing:0.04em">Last revised 2026-09-28 — covers <strong>Lens v4.16 · numacore_workspace.js v0.3.1 · numacore_bench.js v1.3.1 · Cadence v18.13.1 · Deploy v8.20 · Intake v8.14 · FleetConfig v0.2 · numacore_lib v1.5.1 · numacore-ui.css v1.0</strong> · SheetJS vendored at 0.20.2 (local-first, CDN fallback) · per-version detail lives in <code>Record of Change.html</code> and each tool's <code>archive/&lt;Tool&gt;/v&lt;N&gt;/Backlog.md</code></p>
   <div class="subtitle">Operator reference. Single-file, dark theme, offline-first. Updated 2026-09-27.</div>
   <div style="max-width:880px;margin:10px auto 0;background:rgba(61,201,160,0.06);border:1px solid rgba(61,201,160,0.25);border-radius:8px;padding:10px 16px;font-size:11.5px;color:var(--text-sec,#b8c4cc);line-height:1.6">
+    <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-28, evening — Lens v4.16, Bench v1.3.1: Horizon):</b> <b>Horizon</b> now shows every machine on a timeline: arrival, parked periods, end date (decommissioned after it); drag the dates or click a machine to edit it. Give each fleet a <b>class</b> (primary production … ancillary; one machine can differ): Pulse and Bench list in that order. <b>Add a planned machine</b> "like" another and untick the components it won't have. <a href="#" data-jump="horizon">Horizon</a>.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-28, later — Lens v4.15, Intake v8.14, Cadence v18.13.1):</b> click a component tile to see its <b>history</b> (earlier fittings, life achieved, where each record came from). Pulse opens with <b>REPLACED, STILL LINKED TO A PROJECT</b> when there are cases, and lists machines <b>NOT ON SITE YET</b>. A machine not on site yet is one with no hours whose last read date (in the update sheet) is after today: that date is its arrival, and its components are planned from it in Lens and Cadence, never before. Cadence's "Predictions As-Of" ignores those dates. <a href="#" data-jump="pulse">Pulse</a>.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-28 — Intake v8.13):</b> when an update finds a <b>replaced component that is still linked to a Cadence project</b>, Intake records the case in the plan file, with its back-up: the work orders on that unit within 14 days of the new install date, from an <b>IW39</b> you can give it (the client folder's dated copy, or an IW39 export). The results list every case still open. A date in the update sheet needs at least a month and a year: text like "install 5/" or "N/A" is no longer turned into a made-up date, and changed dates that don't make sense (after today, earlier than the part they replace, years before the unit's other dates) are flagged in a <b>Dates in the sheet</b> table. Intake changes no Cadence link; release a link in Cadence by hand until Cadence's review list arrives. <a href="#" data-jump="intake">Intake: replaced components still linked to a project</a>.<br><br>
     <b style="color:var(--lens-text-high,#e0faf2)">Revision note (2026-09-27, late night — Lens v4.14, Bench v1.3.0, folder reader v0.3.1):</b> <b>Hide</b> a component by right-clicking it (Pulse, Vitals, the unit view): it leaves Pulse, Vitals, Horizon and Bench, never Cadence; a <b>◌ N hidden</b> chip unhides. Buckets and blades on dozers, excavators and loaders are hidden by default. Bench and Pulse call a component <b>overdue</b> only when its life is over 100 %; Bench folds an opened row's notes into one line, hides rows on right-click, and uses <b>Lens's part numbers</b> as the reference for a model with no Component Snapshot. <b>SAVE FILE</b> asks the browser for permission after a restart instead of downloading, and new files OneDrive is still syncing are read patiently, with a clear message and Try again. <a href="#" data-jump="lens">Hide components</a>.<br><br>
@@ -812,38 +813,36 @@ footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--border);color
 <!-- ====================================================================== -->
 <section id="tab-horizon" class="tab-panel">
   <h2><span class="panel-num">6</span>Horizon</h2>
-  <p class="lede">Long-range capital planning view. Today (v4-alpha): per-unit lifecycle bar + EOL hours. Chunk 10 brings the full capital-spend forecast chart.</p>
+  <p class="lede">Every machine on a timeline: when it arrives, when it is parked, when it is decommissioned. Plus the fleet classes that set Pulse's and Bench's order, and planned machines that are not in the component sheet yet. <span class="badge done">v4.16</span></p>
+
+  <h3>The timeline</h3>
+  <p>One row per machine, grouped by fleet. The axis runs from this month to the end of the <b>budget horizon</b> (the "today until" year at the top right; 10 years by default). A red line marks today.</p>
+  <table>
+    <thead><tr><th>Bar</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Green</td><td>On site (hours on file).</td></tr>
+      <tr><td>Blue, starting later</td><td>Not on site yet: it arrives at the bar's start (its last read date, with no hours). Its components are planned from arrival.</td></tr>
+      <tr><td>Violet stripes</td><td>A planned machine (added here, "like" another machine).</td></tr>
+      <tr><td>Yellow hatching</td><td>Parked: no hours in that period, so every later change-out moves out by its length (except components linked to a Cadence project: move the project in Cadence).</td></tr>
+      <tr><td>Red handle at the end</td><td>The end date: the machine is decommissioned after it. Nothing is planned after that date. Once it has passed, the machine leaves Pulse, Vitals and Bench; Horizon keeps it, dimmed.</td></tr>
+    </tbody>
+  </table>
+  <p><b>Drag</b> a handle to move a date: the arrival (machines not on site yet and planned machines) or the end (drag it to the far right for no end). <b>Click</b> a machine to edit its arrival, end date, parked periods, class and notes; every change is kept in the machine's change list.</p>
+  <p class="note">An arrival is one date: for a machine not on site yet it is its components' last read date (Intake v8.14 writes it from the update sheet). Moving it here moves Cadence's forecast too, once the plan is saved and opened again.</p>
+
+  <h3>Fleet classes</h3>
+  <p>Each fleet can be <b>Primary production</b>, <b>Secondary production</b>, <b>Primary support</b>, <b>Secondary support</b> or <b>Ancillary</b> (the "Fleet class" on its group row). One machine can take its own class (its "Class" in the row), e.g. two of sixteen loaders on primary production. <b>Pulse</b> lists by class first (primary production at the top, then down the classes, no class last), then as before; each item shows its class as a coloured edge. <b>Bench</b> lists its models the same way.</p>
+
+  <h3>Planned machines</h3>
+  <p><b>+ Add planned machine</b>: give it a unit id and an arrival date, and choose the machine it is <b>like</b>. That machine's components are listed, all ticked: untick the ones the new machine won't have. The ticked ones are added to the plan as its components (0 hours, installed on arrival, marked planned), so Pulse, Bench and Cadence see them and they are planned from arrival. Click the machine to move its arrival or to remove it.</p>
+
+  <h3>Where it is kept</h3>
+  <p>In the plan file's own <code>horizon</code> section (V4 and V5 alike): the budget horizon, the fleet classes, and per machine its arrival, end date, parked periods, class, notes and change list. SAVE FILE keeps it. Planned machines' components are in the component list, marked <code>planned</code> and <code>like</code>.</p>
 
   <div class="callout coming">
-    <div class="callout-title">v4-alpha placeholder</div>
-    <p>The Horizon panel currently ships as a scaffold only — header bar + a per-unit lifecycle grid. The capital-plan chart that integrates <code>componentHistory[]</code>, <code>costs[]</code>, and <code>fleetPlan[]</code> with projected dates from Cadence is the Chunk 10 deliverable.</p>
+    <div class="callout-title">Coming next</div>
+    <p>The budget in Horizon, next to Cadence's (the same sums, within each machine's dates), then Cadence's budget retired. Cadence showing nothing after a machine's end date (a Cadence change, agreed; shown to you before it is made). Intake not listing planned machines as missing from the sheet.</p>
   </div>
-
-  <h3>What's shipped today</h3>
-  <p>Three columns per unit: <b>Unit</b>, <b>Lifecycle Bar (5-Year)</b>, <b>EOL Remaining</b>.</p>
-
-  <h3>Lifecycle calculation</h3>
-  <p>The lifecycle bar shows current SMU as a percentage of expected life. The denominator is computed in this priority order:</p>
-  <ol>
-    <li><code>masterData.units[].expected_life_hours</code> if FleetConfig has set it</li>
-    <li>Otherwise, <code>util_rate × 365 × 5</code> as a 5-year fallback</li>
-  </ol>
-<pre>lifecycle_pct = clamp(0..1, smu / horizonHrs)
-EOL_hrs       = max(0, horizonHrs − smu)</pre>
-  <p>Unknown horizon (no <code>expected_life_hours</code>, no <code>util_rate</code>) renders as <b>—</b> with a hint to set <code>expected_life_hours</code> in FleetConfig.</p>
-
-  <div class="callout">
-    <div class="callout-title">FIX-3 root cause</div>
-    <p>Earlier versions used different denominators for the lifecycle bar (<code>util_rate × 365 × 5</code>) and the EOL hours estimate (<code>expected_life_hours</code> only). Result: BD306 showing 52% bar but 0 hrs EOL. FIX-3 unified both onto the same priority order above.</p>
-  </div>
-
-  <h3>What Chunk 10 brings</h3>
-  <ul>
-    <li>Capital plan stacked bar chart per fiscal year</li>
-    <li>Mine-plan input → fleet hours distribution</li>
-    <li>Component-replacement spend forecast aggregated from <code>componentHistory[]</code>, <code>costs[]</code>, projected dates from <code>workingData.projects[]</code></li>
-    <li>Drill-down into specific units / components from chart segments</li>
-  </ul>
 </section>
 
 <!-- ====================================================================== -->

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.3.0 · 2026-09-27
+   v1.3.1 · 2026-09-28
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -119,12 +119,19 @@
          new one (Lens tracks every component; the definition is the critical list): it stays in "Tracked in Lens, not
          matched", as before.
 
+     • v1.3.1 (operator, 2026-09-28, with Lens v4.16 Horizon): "classify fleet... primary production; secondary production;
+       primary support; secondary support; Ancillary... pulse will pull the priority from this fleet classification" and
+       Bench uses the same order: within each group (open pit, underground, reference) the models are listed by the best
+       class of their machines (primary production first; no class last; ties keep the definition's order). Machines past
+       their end date (decommissioned in Horizon) are not in the host's fleetData, so they leave Bench.
+
    API
      NumaCoreBench.render(containerEl, host)
        host = { raw, fleetData, imageBase, planSaved, clientCode,
                 markUnsaved(msg), toast(msg, sev),
                 v1.3.0 (optional): isHidden(fleet, model, unit, component) · benchHidden() → [{model, pid, label, at}] ·
-                setBenchHidden(list) · openHidden() }
+                setBenchHidden(list) · openHidden() ·
+                v1.3.1 (optional): classRank(fleet, unit) → 0 (primary production) … 5 (no class) }
      NumaCoreBench.setStock(rows, {fileName, dataAsOf, method, clientCode})   rows = [headers, ...]
      NumaCoreBench.clearStock()
      NumaCoreBench.setSnapshots([snapshot])            v1.2.0 — the Component Snapshots in the client folder
@@ -134,7 +141,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.3.0';
+  var VERSION = '1.3.1';
   var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -420,6 +427,16 @@
     var all = mk ? Object.keys(fd[fk][mk]).sort() : [];
     return m.lens.units ? all.filter(function (u) { return m.lens.units.map(function (x) { return x.toUpperCase(); }).indexOf(u.toUpperCase()) >= 0; }) : all;
   }
+  // v1.3.1 — Horizon's fleet classes: a model ranks by its best machine's class (0 = primary production … 5 = no class)
+  function modelRank(m) {
+    if (!S.host || typeof S.host.classRank !== 'function' || !m || !m.lens) return 99;
+    var fd = S.host.fleetData || {}, fk = Object.keys(fd).find(function (f) { return f.toUpperCase() === String(m.lens.fleet).toUpperCase(); });
+    if (!fk) return 99;
+    var best = 99;
+    modelUnits(m).forEach(function (u) { var r; try { r = S.host.classRank(fk, u); } catch (e) { r = 99; } if (typeof r === 'number' && r < best) best = r; });
+    return best;
+  }
+  function byClass(ms) { var r = {}; ms.forEach(function (m) { r[m.key] = modelRank(m); }); return ms.slice().sort(function (a, b) { return (r[a.key] - r[b.key]) || (ms.indexOf(a) - ms.indexOf(b)); }); }
   var STOP = { LEFT: 1, RIGHT: 1, FRONT: 1, REAR: 1, LH: 1, RH: 1, L: 1, R: 1, CYL: 1, CYLINDER: 1, GP: 1, GROUP: 1, ASSY: 1, ASSEMBLY: 1, AND: 1, THE: 1 };
   var POSN = { FRONT: 'F', REAR: 'R', LEFT: 'L', LH: 'L', RIGHT: 'R', RH: 'R' };
   function toks(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean); }
@@ -714,7 +731,7 @@
   function listHtml(def, views) {
     var h = '';
     ['OP', 'UG', 'REF'].forEach(function (g) {
-      var ms = def.models.filter(function (m) { return m.group === g; });
+      var ms = byClass(def.models.filter(function (m) { return m.group === g; }));   // v1.3.1 — Horizon's class order
       if (!ms.length) return;
       h += '<div class="ncb-grp"><span>' + GROUP_NAME[g] + '</span><span>' + ms.length + '</span></div>';
       ms.forEach(function (m) {
@@ -1079,7 +1096,7 @@
   function summaryHtml(def, views) {
     var h = '<h1 class="ncb-h">Fleet spares cover</h1><div class="ncb-sub">Every critical component per model, judged on <b>cover after inbound</b> (on the shelf + on the way − reserved). Click a model for its board and table.</div>';
     ['OP', 'UG', 'REF'].forEach(function (g) {
-      var ms = def.models.filter(function (m) { return m.group === g; }); if (!ms.length) return;
+      var ms = byClass(def.models.filter(function (m) { return m.group === g; })); if (!ms.length) return;   // v1.3.1 — Horizon's class order
       // v1.1.2 — the three group tables share one fixed set of column widths, so every column lines up down the page
       h += '<h3 style="font-family:var(--nc-font-head);margin:18px 0 6px">' + GROUP_NAME[g] + (g === 'REF' ? ' <small style="font-weight:400;color:var(--nc-text-m)">· tables only, no machine board</small>' : '') + '</h3><table class="ncb-sumtbl"><colgroup><col style="width:30%"><col style="width:8%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:10%"><col style="width:16%"></colgroup><thead><tr><th class="l">Model</th><th>Units</th><th>Pockets</th><th>Spare</th><th>No spare</th><th>Short</th><th>Not in SAP</th><th>Lens components not matched</th></tr></thead><tbody>';
       ms.forEach(function (m) {
@@ -1707,6 +1724,7 @@
                  snapProposals: snapProposals, matchPocket: matchPocket, applyItems: applyItems, defDiff: defDiff, pnStock: pnStock, modelView: modelView, stageToggle: stageToggle,   // v1.2.0
                  applyDefinition: applyDefinition, applyReview: applyReview, partsHtml: partsHtml, reviewHtml: reviewHtml, logHtml: logHtml,
                  lensProposals: lensProposals, allProposals: allProposals, hiddenBar: hiddenBar, notesBlock: notesBlock, tableHtml: tableHtml, benchHiddenList: benchHiddenList, sameName: sameName,   // v1.3.0
+                 modelRank: modelRank, byClass: byClass,   // v1.3.1
                  setHost: function (h) { S.host = h; },
                  setIndex: function (idx, stock) { S.idx = idx; S.stock = stock; S.askDate = !stock.dataAsOf; rerender(); } }
   };
