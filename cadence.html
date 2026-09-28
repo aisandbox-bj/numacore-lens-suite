@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.13 — NumaCore Lens Suite</title>
+<title>Cadence v18.13.1 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -1353,9 +1353,18 @@ const LABELS = (window.NumaCoreLib && window.NumaCoreLib.CATEGORY_LABELS) || {"e
 const TODAY  = new Date();   // live system clock — advances each day
 const APP_TZ = 'America/Edmonton'; // Alberta / Calgary — Mountain Time (UTC-7 MDT / UTC-6 MST)
 
-// FIX-10: Subtitle date — auto-computed from DATA[*].last_read (max value)
+// v18.13.1 (operator consent 2026-09-28) — "Predictions As-Of" = the newest last read date ON OR BEFORE TODAY.
+// A last read date after today is a machine's arrival, not a reading (Intake v8.14: a machine with 0 h and a future
+// last read is not on site yet; the forecast counts from that date, unchanged). It must not become the fleet's data
+// date. Today is the local calendar date (never toISOString()).
+function _asOfDate() {
+  const t = new Date();
+  const today = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+  return DATA.reduce((mx, r) => (r.last_read && String(r.last_read).slice(0, 10) <= today && r.last_read > mx ? r.last_read : mx), '');
+}
+// FIX-10: Subtitle date — auto-computed from DATA[*].last_read (max value; v18.13.1: readings on or before today)
 (function() {
-  const maxRef = DATA.reduce((mx, r) => (r.last_read && r.last_read > mx ? r.last_read : mx), '');
+  const maxRef = _asOfDate();   // v18.13.1
   const el = document.querySelector('.subtitle');
   // FIX-4-comprehensive (2026-05-10) \u2014 operator-renamed label. The value is
   // the most recent SMU read date in the fleet (i.e. the as-of date for all
@@ -7474,7 +7483,7 @@ function _initFromJSON(json) {
 
   // Dismiss overlay and render
   document.getElementById('noDataState').classList.add('hidden');
-  const maxRef2 = DATA.reduce((mx, r) => (r.last_read && r.last_read > mx ? r.last_read : mx), '');
+  const maxRef2 = _asOfDate();   // v18.13.1 — readings on or before today (a later date is an arrival)
   const subEl = document.getElementById('hdrSubtitle');
   if (subEl) subEl.textContent = 'Predictions As-Of: ' + (maxRef2 || '—');
   applyTermLabel();

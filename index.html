@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.14 — Mission Control</title>
+<title>NumaCore Lens v4.15 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.0"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.1"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -453,7 +453,7 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 /* Drill modal */
 #comp-drill-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9000; display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px); }
 #comp-drill-overlay.open { display:flex; }
-#comp-drill-modal { background:#030f0c; border:1px solid #0f6e56; border-radius:10px; padding:20px 24px; min-width:420px; max-width:560px; box-shadow:0 20px 60px rgba(0,0,0,0.6); color:#e0faf2; }
+#comp-drill-modal { background:#030f0c; border:1px solid #0f6e56; border-radius:10px; padding:20px 24px; min-width:420px; max-width:760px; max-height:88vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.6); color:#e0faf2; }
 #comp-drill-modal h3 { margin:0 0 4px 0; font-size:1.05rem; color:#3dc9a0; }
 #comp-drill-modal .cd-meta { font-size:0.7rem; color:#b8ede0; opacity:0.7; margin-bottom:14px; }
 #comp-drill-modal .cd-row  { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(61,201,160,0.12); font-size:0.78rem; }
@@ -463,6 +463,15 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #comp-drill-modal .cd-close { margin-top:14px; text-align:right; }
 #comp-drill-modal button { background:#0f6e56; border:none; color:#e0faf2; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:0.72rem; font-weight:600; letter-spacing:0.5px; }
 #comp-drill-modal button:hover { background:#3dc9a0; color:#030f0c; }
+/* v4.15 — history + replaced-while-linked on the tile panel */
+#comp-drill-modal .cd-sec { margin-top:14px; font-size:0.66rem; letter-spacing:1px; text-transform:uppercase; color:#3dc9a0; opacity:0.85; }
+#comp-drill-modal .cd-note { font-size:0.7rem; color:#6a7fa0; margin-top:4px; line-height:1.45; }
+#comp-drill-modal table.cd-h { width:100%; border-collapse:collapse; margin-top:6px; font-size:0.7rem; }
+#comp-drill-modal table.cd-h th { color:#6a7fa0; font-weight:600; text-align:center; padding:4px 6px; border-bottom:1px solid rgba(61,201,160,0.2); }
+#comp-drill-modal table.cd-h td { text-align:center; padding:4px 6px; border-bottom:1px solid rgba(61,201,160,0.08); color:#e0faf2; vertical-align:top; }
+#comp-drill-modal table.cd-h td.l, #comp-drill-modal table.cd-h th.l { text-align:left; }
+#comp-drill-modal .cd-rwl { margin-top:8px; padding:8px 10px; border:1px solid rgba(239,159,39,0.35); background:rgba(239,159,39,0.06); border-radius:6px; font-size:0.72rem; line-height:1.5; }
+#comp-drill-modal .cd-wo { font-size:0.68rem; color:#b8ede0; margin-top:3px; }
 .comp-icon { width:42px;height:42px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(255,255,255,0.1); }
 .comp-icon svg { width:22px;height:22px; }
 .comp-info { flex:1;min-width:0; }
@@ -1692,6 +1701,14 @@ body { background: #030f0c; }
         <div id="pulse-left">
           <div class="pulse-panel-title">ACTION SUMMARY</div>
           <div id="pulse-action-summary">
+            <!-- v4.15 — replaced components still linked to a Cadence project (Intake v8.13 records; reminded at every open; first, so it is seen) -->
+            <div class="pulse-widget" id="pw-rwl" style="display:none">
+              <div class="pw-header">
+                <span>&#x1F517; REPLACED, STILL LINKED TO A PROJECT</span>
+                <span id="pw-rwl-count" style="font-size:0.72rem;color:#ef9f27;font-weight:700"></span>
+              </div>
+              <div class="pw-body" id="pw-rwl-body"></div>
+            </div>
             <div class="pulse-widget" id="pw-overdue">
               <div class="pw-header">
                 <span>&#x1F6A8; OVERDUE COMPONENTS</span>
@@ -1719,6 +1736,14 @@ body { background: #030f0c; }
                 <span id="pw-projects-count" style="font-size:0.72rem;color:#b8ede0;font-weight:700"></span>
               </div>
               <div class="pw-body" id="pw-projects-body"><div class="pw-empty">No project data in file</div></div>
+            </div>
+            <!-- v4.15 — machines not on site yet (0 h, a last read date after today = the arrival) -->
+            <div class="pulse-widget" id="pw-arrive" style="display:none">
+              <div class="pw-header">
+                <span>&#x1F69A; NOT ON SITE YET</span>
+                <span id="pw-arrive-count" style="font-size:0.72rem;color:#b8ede0;font-weight:700"></span>
+              </div>
+              <div class="pw-body" id="pw-arrive-body"></div>
             </div>
           </div>
         </div>
@@ -1897,7 +1922,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.14';
+const VERSION = '4.15';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2716,7 +2741,7 @@ function renderCanvasHero(fleet, model, unit) {
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">SMU</div>' +
         '<div class="hmc-value">' + smuStr + '</div>' +
-        '<div class="hmc-sub">' + (hasSMU ? ('Last recorded: ' + lastReadStr) : 'No SMU recorded') + '</div>' +
+        '<div class="hmc-sub">' + ((visible.length && visible.every(function (c) { return c.on_site_from; })) ? ('Not on site yet · on site from ' + esc(_lensFmtD(visible[0].on_site_from))) : (hasSMU ? ('Last recorded: ' + lastReadStr) : 'No SMU recorded')) + '</div>' +   /* v4.15 */
       '</div>' +
       '<div class="hero-metric-card">' +
         '<div class="hmc-label">Worst Health</div>' +
@@ -4049,6 +4074,154 @@ function compIcon(name){
   if(n.includes('track')||n.includes('sprocket'))return`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="8" width="20" height="8" rx="4"/><circle cx="7" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="17" cy="12" r="2"/></svg>`;
   return`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/></svg>`;
 }
+// ══ v4.15 — COMPONENT HISTORY ON THE TILE · REPLACED COMPONENTS STILL LINKED · MACHINES NOT ON SITE YET ══════════
+// Operator 2026-09-27: "would be cool to see the history on a component when I click on the tile in Lens on the
+// Machine view"; 2026-09-28: the replaced-while-linked decision (Intake v8.13 records; Lens reminds, Cadence reviews)
+// and machines not on site yet (option A: a machine with 0 h whose last read date is after today arrives on that date;
+// Lens plans its components from arrival). All read-only: Lens changes none of these records.
+function _lensTodayISO() { const t = new Date(); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); }
+function _lensIsoMs(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; }
+function _lensIsoAdd(iso, n) { const x = _lensIsoMs(iso); if (x === null) return null; const d = new Date(x + n * 86400000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0'); }
+function _lensFmtD(iso) { const x = _lensIsoMs(iso); if (x === null) return iso ? String(iso) : '—'; const d = new Date(x); return d.getUTCDate() + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+function _lensNum(v, suf) { return (v == null || v === '' || !isFinite(Number(v))) ? '—' : Number(v).toLocaleString('en-CA', { maximumFractionDigits: 0 }) + (suf || ''); }
+
+// Machines not on site yet: UNIT → arrival date. Set by buildFleetData on every load.
+let _lensNotOnSite = {};
+// Cadence's own sum from the last read date (the arrival): last read + (benchmark − hours used) ÷ hours a day.
+function _arrivalForecast(c) {
+  const bm = Number(c.benchmark || 0), ur = Number(c.util_rate || 0), ref = String(c.last_read || '').slice(0, 10);
+  if (!(bm > 0) || !(ur > 0) || _lensIsoMs(ref) === null) return null;
+  return _lensIsoAdd(ref, Math.floor((bm - (Number(c.last_smu || 0) - Number(c.install_hours || 0))) / ur));
+}
+
+// Component history (the plan's componentHistory): Intake's records by component id; Cadence's HISTORIC import by the
+// exact unit + component name (upper-cased, spaces collapsed). Never matched by likeness; records of machines no longer
+// in the plan are counted, never put on another machine.
+let _lensHist = { byId: {}, byName: {}, total: 0, unmatched: 0 };
+function _histName(unit, name) { return String(unit || '').toUpperCase().trim() + '||' + String(name || '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+function _buildHistIndex(json) {
+  const hist = (json && json.masterData && Array.isArray(json.masterData.componentHistory)) ? json.masterData.componentHistory
+             : (json && Array.isArray(json.componentHistory) ? json.componentHistory : []);
+  const comps = _readComponents(json), ids = {}, names = {};
+  comps.forEach(c => { ids[String(c.id)] = 1; names[_histName(c.unit || c.unit_id, c.component || c.name)] = 1; });
+  const idx = { byId: {}, byName: {}, total: hist.length, unmatched: 0 };
+  hist.forEach(h => {
+    if (!h) return;
+    if (h.component_id != null && ids[String(h.component_id)]) { (idx.byId[String(h.component_id)] = idx.byId[String(h.component_id)] || []).push(h); return; }
+    const k = _histName(h.unit_id || h.unit, h.component_name || h.component);
+    if (names[k]) (idx.byName[k] = idx.byName[k] || []).push(h); else idx.unmatched++;
+  });
+  _lensHist = idx;
+}
+function _histFor(c, unit) {
+  const a = (c.id != null && _lensHist.byId[String(c.id)]) || [], b = _lensHist.byName[_histName(unit, c.component)] || [];
+  const all = a.concat(b.filter(h => a.indexOf(h) < 0));
+  const when = h => String(h.machine_down_date || h.removed_date || h.detected_date || '');
+  return all.sort((x, y) => when(y).localeCompare(when(x)));
+}
+function _histSource(h) {
+  if (h.source === 'EAM_import') return 'Intake update' + (h.detected_date ? ', ' + _lensFmtD(h.detected_date) : '');
+  if (h.source === 'HISTORIC_import') return 'Intake historical import';
+  return 'History import (Cadence)';
+}
+function _histHTML(c, unit) {
+  const L = _histFor(c, unit);
+  const cur = (typeof c.pct === 'number' && isFinite(c.pct)) ? '<div class="cd-note">This one: ' + (c.pct * 100).toFixed(1) + ' % used, ' + _lensNum(c.est_hours, ' h') + ' since ' + esc(c.install_date ? _lensFmtD(c.install_date) : 'install') + '.</div>' : '';
+  if (!L.length) return '<div class="cd-sec">History</div><div class="cd-note">No earlier fittings on record for this position.</div>' + cur;
+  const rows = L.map(h => {
+    const inst = (h.install_date ? esc(_lensFmtD(h.install_date)) : '—') + (h.install_hours != null && h.install_hours !== '' ? '<br><span style="color:#6a7fa0">' + _lensNum(h.install_hours, ' h') + '</span>' : '');
+    const down = h.machine_down_date || h.removed_date, downH = h.removal_hours != null ? h.removal_hours : h.removed_smu;
+    const rem = (down ? esc(_lensFmtD(down)) : '—') + (downH != null && downH !== '' ? '<br><span style="color:#6a7fa0">' + _lensNum(downH, ' h') + '</span>' : '');
+    const life = h.life_achieved != null ? h.life_achieved : h.hours_consumed, pct = h.life_pct != null ? h.life_pct : h.pct_consumed;
+    const pc = (pct != null && isFinite(Number(pct))) ? '<span style="color:' + getHex(getColor(Number(pct) / 100)) + ';font-weight:700">' + Number(pct).toFixed(0) + ' %</span>' : '—';
+    const ids = [h.serial_number ? 'S/N ' + esc(h.serial_number) : '', h.part_number ? 'P/N ' + esc(h.part_number) : ''].filter(Boolean).join('<br>') || '—';
+    const wo = [h.replacement_wo ? 'WO ' + esc(h.replacement_wo) : '', h.cost_actual != null && h.cost_actual !== '' ? '$' + _lensNum(h.cost_actual) : ''].filter(Boolean).join('<br>') || '—';
+    const src = esc(_histSource(h)) + (h.project_name ? '<br><span style="color:#ef9f27">while linked to ' + esc(h.project_name) + '</span>' : '');
+    return '<tr><td>' + inst + '</td><td>' + rem + '</td><td>' + _lensNum(life, ' h') + '<br>' + pc + '</td><td>' + ids + '</td><td>' + wo + '</td><td class="l">' + src + '</td></tr>';
+  }).join('');
+  return '<div class="cd-sec">History · ' + L.length + ' earlier fitting' + (L.length === 1 ? '' : 's') + '</div>' +
+    '<table class="cd-h"><thead><tr><th>Installed</th><th>Removed</th><th>Life achieved</th><th>Serial / part</th><th>WO / cost</th><th class="l">Source</th></tr></thead><tbody>' + rows + '</tbody></table>' + cur;
+}
+
+// Replaced while linked to a Cadence project (Intake v8.13 records, working/workingData.replacedWhileLinked)
+const LENS_RWL_CASE = { done_by_project: 'Done by the project', before_project: 'Replaced before the project', after_project: 'Replaced after the project', no_date: 'No date to compare' };
+function _lensRwl() { const w = (lensRawData && _readWorking(lensRawData)) || {}; return Array.isArray(w.replacedWhileLinked) ? w.replacedWhileLinked : []; }
+function _lensRwlOpen() { return _lensRwl().filter(r => r && (r.status === 'open' || r.status === 'postponed')); }
+// The back-up when Intake had no IW39: the same fixed filter on the IW39 the client folder holds now (Deploy's rows).
+function _iw39InUseWos(unit, anchor) {
+  const src = _embedWorkspace && _embedWorkspace.IW39;
+  if (!src || !Array.isArray(src.rows) || !anchor) return null;
+  const u = String(unit || '').toUpperCase(), out = [];
+  src.rows.forEach(r => {
+    if (String(r.floc || '').toUpperCase() !== u) return;
+    const when = r.completion_date || r.basic_start; if (!when) return;
+    const d = Math.round((_lensIsoMs(when) - _lensIsoMs(anchor)) / 86400000);
+    if (isFinite(d) && Math.abs(d) <= 14) out.push({ order: r.wo_number, type: r.order_type, description: r.description, status: r.status, actualFinish: r.completion_date || null, basicStart: r.basic_start || null, actualCost: r.actual_cost, daysFromInstall: d });
+  });
+  out.sort((a, b) => Math.abs(a.daysFromInstall) - Math.abs(b.daysFromInstall));
+  return { wos: out, file: src.fileName, dataAsOf: src.dataAsOf };
+}
+function _woLine(w) {
+  const when = w.actualFinish ? 'finished ' + _lensFmtD(w.actualFinish) : (w.basicStart ? 'basic start ' + _lensFmtD(w.basicStart) : '');
+  const gap = w.daysFromInstall == null ? '' : ' (' + (w.daysFromInstall === 0 ? 'same day' : Math.abs(w.daysFromInstall) + ' d ' + (w.daysFromInstall > 0 ? 'after' : 'before')) + ')';
+  return '<div class="cd-wo"><b>' + esc(String(w.order)) + '</b> ' + esc(w.type || '') + ' · ' + esc(w.status || '—') + ' · ' + esc(when + gap) + ' · ' + esc(w.description || '') +
+    (w.actualCost != null && w.actualCost !== '' ? ' · $' + _lensNum(w.actualCost) : '') + (w.fromSheet ? ' <span style="color:#ef9f27">· from the component sheet</span>' : '') + (w.namesComponent ? ' <span style="color:#3dc9a0">· names the component</span>' : '') + '</div>';
+}
+function _rwlDrillHTML(c, unit) {
+  const recs = _lensRwl().filter(r => r && String(r.component_id) === String(c.id)).sort((a, b) => String(b.detected_date || '').localeCompare(String(a.detected_date || '')));
+  if (!recs.length) return '';
+  return recs.map(r => {
+    const st = r.status === 'postponed' ? 'postponed' + (r.postponed_at ? ' ' + _lensFmtD(String(r.postponed_at).slice(0, 10)) : '') : (r.status || 'open');
+    const inst = r.anchor_basis && String(r.anchor_basis).indexOf('last reading') >= 0 ? _lensNum(r.new_install_hours, ' h') + ' (install date not changed in the sheet)' : _lensFmtD(r.new_install_date) + ' @ ' + _lensNum(r.new_install_hours, ' h');
+    const due = r.still_due === true ? '<b style="color:#ef9f27">still due by the project end</b>' : r.still_due === false ? 'not due by the project end' : 'due date unknown';
+    const ev = r.evidence || {};
+    let woHTML = '';
+    if (ev.wos && ev.wos.length) woHTML = ev.wos.slice(0, 5).map(_woLine).join('') + '<div class="cd-note">From ' + esc(ev.iw39File || 'the IW39') + (ev.iw39DataDate ? ', data date ' + esc(_lensFmtD(ev.iw39DataDate)) : '') + ' (as at the Intake update).</div>';
+    else {
+      const live = !ev.iw39File ? _iw39InUseWos(r.unit || unit, r.anchor_date) : null;
+      if (live && live.wos.length) woHTML = live.wos.slice(0, 5).map(_woLine).join('') + '<div class="cd-note">From the IW39 in use (' + esc(live.file || '') + (live.dataAsOf ? ', data date ' + esc(_lensFmtD(live.dataAsOf)) : '') + '): work orders on ' + esc(r.unit || unit) + ' within 14 days of ' + esc(_lensFmtD(r.anchor_date)) + '.</div>';
+      else woHTML = '<div class="cd-note">Work orders: ' + esc(ev.note || 'none') + (live ? '; none in the IW39 in use either.' : '.') + '</div>';
+    }
+    return '<div class="cd-rwl">&#x1F517; <b>Replaced ' + esc(inst) + ' while linked to ' + esc(r.project_name || r.project_id) + '</b> (' + esc(_lensFmtD(r.project_start)) + ' – ' + esc(_lensFmtD(r.project_end)) + ').<br>' +
+      esc(LENS_RWL_CASE[r.case] || r.case || '') + ' · ' + due + ' · status <b>' + esc(st) + '</b>' + (r.status === 'open' || r.status === 'postponed' ? ' (review in Cadence)' : '') + woHTML + '</div>';
+  }).join('');
+}
+// Where a unit sits in FLEET_DATA (for Pulse's links)
+function _lensUnitPath(unit) {
+  const u = String(unit || '').toUpperCase();
+  for (const f of Object.keys(FLEET_DATA || {})) for (const m of Object.keys(FLEET_DATA[f])) for (const x of Object.keys(FLEET_DATA[f][m])) if (String(x).toUpperCase() === u) return { f, m, u: x };
+  return null;
+}
+function _renderPulseRwl() {
+  const box = document.getElementById('pw-rwl'), body = document.getElementById('pw-rwl-body'), cnt = document.getElementById('pw-rwl-count');
+  if (!box || !body) return;
+  const L = _lensRwlOpen().filter(r => { const p = _lensUnitPath(r.unit); return !pulseFleetFilter || (p && p.f === pulseFleetFilter); });
+  box.style.display = L.length ? '' : 'none';
+  if (!L.length) { body.innerHTML = ''; return; }
+  const post = L.filter(r => r.status === 'postponed');
+  if (cnt) cnt.textContent = L.length;
+  body.innerHTML = L.slice(0, 12).map(r => {
+    const p = _lensUnitPath(r.unit);
+    const tail = r.still_due === true ? 'still due' : (LENS_RWL_CASE[r.case] || '').replace('Replaced ', '');
+    return '<div class="pw-item"' + (p ? ' data-f="' + esc(p.f) + '" data-m="' + esc(p.m) + '" data-u="' + esc(p.u) + '" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)"' : '') + '>' +
+      '<span class="pw-dot" style="background:' + (r.status === 'postponed' ? '#b8ede0' : '#ef9f27') + '"></span>' +
+      '<span class="pw-comp">' + esc(r.component) + '</span><span class="pw-unit">' + esc(r.unit) + '</span>' +
+      '<span class="pw-unit">' + esc(r.status === 'postponed' ? 'postponed' : tail) + '</span></div>';
+  }).join('') + '<div class="pw-empty" style="text-align:left">Still linked to ' + (L.length === 1 ? 'its project' : 'their projects') + (post.length ? '; ' + post.length + ' postponed' : '') + '. Review in Cadence (release a link by hand until its review list arrives).</div>';
+}
+function _renderPulseArrivals() {
+  const box = document.getElementById('pw-arrive'), body = document.getElementById('pw-arrive-body'), cnt = document.getElementById('pw-arrive-count');
+  if (!box || !body) return;
+  const L = Object.keys(_lensNotOnSite).map(u => ({ u, d: _lensNotOnSite[u], p: _lensUnitPath(u) })).filter(x => !pulseFleetFilter || (x.p && x.p.f === pulseFleetFilter)).sort((a, b) => a.d.localeCompare(b.d));
+  box.style.display = L.length ? '' : 'none';
+  if (!L.length) { body.innerHTML = ''; return; }
+  if (cnt) cnt.textContent = L.length;
+  body.innerHTML = L.map(x => '<div class="pw-item"' + (x.p ? ' data-f="' + esc(x.p.f) + '" data-m="' + esc(x.p.m) + '" data-u="' + esc(x.p.u) + '" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)"' : '') + '>' +
+    '<span class="pw-dot" style="background:#5fa8e0"></span><span class="pw-comp">' + esc(x.p ? x.p.u : x.u) + '</span><span class="pw-unit">' + esc(x.p ? x.p.m : '') + '</span>' +
+    '<span class="pw-unit">on site from ' + esc(_lensFmtD(x.d)) + '</span></div>').join('') +
+    '<div class="pw-empty" style="text-align:left">Planned from arrival: left out of the lists above until then.</div>';
+}
+
 // v3.5 sub5d — component drill-in modal. Minimal viable: show canonical fields
 // from the component record + ConMon band. sub6 will evolve this into a proper
 // drill-in view with history / predictions / sample history.
@@ -4077,7 +4250,9 @@ function openCompDrill(fleet, model, unit, c) {
     '<div class="cd-row"><span class="cd-label">Life used</span><span class="cd-val">' + pct + '%</span></div>' +
     '<div class="cd-row"><span class="cd-label">Hours</span><span class="cd-val">' + eH + ' / ' + bn + '</span></div>' +
     '<div class="cd-row"><span class="cd-label">Installed</span><span class="cd-val">' + esc(c.install_date || '—') + '</span></div>' +   /* v4.7 FIX-1 — esc */
-    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + esc(c.pred_changeout || '—') + '</span></div>';
+    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + esc(c.pred_changeout || '—') + (c.on_site_from ? ' <span style="color:#6a7fa0;font-weight:400">(from arrival)</span>' : '') + '</span></div>' +
+    (c.on_site_from ? '<div class="cd-row"><span class="cd-label">Not on site yet</span><span class="cd-val">on site from ' + esc(_lensFmtD(c.on_site_from)) + '</span></div>' : '') +   /* v4.15 */
+    _rwlDrillHTML(c, unit) + _histHTML(c, unit);   /* v4.15 — replaced while linked + the component's history */
   document.getElementById('comp-drill-overlay').classList.add('open');
 }
 
@@ -4374,6 +4549,22 @@ function buildFleetData(json) {
                 : (Array.isArray(_wk.componentDates) ? _wk.componentDates : []);
   _ovrArr.forEach(o => { if (o && o.id != null && o.changeout_date) _ovr[o.id] = o.changeout_date; });
 
+  // v4.15 — machines not on site yet (Intake v8.14, option A): no component has hours and the last read date is after
+  // today → that date is the arrival. Their plan dates come from arrival (Cadence's own sum) unless the planner dragged one.
+  _lensNotOnSite = {};
+  {
+    const _today = _lensTodayISO(), _u = {};
+    _readComponents(json).forEach(c => {
+      const k = String(c.unit || c.unit_id || '').toUpperCase(); if (!k) return;
+      const e = _u[k] = _u[k] || { smu: 0, read: null };
+      e.smu = Math.max(e.smu, Number(c.last_smu) || 0);
+      const r = /^\d{4}-\d{2}-\d{2}/.test(String(c.last_read || '')) ? String(c.last_read).slice(0, 10) : null;
+      if (r && (!e.read || r > e.read)) e.read = r;
+    });
+    Object.keys(_u).forEach(k => { if (!(_u[k].smu > 0) && _u[k].read && _u[k].read > _today) _lensNotOnSite[k] = _u[k].read; });
+  }
+  _buildHistIndex(json);   // v4.15 — the component history, for the tile panel
+
   _readComponents(json).forEach(c => {
     // FIX-1 — resolve fleet/unit/component names from V5 fields when V4 fields are missing.
     // Mutates c in place so all downstream reads (here AND later code paths that re-read
@@ -4413,7 +4604,11 @@ function buildFleetData(json) {
       est_hours:            estHours,
       pct:                  pct,
       install_date:         c.install_date,
-      pred_changeout:       (c.id != null && _ovr[c.id]) ? _ovr[c.id] : c.changeout_date,  // v4.7 — override-aware (planner's dragged date wins)
+      // v4.7 — override-aware (planner's dragged date wins). v4.15 — a machine not on site yet is planned from arrival,
+      // and a date override dated BEFORE its arrival is set aside (nothing can be changed on a machine that isn't there;
+      // Cadence shows the forecast from arrival there too).
+      pred_changeout:       (c.id != null && _ovr[c.id] && !(_lensNotOnSite[String(unit).toUpperCase()] && String(_ovr[c.id]).slice(0, 10) < _lensNotOnSite[String(unit).toUpperCase()])) ? _ovr[c.id] : (_lensNotOnSite[String(unit).toUpperCase()] ? _arrivalForecast(c) : c.changeout_date),
+      on_site_from:         _lensNotOnSite[String(unit).toUpperCase()] || null,   // v4.15
       original_date:        c.original_date,
       last_smu:             c.last_smu,
       last_read:            c.last_read,
@@ -5339,7 +5534,7 @@ const EMBED_OWNED_SLICES = {
   // visibleMonths / granularity / abScopeState / deColOrder were previously dropped for
   // V4-Flat files too. budgetConfig stays OPAQUE to Lens (pass-through only; Cadence owns it).
   cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder', 'workingData.budgetConfig',
-            'working.projects', 'working.componentDates', 'working.decisionLog', 'working.projConfig', 'working.visibleMonths', 'working.granularity', 'working.abScopeState', 'working.deColOrder', 'working.budgetConfig'],  // V4 Flat fallback shapes (parity with V5 list; +budgetConfig v4.9.1)
+            'working.projects', 'working.componentDates', 'working.decisionLog', 'working.projConfig', 'working.visibleMonths', 'working.granularity', 'working.abScopeState', 'working.deColOrder', 'working.budgetConfig', 'working.replacedWhileLinked', 'workingData.replacedWhileLinked'],   /* v4.15 — Cadence's coming review list writes each record's status */  // V4 Flat fallback shapes (parity with V5 list; +budgetConfig v4.9.1)
   // v4.8 — paired with Deploy v8.18 dual-shape retirement. Deploy now emits
   // ONE canonical slice: workingData.deployData (wholesale-replaced on
   // receipt; Deploy owns it per slice-ownership rule — the Risk Report
@@ -5882,7 +6077,8 @@ function renderPulse() {
   var allComps = getAllComponents();
   var vis = getVisFleets();
   var filtered = allComps.filter(c => vis[c.fleet] && vis[c.fleet][c.model] !== false
-    && (!pulseFleetFilter || c.fleet === pulseFleetFilter));
+    && (!pulseFleetFilter || c.fleet === pulseFleetFilter)
+    && !c.on_site_from);   // v4.15 — machines not on site yet are planned from arrival and listed on their own
 
   // ── Filter chips ──
   var chipsCont = document.getElementById('pulse-filter-fleet-chips');
@@ -5999,6 +6195,10 @@ function renderPulse() {
       }).join('');
     }
   }
+
+  // ── v4.15 — replaced components still linked to a project; machines not on site yet ──
+  _renderPulseRwl();
+  _renderPulseArrivals();
 
   // ── v4.9 LENS-6 — Condition-monitoring attention list ──
   // Net-new: Pulse was purely benchmark/life-used driven, so nothing a lab
@@ -6723,7 +6923,8 @@ function _buildUnitRiskBrief(fleet, model, unit) {
   const idleLife = (unitMetaRaw && typeof unitMetaRaw.idle_pct_life === 'number' && isFinite(unitMetaRaw.idle_pct_life)) ? unitMetaRaw.idle_pct_life : null;
   const idle3Mo  = (unitMetaRaw && typeof unitMetaRaw.idle_pct_3mo  === 'number' && isFinite(unitMetaRaw.idle_pct_3mo))  ? unitMetaRaw.idle_pct_3mo  : null;
   const snPrefix = (unitMetaRaw && (unitMetaRaw.sn_prefix || unitMetaRaw.sn || unitMetaRaw.serial_number)) || null;
-  const unitMeta = { smu, smuDate, idleLife, idle3Mo, snPrefix };
+  const onSiteFrom = _lensNotOnSite[String(unit).toUpperCase()] || null;   // v4.15
+  const unitMeta = { smu, smuDate: onSiteFrom ? null : smuDate, onSiteFrom, idleLife, idle3Mo, snPrefix };
   // Site context from meta slice
   const meta = (typeof lensRawData !== 'undefined' && lensRawData && lensRawData.meta) ? lensRawData.meta : {};
   const siteContext = { clientName: meta.clientName || null, site: meta.site || null };
@@ -7007,7 +7208,7 @@ function _renderRiskPrompt(brief, freshness) {
   md += '- **Unit ID:** ' + u + '\n';
   md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
   md += '- **Make:** UNVERIFIED — derive from model + class via your KB lookup (CAT Application Profile if applicable)\n';
-  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)') + '\n';
+  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.onSiteFrom ? '  (not on site yet: arrives ' + um.onSiteFrom + ')' : (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)')) + '\n';
   // v4.4 FIX-8 — Site line removed from prompt per operator: "I will add if I
   // think it would be relevant." Site context still flows to the PDF header
   // (operator-facing report); only the AI-input prompt is cleaned. The `sc`
@@ -7500,7 +7701,7 @@ function _renderPcrPrompt(brief) {
   const fmtNum = (v, suf) => (v == null) ? 'UNVERIFIED' : (Math.round(v).toLocaleString('en-CA') + (suf || ''));
   let md = '# PCR Scope Summary — Unit ' + u + '\n\n';
   md += '- **Model:** ' + mo + ' (Class: ' + fl + ')' + (um.snPrefix ? ' · SN prefix: ' + um.snPrefix : '') + '\n';
-  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)') + '\n';
+  md += '- **SMU:** ' + fmtNum(um.smu, ' hrs') + (um.onSiteFrom ? '  (not on site yet: arrives ' + um.onSiteFrom + ')' : (um.smuDate ? '  (as of ' + String(um.smuDate).substring(0, 10) + ')' : '  (as of UNVERIFIED)')) + '\n';
   md += '- **Generated:** ' + new Date().toISOString().substring(0, 10) + '\n\n';
 
   md += '## Component hours vs benchmark\n\n';

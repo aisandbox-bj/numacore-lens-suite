@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NumaCore Intake v8.13</title>
+<title>NumaCore Intake v8.14</title>
 <script src="numacore_lib.js"></script>
 <!-- v8.13 — the client-folder reader, for its IW39 parser (reused, not rebuilt: the Building Blocks ingest rule).
      Optional: without it the IW39 input says so, and everything else works. -->
@@ -885,7 +885,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.13';
+const VERSION = '8.14';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -2707,6 +2707,8 @@ function runSMUUpdate() {
 
   let updatedComponents = 0;
   state.pendingReductions = [];   // v8.11 — reset reduced-hours review for this run
+  _sheetDateIssues = []; _arrivals = [];   // v8.14 — dates read as in Component / Full Update; machines not on site yet
+  const _uSmu = _unitSmuMax(compArray);   // v8.14 — each machine's hours on file
   const now = _localISO();   // v8.13 FIX — local calendar date (UTC flipped to tomorrow at 5 pm in Vancouver)
   // v8.7 FIX-4 (2026-06-10) — unit matching is now case-insensitive, extending the
   // v8.4 BUILD-boundary CAPS rule to the UPDATE boundary ("ex401" in a source export
@@ -2719,9 +2721,16 @@ function runSMUUpdate() {
   dataRows.forEach(row => {
     const unit_id = String(row[unitCol] || '').trim();
     const smu     = parseNum(row[smuCol]);   // v8.7 FIX-5 — tolerate "12,345"-style cells
-    const date    = dateCol >= 0 ? parseDate(row[dateCol]) : now;
+    const date    = dateCol >= 0 ? (parseSheetDate(row[dateCol], () => ({ unit: String(row[unitCol] || '').trim(), component: '(machine)', field: 'last read date' })) || now) : now;   // v8.14 — a month and a year; blank or not a date → today, as in Full Update
 
     if (!unit_id) return;
+    // v8.14 — not on site yet: 0 h on file, 0 h / blank here, a last read date after today → that date is its last read
+    if (date > now && !(smu > 0) && !(_uSmu[unit_id.toUpperCase()] > 0)) {
+      const _uk = unit_id.toUpperCase();
+      const _m = compArray.filter(c => String(c.unit || '').toUpperCase() === _uk || String(c.unit_id || '').toUpperCase() === _uk || String(c.unit_floc || '').toUpperCase() === _uk);
+      if (_m.length) { let n = 0; const before = _m[0].last_read || null; _m.forEach(c => { if (c.last_read !== date) { c.last_read = date; n++; } }); _arrival(unit_id, date, before, n); return; }
+    }
+    if (date > now && (smu > 0 || _uSmu[unit_id.toUpperCase()] > 0)) _futureReadOnHours(unit_id, date, Math.max(smu > 0 ? smu : 0, _uSmu[unit_id.toUpperCase()] || 0));   // v8.14 — flag
     if (isNaN(smu)) { skippedBadSmu++; return; }
 
     const unitKey = unit_id.toUpperCase();
@@ -2776,7 +2785,7 @@ function runSMUUpdate() {
          ⚠ ${skippedBadSmu} row(s) had an SMU cell that could not be read as a number and were skipped.
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML =
-    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>${unmatchedHTML}${badSmuHTML}`;
+    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>${unmatchedHTML}${badSmuHTML}${_sheetDateHTML()}${_arrivalHTML()}`;
   renderReductionsReview();   // v8.11 — surface any reduced-hours units for accept
 }
 
@@ -3235,6 +3244,41 @@ function _sheetDateHTML() {
       <tbody>${rows}</tbody></table></div>${L.length > 60 ? `<div style="font-size:11px;color:var(--text3)">+${L.length - 60} more</div>` : ''}
   </div>`;
 }
+// ── v8.14 — MACHINES NOT ON SITE YET (operator 2026-09-28; option A chosen the same day) ──
+// "some of these units with N/A as a date for last read are units that are new and will only be landing on site in the
+// future... maybe we need to allow the option for a future date so that Lens does not plan for these components... cause
+// they are currently read as 0 and forecasting on that starts."
+// A machine with 0 h on file and 0 h / blank in the sheet, whose last read date is AFTER TODAY, is not on site yet: that
+// date is written as its components' last_read. (SMU and Full Update wrote a read date only when the hours rose, so it
+// never reached the file.) Cadence counts its forecast from the last read date, so the change-outs start on arrival.
+// The date moves if the sheet moves it, and is replaced by the first real reading. A future date on a machine that HAS
+// hours is not an arrival: it is flagged (a check) and applied only as before (when the hours rise).
+let _arrivals = null;   // per update: [{ unit, date, before, comps }]
+function _arrival(unit, date, before, n) {
+  if (!_arrivals) return;
+  const u = String(unit || '').toUpperCase();
+  const a = _arrivals.find(x => x.unit === u);
+  if (a) a.comps += n; else _arrivals.push({ unit: u, date, before: before || null, comps: n });
+}
+function _unitSmuMax(compArray) {
+  const m = {};
+  (compArray || []).forEach(c => { const k = String(c.unit || c.unit_id || c.unit_floc || '').toUpperCase(); m[k] = Math.max(m[k] || 0, Number(c.last_smu) || 0); });
+  return m;
+}
+function _futureReadOnHours(unit, date, hours) {
+  _dateIssue({ unit, component: '(machine)', field: 'last read date' }, date,
+    'last read date after today on a machine with hours (' + Number(hours || 0).toLocaleString() + ' h): a reading can\'t be in the future; check the sheet', 'check');
+}
+function _arrivalHTML() {
+  const L = _arrivals || [];
+  if (!L.length) return '';
+  const was = a => a.before && a.before !== a.date ? ` <span style="color:var(--text3)">(was ${esc(_isoMs(a.before) !== null ? _fmtD(a.before) : a.before)})</span>` : '';
+  return `<div class="alert alert-info" style="margin-top:8px;display:block">
+    <div style="font-weight:700;margin-bottom:4px">ℹ ${L.length} machine${L.length === 1 ? '' : 's'} not on site yet (0 h, a last read date after today)</div>
+    <div style="font-size:11px;color:var(--text3)">The date is kept as the machine's last read date, so Cadence's forecast for its components starts on it. The machine's first reading replaces it.</div>
+    <div style="margin-top:4px">${L.map(a => `<b>${esc(a.unit)}</b> on site from ${esc(_fmtD(a.date))}${was(a)}`).join(' · ')}</div>
+  </div>`;
+}
 function _iw39Reader() { const W = window.NumaCoreWorkspace; return W && W._internal && W._internal.parseScript && W._internal.readWorkbook && W._internal.buildDigest ? W._internal : null; }
 function _iw39Status(html, sev) {
   const el = document.getElementById('iw39Status'); if (!el) return;
@@ -3341,7 +3385,7 @@ function runComponentHistoryUpdate() {
   let fieldUpdates  = 0;
   const replacementLog = [];
   const _rwl = _rwlStart(fleetJSON, histArray);   // v8.13 — project links + older history records given one shape
-  _sheetDateIssues = [];                     // v8.13 — dates that are not dates / don't make sense, listed on the results screen
+  _sheetDateIssues = []; _arrivals = null;   // v8.13 — dates that are not dates / don't make sense, listed on the results screen
   const _dctx = _dateCtx(compArray);         // v8.13 — the unit's install dates as loaded, for the checks
 
   compArray.forEach(c => {
@@ -3516,6 +3560,8 @@ function runFullUpdate() {
 
   _sheetDateIssues = [];                     // v8.13 — before the sheet is read (the unit map reads the last read dates)
   const _dctx = _dateCtx(compArray);         // v8.13 — the unit's install dates as loaded, for the checks
+  _arrivals = [];                            // v8.14 — machines not on site yet
+  const _uSmu = _unitSmuMax(compArray);      // v8.14 — each machine's hours on file
   // Build XLSX lookup maps
   const xlUnitMap = {};    // unit_id → { smu, date, utilRate, upDown, model, fleetType }
   const xlCompMap = {};    // "UNIT||COMP" → row
@@ -3584,7 +3630,13 @@ function runFullUpdate() {
       const _rk = String(c.unit || c.unit_id || '').toUpperCase();
       if (!_redMap[_rk]) _redMap[_rk] = { unit: c.unit || c.unit_id, oldSmu: c.last_smu || 0, newSmu: unitData.smu, oldDate: c.last_read || null, newDate: unitData.date || now, mode: 'full' };
       else if ((c.last_smu || 0) > _redMap[_rk].oldSmu) { _redMap[_rk].oldSmu = c.last_smu || 0; _redMap[_rk].oldDate = c.last_read || null; }
+    } else if (unitData && !unitData.smu && unitData.date && unitData.date > now && !(_uSmu[unitKey] > 0)) {
+      // v8.14 — not on site yet: 0 h on file and in the sheet, a last read date after today → that date is its last read
+      const before = c.last_read || null;
+      if (c.last_read !== unitData.date) { c.last_read = unitData.date; _arrival(c.unit || c.unit_id, unitData.date, before, 1); }
+      else _arrival(c.unit || c.unit_id, unitData.date, before, 0);
     }
+    if (unitData && unitData.date && unitData.date > now && (unitData.smu > 0 || _uSmu[unitKey] > 0)) _futureReadOnHours(c.unit || c.unit_id, unitData.date, Math.max(unitData.smu || 0, _uSmu[unitKey] || 0));   // v8.14 — flag
 
     if (!row) return;
 
@@ -3837,6 +3889,7 @@ function runFullUpdate() {
       }
     }
 
+    if (!unitData.smu && unitData.date && unitData.date > now) _arrival(unit, unitData.date, null, unitRows.length);   // v8.14 — a new machine not on site yet
     newUnits++;
     existingUnitKeys.add(unit.toUpperCase());
   });
@@ -3992,7 +4045,7 @@ function runFullUpdate() {
          </div>
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML  =
-    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${_sheetDateHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
+    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${_sheetDateHTML()}${_arrivalHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
 
   // [TWEAK-2] Click-to-sort on result tables (in-place DOM sort, date/number/text autodetect)
   attachTableSort(document.getElementById('updateResultDetail'));
