@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.13 — Mission Control</title>
+<title>NumaCore Lens v4.14 — Mission Control</title>
 <script src="numacore_lib.js"></script>
-<script src="numacore_bench.js?v=1.2.0"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
-<script src="numacore_workspace.js?v=0.3.0"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
+<script src="numacore_bench.js?v=1.3.0"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_workspace.js?v=0.3.1"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -923,6 +923,28 @@ body { background: #030f0c; }
 }
 .pf-label { font-size:0.5rem; letter-spacing:1.5px; color:rgba(61,201,160,0.35); text-transform:uppercase; flex-shrink:0; }
 #pulse-filter-fleet-chips { display:flex; gap:5px; flex-wrap:wrap; }
+/* v4.14 — hide components: the "N hidden" chip, the right-click menu and the Hidden panel */
+.lens-hidden-chip { margin-left:auto; }
+.lens-hchip { background:transparent; border:1px solid rgba(139,143,163,.45); color:#b8c4cc; border-radius:3px; padding:2px 8px; font-family:'JetBrains Mono',monospace; font-size:.56rem; letter-spacing:.8px; cursor:pointer; text-transform:uppercase; white-space:nowrap; }
+.lens-hchip:hover { border-color:rgba(61,201,160,.6); color:#3dc9a0; }
+.lens-ctx { position:fixed; z-index:9800; min-width:240px; max-width:380px; background:#0b1210; border:1px solid rgba(61,201,160,.35); border-radius:4px; box-shadow:0 8px 28px rgba(0,0,0,.55); padding:4px 0; font-family:Barlow,sans-serif; }
+.lens-ctx-t { padding:6px 12px 5px; font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:1px; color:rgba(61,201,160,.75); text-transform:uppercase; border-bottom:1px solid rgba(61,201,160,.15); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lens-ctx button { display:block; width:100%; text-align:left; background:none; border:0; color:#e8e9ed; padding:7px 12px; font-size:13px; cursor:pointer; font-family:inherit; }
+.lens-ctx button:hover, .lens-ctx button:focus { background:rgba(61,201,160,.1); color:#3dc9a0; outline:none; }
+.lens-ctx-n { padding:5px 12px 3px; font-size:11px; color:#8b8fa3; border-top:1px solid rgba(61,201,160,.1); }
+.lens-hid-ov { position:fixed; inset:0; z-index:9700; background:rgba(3,8,14,.72); display:flex; align-items:flex-start; justify-content:center; padding:7vh 16px; overflow:auto; }
+.lens-hid-dlg { background:#080c14; border:1px solid rgba(61,201,160,.25); border-radius:4px; width:100%; max-width:780px; padding:16px 18px; color:#e8e9ed; font-family:Barlow,sans-serif; font-size:13px; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+.lens-hid-head { display:flex; align-items:center; gap:8px; font-family:Rajdhani,sans-serif; font-size:19px; font-weight:600; color:#3dc9a0; }
+.lens-hid-x { margin-left:auto; background:none; border:1px solid rgba(139,143,163,.4); color:#b8c4cc; border-radius:3px; cursor:pointer; padding:2px 9px; font-size:13px; }
+.lens-hid-sub { color:#8b8fa3; font-size:12.5px; margin:6px 0 10px; line-height:1.5; }
+.lens-hid-list { max-height:52vh; overflow:auto; border-top:1px solid rgba(61,201,160,.12); }
+.lens-hid-grp { font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:1.2px; text-transform:uppercase; color:rgba(61,201,160,.6); padding:10px 2px 4px; }
+.lens-hid-row { display:flex; align-items:center; gap:10px; padding:6px 2px; border-bottom:1px solid rgba(255,255,255,.05); }
+.lens-hid-row b { font-weight:600; } .lens-hid-row .w { color:#8b8fa3; font-size:12px; }
+.lens-hid-row .by { font-family:'JetBrains Mono',monospace; font-size:10.5px; color:#5c6078; margin-left:auto; white-space:nowrap; }
+.lens-hid-btn { background:transparent; border:1px solid rgba(61,201,160,.35); color:#3dc9a0; border-radius:3px; padding:2px 9px; cursor:pointer; font-size:11.5px; white-space:nowrap; }
+.lens-hid-btn:hover { background:rgba(61,201,160,.1); }
+.lens-hid-foot { display:flex; align-items:center; gap:12px; margin-top:12px; color:#8b8fa3; font-size:12px; line-height:1.45; }
 .pf-chip {
   font-size:0.58rem; padding:3px 11px; border-radius:12px;
   border:1px solid rgba(61,201,160,0.2); color:rgba(61,201,160,0.45);
@@ -1662,6 +1684,7 @@ body { background: #030f0c; }
       <div id="pulse-filter-bar">
         <span class="pf-label">VIEW:</span>
         <div id="pulse-filter-fleet-chips"></div>
+        <span class="lens-hidden-chip"></span><!-- v4.14 — "N hidden" -->
       </div>
       <!-- Two-column layout -->
       <div id="pulse-panels">
@@ -1717,6 +1740,7 @@ body { background: #030f0c; }
       <div id="vt-subtab-bar">
         <button class="vt-stab vt-stab-active" data-vt="overview" onclick="switchVtTab('overview')">FLEET OVERVIEW</button>
         <button class="vt-stab" data-vt="heatmap" onclick="switchVtTab('heatmap')">HEAT MAP</button>
+        <span class="lens-hidden-chip"></span><!-- v4.14 — "N hidden" -->
       </div>
       <!-- Fleet Overview sub-panel: orbit navigation lives here -->
       <div id="vt-sub-overview" class="vt-sub-panel vt-sub-active">
@@ -1873,7 +1897,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.13';
+const VERSION = '4.14';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2021,6 +2045,7 @@ function _lensAutosaveStorageKey() {
 
 function _lensAutosaveUISettings() {
   if (!lensRawData) return; // no fleet loaded — nothing to persist
+  try { _renderHiddenChips(); } catch (e) {}   // v4.14 — the "N hidden" chip follows every visibility change
   if (_lensAutosaveTimer) clearTimeout(_lensAutosaveTimer);
   _lensAutosaveTimer = setTimeout(function() {
     try {
@@ -2065,13 +2090,18 @@ function _renderBench() {
     planSaved:  (lensRawData.meta && lensRawData.meta.lastSaved) || '',
     clientCode: (lensMeta && lensMeta.clientCode) || (lensRawData.meta && lensRawData.meta.clientCode) || 'DEFAULT',
     markUnsaved: function () { _lensAutosaveDirty = true; _updateUnsavedDot(); },
-    toast:      function (msg, sev) { try { showToast(msg, sev || 'info', 4200); } catch (e) {} }
+    toast:      function (msg, sev) { try { showToast(msg, sev || 'info', 4200); } catch (e) {} },
+    // v4.14 — hidden components: Lens's (Bench leaves them out of "not matched" and its suggestions) and Bench's own rows
+    isHidden:       function (f, m, u, c) { return !getCompVisible(f, c, m, u); },
+    benchHidden:    function () { return lensBenchHidden; },
+    setBenchHidden: function (list) { lensBenchHidden = (list || []).slice(); _lensAutosaveUISettings(); },
+    openHidden:     function () { openHiddenPanel(); }
   });
 }
 
 function buildUISettings() {
   const out = { stale_threshold_days: (lensUISettings && lensUISettings.stale_threshold_days) || 90 };
-  const vFleets = [], vModels = [], vUnits = [], vComps = {};
+  const vFleets = [], vModels = [], vUnits = [], vComps = {}, hFleet = {};   // v4.14 + hFleet (hidden per fleet)
   _allFleetKeys().forEach(function(f) {
     // Fleet considered visible unless ALL its models are hidden.
     let anyModelVisible = false;
@@ -2095,17 +2125,25 @@ function buildUISettings() {
     const seen = new Set();
     _allModelKeys(f).forEach(function(m) {
       _allUnitKeys(f, m).forEach(function(u) {
-        const comps = ((((FLEET_DATA[f] || {})[m] || {})[u] || {}).components) || [];
+        const comps = (((FLEET_DATA[f] || {})[m] || {})[u]) || [];   // v4.14 — the unit's entry IS the list (".components" was always empty)
         comps.forEach(function(c) { if (c && c.component) seen.add(c.component); });
       });
     });
     seen.forEach(function(c) { if (compHide[c] !== false) visComps.push(c); });
-    if (visComps.length) vComps[f + " __all__"] = visComps;
+    // v4.14 — this VISIBLE list was never written (the names were never collected), and it stays unwritten: a list of
+    // visible names would hide every component added to the fleet later. The hidden names are written instead.
+    Object.keys(compHide).forEach(function(c) { if (compHide[c] === false) (hFleet[f] = hFleet[f] || []).push(c); });
   });
   out.visible_fleets = vFleets;
   out.visible_models = vModels;
   out.visible_units  = vUnits;
   out.visible_components = vComps;
+  // v4.14 — hidden components: a whole fleet (Settings / right-click), a model or a unit (right-click), the default
+  // Unhides, and Bench rows. Cadence never reads ui_settings, so it keeps every component.
+  out.hidden_fleet_components = hFleet;
+  out.hidden_components = lensHiddenComps.map(function(h) { var o = { fleet: h.fleet, model: h.model, component: h.component, by: h.by, at: h.at }; if (h.unit) o.unit = h.unit; return o; });
+  out.hidden_defaults_off = lensHideDefaultsOff.slice();
+  out.bench_hidden = lensBenchHidden.map(function(b) { return { model: b.model, pid: b.pid, label: b.label, at: b.at }; });
   return out;
 }
 
@@ -2143,7 +2181,7 @@ function applyUISettings(ui) {
       // Collect actual components under this fleet
       _allModelKeys(f).forEach(function(m) {
         _allUnitKeys(f, m).forEach(function(u) {
-          const comps = ((((FLEET_DATA[f] || {})[m] || {})[u] || {}).components) || [];
+          const comps = (((FLEET_DATA[f] || {})[m] || {})[u]) || [];   // v4.14 — the unit's entry IS the list (".components" was always empty)
           comps.forEach(function(c) { if (c && c.component) {
             lensHideComponents[f][c.component] = visSet.has(c.component) ? true : false;
           }});
@@ -2151,6 +2189,17 @@ function applyUISettings(ui) {
       });
     }
   });
+  // v4.14 — hidden components. A list in the settings replaces the one in memory (the localStorage overlay too).
+  if (ui.hidden_fleet_components && typeof ui.hidden_fleet_components === 'object') {
+    Object.keys(lensHideComponents).forEach(function(f) { Object.keys(lensHideComponents[f]).forEach(function(c) { if (lensHideComponents[f][c] === false) delete lensHideComponents[f][c]; }); });
+    Object.keys(ui.hidden_fleet_components).forEach(function(f) {
+      (ui.hidden_fleet_components[f] || []).forEach(function(c) { if (!lensHideComponents[f]) lensHideComponents[f] = {}; lensHideComponents[f][c] = false; });
+    });
+  }
+  if (Array.isArray(ui.hidden_components)) lensHiddenComps = ui.hidden_components.filter(function(h) { return h && h.fleet && h.model && h.component; }).map(function(h) { return Object.assign({}, h); });
+  if (Array.isArray(ui.hidden_defaults_off)) lensHideDefaultsOff = ui.hidden_defaults_off.slice();
+  if (Array.isArray(ui.bench_hidden)) lensBenchHidden = ui.bench_hidden.filter(function(b) { return b && b.model && b.pid; }).map(function(b) { return Object.assign({}, b); });
+  _rebuildHidIdx();
 }
 
 // ── CONMON BADGE HELPERS (v3.5 sub4) ───────────────────────────────────────
@@ -2530,7 +2579,7 @@ function renderCanvasHero(fleet, model, unit) {
 
   // ── Component data ──────────────────────────────────────────────────────
   var comps   = (FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit]) || [];
-  var visible = comps.filter(function(c) { return getCompVisible(fleet, c.component); });
+  var visible = comps.filter(function(c) { return getCompVisible(fleet, c.component, model, unit); });   // v4.14 + model / unit
   var total   = visible.length;
 
   // Worst health (highest pct, skip null/NB)
@@ -3278,16 +3327,181 @@ function getVisFleets() {
       const allU  = FLEET_DATA[f][m];
       const hideU = (typeof lensHideUnits !== 'undefined' && lensHideUnits[f] && lensHideUnits[f][m]) || {};
       const visU  = {};
-      Object.keys(allU).forEach(u => { if (hideU[u] !== false) visU[u] = allU[u]; });
+      Object.keys(allU).forEach(u => { if (hideU[u] !== false) visU[u] = _visComps(f, m, u, allU[u]); });   // v4.14 — hidden components left out
       if (Object.keys(visU).length) { if (!result[f]) result[f] = {}; result[f][m] = visU; }
     });
   });
   return result;
 }
-function getCompVisible(fleet, comp) {
-  if (typeof lensHideComponents === 'undefined') return true;
-  return !(lensHideComponents[fleet] && lensHideComponents[fleet][comp] === false);
+function getCompVisible(fleet, comp, model, unit) {
+  if (typeof lensHideComponents !== 'undefined' && lensHideComponents[fleet] && lensHideComponents[fleet][comp] === false) return false;
+  // v4.14 — hidden on a model (every unit) or on one unit
+  if (model != null && _lensHidIdx[_hk(fleet, model, '', comp)]) return false;
+  if (model != null && unit != null && _lensHidIdx[_hk(fleet, model, unit, comp)]) return false;
+  return true;
 }
+
+// ══ v4.14 — HIDE COMPONENTS (operator, 2026-09-27) ═══════════════════════════════════════════════════════════════
+// "Put a Hide option on components in both the Lens view and in Bench (right click)… indicate that there are hidden
+// components and allow to UnHide. ALL comp stays visible in Cadence (planning), but disappears from the visuals and
+// pulse… hide, by default, all buckets and blades on dozers, excavators and wheel loaders."
+// Hidden = left out of Pulse, Vitals (overview, unit view, heat map), Horizon and Bench's lists. The fleet file's
+// components are never changed: Cadence, Deploy, Intake and the risk-report prompts see every component.
+// Kept in ui_settings (Lens-owned; SAVE FILE keeps it in the plan, localStorage holds it until then):
+//   hidden_fleet_components {fleet: [component]}  — a whole fleet (right-click, or the Settings panel's component tab)
+//   hidden_components [{fleet, model, component, unit?, by, at}] — every unit of a model, or one unit
+//   hidden_defaults_off ['FLEET|MODEL||COMPONENT' keys] — default hides the operator un-hid (never re-applied)
+//   bench_hidden [{model, pid, label, at}] — Bench rows hidden on a Bench model
+var lensHiddenComps = [];
+var lensHideDefaultsOff = [];
+var lensBenchHidden = [];
+var _lensHidIdx = {};
+var _hidPanelKeys = [];
+function _hkU(s) { return String(s == null ? '' : s).trim().toUpperCase(); }
+function _hk(f, m, u, c) { return _hkU(f) + '\u0007' + _hkU(m) + '\u0007' + _hkU(u) + '\u0007' + _hkU(c); }
+function _rebuildHidIdx() { _lensHidIdx = {}; lensHiddenComps.forEach(function(h) { _lensHidIdx[_hk(h.fleet, h.model, h.unit || '', h.component)] = h; }); }
+function _hiddenCount() {
+  var n = lensHiddenComps.length;
+  Object.keys(lensHideComponents || {}).forEach(function(f) { Object.keys(lensHideComponents[f]).forEach(function(c) { if (lensHideComponents[f][c] === false) n++; }); });
+  return n;
+}
+function _visComps(f, m, u, arr) {
+  if (!arr || !_hiddenCount()) return arr;
+  return arr.filter(function(c) { return getCompVisible(f, c.component, m, u); });
+}
+function _hAttr(c) { return ' data-hf="' + esc(c.fleet) + '" data-hm="' + esc(c.model) + '" data-hu="' + esc(c.unit) + '" data-hc="' + esc(c.component) + '"'; }
+function _hideStamp() { var d = new Date(), p = function(n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+
+// The default: buckets and blades on dozers, excavators and loaders — the attachment itself ("Bucket", "Blade",
+// "Edge", "Blade and Edge"), never its cylinders ("Bucket Cylinder", "Left Blade Lift Cylinder"). Applied each time a
+// plan opens, to every model (a new model or component gets it too), except where the operator un-hid it.
+var HIDE_DEFAULT_FLEET = /DOZER|EXCAVATOR|LOADER/i;
+var HIDE_DEFAULT_NAME  = /\b(bucket|blade|edge)s?\b/i;
+var HIDE_DEFAULT_NOT   = /cyl|pump|motor|valve|hose|pin|bush|lift|tilt|link/i;
+function _hideDefaultMatch(fleet, comp) { return HIDE_DEFAULT_FLEET.test(fleet) && HIDE_DEFAULT_NAME.test(comp) && !HIDE_DEFAULT_NOT.test(comp); }
+function _defKey(f, m, c) { return _hkU(f) + '|' + _hkU(m) + '||' + _hkU(c); }
+function _applyHideDefaults() {
+  var off = {}, added = 0, at = _hideStamp();
+  lensHideDefaultsOff.forEach(function(k) { off[k] = 1; });
+  Object.keys(FLEET_DATA || {}).forEach(function(f) {
+    if (!HIDE_DEFAULT_FLEET.test(f)) return;
+    Object.keys(FLEET_DATA[f]).forEach(function(m) {
+      var names = {};
+      Object.keys(FLEET_DATA[f][m]).forEach(function(u) { (FLEET_DATA[f][m][u] || []).forEach(function(c) { if (c && c.component && _hideDefaultMatch(f, c.component)) names[c.component] = 1; }); });
+      Object.keys(names).forEach(function(c) {
+        if (off[_defKey(f, m, c)] || _lensHidIdx[_hk(f, m, '', c)]) return;
+        lensHiddenComps.push({ fleet: f, model: m, component: c, by: 'default', at: at }); added++;
+      });
+    });
+  });
+  _rebuildHidIdx();
+  return added;
+}
+function _offDefault(h) { var k = _defKey(h.fleet, h.model, h.component); if (lensHideDefaultsOff.indexOf(k) < 0) lensHideDefaultsOff.push(k); }
+
+function lensHideComp(scope, fleet, model, unit, comp) {
+  if (scope === 'fleet') { if (!lensHideComponents[fleet]) lensHideComponents[fleet] = {}; lensHideComponents[fleet][comp] = false; }
+  else {
+    var u = scope === 'unit' ? unit : '';
+    if (!_lensHidIdx[_hk(fleet, model, u, comp)]) { var h = { fleet: fleet, model: model, component: comp, by: 'by hand', at: _hideStamp() }; if (u) h.unit = u; lensHiddenComps.push(h); }
+  }
+  _hiddenChanged('Hidden: ' + comp + (scope === 'fleet' ? ' across the ' + fleet + ' fleet' : scope === 'unit' ? ' on ' + unit : ' on every ' + model) + '. Cadence still shows it. SAVE FILE keeps this in the plan.');
+}
+function lensUnhide(o) {
+  if (o === '*') {
+    lensHiddenComps.forEach(function(h) { if (h.by === 'default') _offDefault(h); });
+    lensHiddenComps = [];
+    Object.keys(lensHideComponents || {}).forEach(function(f) { Object.keys(lensHideComponents[f]).forEach(function(c) { if (lensHideComponents[f][c] === false) delete lensHideComponents[f][c]; }); });
+  } else if (o && o.t === 'f') { if (lensHideComponents[o.f]) delete lensHideComponents[o.f][o.c]; }
+  else if (o && o.t === 'c') { if (o.h.by === 'default') _offDefault(o.h); lensHiddenComps = lensHiddenComps.filter(function(x) { return x !== o.h; }); }
+  _hiddenChanged('Shown again in Pulse, Vitals, Horizon and Bench. SAVE FILE keeps this in the plan.');
+}
+function _hiddenChanged(msg) {
+  _rebuildHidIdx();
+  _lensAutosaveUISettings();
+  if (msg) showToast(msg, 'info', 4600);
+  _refreshAfterHide();
+  var ov = document.getElementById('lens-hidden-ov'); if (ov && ov.style.display !== 'none') openHiddenPanel();
+}
+function _refreshAfterHide() {
+  try {
+    if (currentTab === 'pulse') renderPulse();
+    else if (currentTab === 'vitals') {
+      if (typeof vtSubTabCurrent !== 'undefined' && vtSubTabCurrent === 'heatmap') renderVitals();
+      else if (typeof mmState !== 'undefined' && mmState.level === 'unit-detail') selectUnit(mmState.fleet, mmState.model, mmState.unit);
+      else switchVtTab('overview');
+    }
+    else if (currentTab === 'horizon') renderHorizon();
+    else if (currentTab === 'bench') _renderBench();
+    if (typeof renderFleetCol === 'function') renderFleetCol();
+  } catch (e) { console.warn('hide → refresh:', e); }
+  _renderHiddenChips();
+}
+function _renderHiddenChips() {
+  var n = lensRawData ? _hiddenCount() : 0;
+  document.querySelectorAll('.lens-hidden-chip').forEach(function(el) {
+    el.innerHTML = n ? '<button class="lens-hchip" onclick="openHiddenPanel()" title="Components hidden from Pulse, Vitals, Horizon and Bench (Cadence shows them all). Click to see them or unhide. Right-click a component to hide it.">&#x25CC; ' + n + ' hidden</button>' : '';
+  });
+}
+function closeHiddenPanel() { var ov = document.getElementById('lens-hidden-ov'); if (ov) ov.style.display = 'none'; }
+function openHiddenPanel() {
+  var ov = document.getElementById('lens-hidden-ov');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'lens-hidden-ov'; ov.className = 'lens-hid-ov';
+    ov.addEventListener('click', function(e) { if (e.target === ov) closeHiddenPanel(); });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeHiddenPanel(); });
+    document.body.appendChild(ov);
+  }
+  _hidPanelKeys = [];
+  var rows = [], n = 0;
+  var row = function(key, what, where, by) {
+    rows.push('<div class="lens-hid-row"><b>' + esc(what) + '</b><span class="w">' + where + '</span><span class="by">' + by + '</span><button class="lens-hid-btn" data-uh="' + _hidPanelKeys.length + '">Unhide</button></div>');
+    _hidPanelKeys.push(key); n++;
+  };
+  var fl = [];
+  Object.keys(lensHideComponents || {}).sort().forEach(function(f) { Object.keys(lensHideComponents[f]).sort().forEach(function(c) { if (lensHideComponents[f][c] === false) fl.push({ f: f, c: c }); }); });
+  if (fl.length) { rows.push('<div class="lens-hid-grp">A whole fleet</div>'); fl.forEach(function(x) { row({ t: 'f', f: x.f, c: x.c }, x.c, 'every unit of the ' + esc(x.f) + ' fleet', 'by hand'); }); }
+  var hs = lensHiddenComps.slice().sort(function(a, b) { return (a.fleet + a.model + (a.unit || '') + a.component).localeCompare(b.fleet + b.model + (b.unit || '') + b.component); });
+  if (hs.length) {
+    rows.push('<div class="lens-hid-grp">A model or a unit</div>');
+    hs.forEach(function(h) { row({ t: 'c', h: h }, h.component, esc(h.fleet) + ' · ' + esc(h.model) + ' · ' + (h.unit ? 'unit ' + esc(h.unit) + ' only' : 'every unit'), h.by === 'default' ? 'default · buckets / blades' : esc(h.by || 'by hand') + (h.at ? ' · ' + esc(h.at) : '')); });
+  }
+  var nb = lensBenchHidden.length;
+  ov.innerHTML = '<div class="lens-hid-dlg" role="dialog" aria-label="Hidden components"><div class="lens-hid-head">Hidden components <span style="color:#8b8fa3;font-size:15px">(' + n + ')</span><button class="lens-hid-x" onclick="closeHiddenPanel()" title="Close (Esc)">&#x2715;</button></div>' +
+    '<div class="lens-hid-sub">Hidden components are left out of Pulse, Vitals (overview, unit view, heat map), Horizon and Bench\'s lists. The fleet file is not changed: <b>Cadence</b> (planning), Deploy and the risk report still see every component. Right-click a component to hide it; SAVE FILE keeps this in the plan.</div>' +
+    '<div class="lens-hid-list">' + (rows.length ? rows.join('') : '<div style="padding:14px 2px;color:#8b8fa3">Nothing is hidden.</div>') + '</div>' +
+    '<div class="lens-hid-foot">' + (n ? '<button class="lens-hid-btn" data-uh="*">Unhide all</button>' : '') + '<span>By default, buckets and blades on dozers, excavators and loaders are hidden when a plan opens (never their cylinders). Unhide one and it stays shown.' + (nb ? ' Bench also has ' + nb + ' row' + (nb === 1 ? '' : 's') + ' hidden: unhide those in Bench.' : '') + '</span></div></div>';
+  ov.querySelectorAll('[data-uh]').forEach(function(b) { b.onclick = function() { var k = b.getAttribute('data-uh'); lensUnhide(k === '*' ? '*' : _hidPanelKeys[+k]); }; });
+  ov.style.display = 'flex';
+}
+// the right-click menu: any element carrying data-hc (component) + data-hf (fleet), and data-hm / data-hu when known
+function _lensCtxClose() {
+  var m = document.getElementById('lens-ctx'); if (m) m.remove();
+  document.removeEventListener('mousedown', _lensCtxAway, true); document.removeEventListener('keydown', _lensCtxKey, true); window.removeEventListener('blur', _lensCtxClose);
+}
+function _lensCtxAway(e) { if (!e.target.closest || !e.target.closest('#lens-ctx')) _lensCtxClose(); }
+function _lensCtxKey(e) { if (e.key === 'Escape') _lensCtxClose(); }
+document.addEventListener('contextmenu', function(e) {
+  var t = e.target && e.target.closest ? e.target.closest('[data-hc]') : null;
+  if (!t || !lensRawData) return;
+  var f = t.getAttribute('data-hf') || '', m = t.getAttribute('data-hm') || '', u = t.getAttribute('data-hu') || '', c = t.getAttribute('data-hc') || '';
+  if (!f || !c) return;
+  e.preventDefault();
+  _lensCtxClose();
+  var items = [];
+  if (m) items.push(['Hide “' + c + '” on every ' + m, function() { lensHideComp('model', f, m, u, c); }]);
+  if (m && u) items.push(['Hide it on ' + u + ' only', function() { lensHideComp('unit', f, m, u, c); }]);
+  items.push(['Hide “' + c + '” across the ' + f + ' fleet', function() { lensHideComp('fleet', f, m, u, c); }]);
+  var n = _hiddenCount(); if (n) items.push(['Hidden components (' + n + ')…', openHiddenPanel]);
+  var d = document.createElement('div'); d.id = 'lens-ctx'; d.className = 'lens-ctx'; d.setAttribute('role', 'menu');
+  d.innerHTML = '<div class="lens-ctx-t">' + esc(c) + ' · ' + esc(u || m || f) + '</div>' + items.map(function(it, i) { return '<button role="menuitem" data-i="' + i + '">' + esc(it[0]) + '</button>'; }).join('') + '<div class="lens-ctx-n">Cadence always shows every component.</div>';
+  document.body.appendChild(d);
+  d.style.left = Math.max(4, Math.min(e.clientX, window.innerWidth - d.offsetWidth - 8)) + 'px';
+  d.style.top = Math.max(4, Math.min(e.clientY, window.innerHeight - d.offsetHeight - 8)) + 'px';
+  d.querySelectorAll('button[data-i]').forEach(function(b) { b.onclick = function() { var it = items[+b.getAttribute('data-i')]; _lensCtxClose(); it[1](); }; });
+  var first = d.querySelector('button[data-i]'); if (first) first.focus();
+  setTimeout(function() { document.addEventListener('mousedown', _lensCtxAway, true); document.addEventListener('keydown', _lensCtxKey, true); window.addEventListener('blur', _lensCtxClose); }, 0);
+});
 
 
 // ══════════════════════════════════════════════════════
@@ -3426,7 +3640,7 @@ function getHex(c){return{green:'#4caf50',yellow:'#ffc107',orange:'#ff7043',red:
 const COLOR_RANK = {green:0, yellow:1, orange:2, red:3};
 function unitWorstColor(u,m,f){
   let w='green';
-  (FLEET_DATA[f][m][u]||[]).forEach(c=>{let cl=getColor(c.pct);if(COLOR_RANK[cl]>COLOR_RANK[w])w=cl;});
+  (FLEET_DATA[f][m][u]||[]).forEach(c=>{if(!getCompVisible(f,c.component,m,u))return;let cl=getColor(c.pct);if(COLOR_RANK[cl]>COLOR_RANK[w])w=cl;});   // v4.14 — hidden left out
   return w;
 }
 function modelWorstColor(m,f){
@@ -3693,7 +3907,7 @@ function selectModel(fleet,model){
   const placed=layoutOrbit(units.map(u=>({
     borderColor:getHex(unitWorstColor(u,model,fleet)),
     html:(_unitImg?`<img src="${_unitImg}" style="width:68%;height:44%;object-fit:contain;margin-bottom:1px;opacity:0.8" onerror="this.style.display='none'">`:'')+
-         `<div class="on-label">${u}</div><div class="on-count">${(FLEET_DATA[fleet][model][u]||[]).length} comp</div>`,
+         `<div class="on-label">${u}</div><div class="on-count">${_visComps(fleet,model,u,FLEET_DATA[fleet][model][u]||[]).length} comp</div>`,
     onClick:()=>selectUnit(fleet,model,u)
   })),radius,nodeSize);
   renderOrbitNodes(placed,'unit-ring');
@@ -3752,7 +3966,7 @@ function renderCompBubbles(fleet, model, unit) {
   orbitEl.innerHTML = ''; orbitNodes = [];
   linesCtx.clearRect(0, 0, linesCanvas.width, linesCanvas.height);
   const all = (FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit]) || [];
-  const visible = all.filter(function(c) { return getCompVisible(fleet, c.component); });
+  const visible = all.filter(function(c) { return getCompVisible(fleet, c.component, model, unit); });   // v4.14 + model / unit
   const others = visible.filter(function(c) { return classifyComponent(c.component) === 'other'; });
   if (!others.length) return;
   const {w, h} = getCanvasSize();
@@ -3772,6 +3986,7 @@ function renderCompBubbles(fleet, model, unit) {
     const pctLbl = (c.pct !== null) ? Math.round(c.pct * 100) + '%' : 'NB';
     const div = document.createElement('div');
     div.className = 'orbit-node comp-bubble';
+    div.dataset.hf = fleet; div.dataset.hm = model; div.dataset.hu = unit; div.dataset.hc = c.component;   // v4.14 — right-click → Hide
     div.style.left = (cx - nodeSize / 2) + 'px';
     div.style.top  = (cy - nodeSize / 2) + 'px';
     div.style.width = nodeSize + 'px'; div.style.height = nodeSize + 'px';
@@ -3888,7 +4103,7 @@ function renderComponents(fleet, model, unit) {
 
   const all = (FLEET_DATA[fleet] && FLEET_DATA[fleet][model] && FLEET_DATA[fleet][model][unit]) || [];
   // v3.5 sub3 — apply visible_components filter.
-  const visible = all.filter(function(c) { return getCompVisible(fleet, c.component); });
+  const visible = all.filter(function(c) { return getCompVisible(fleet, c.component, model, unit); });   // v4.14 + model / unit
 
   // Split into buckets. Grouped buckets render as compact list panels;
   // "other" keeps the existing rich card grid.
@@ -3917,6 +4132,7 @@ function renderComponents(fleet, model, unit) {
       const row = document.createElement('div');
       row.className = 'comp-group-row';
       row.setAttribute('data-component', c.component);
+      row.dataset.hf = fleet; row.dataset.hm = model; row.dataset.hu = unit; row.dataset.hc = c.component;   // v4.14 — right-click → Hide
       // FIX-1: c.component is JSON-derived — escape before innerHTML interpolation
       row.innerHTML =
         '<div class="row-name' + (hasBenchG ? ' clr-' + clr : '') + '">' + esc(c.component) + '</div>' +
@@ -3941,6 +4157,7 @@ function renderComponents(fleet, model, unit) {
     const card = document.createElement('div');
     card.className = 'component-card';
     card.setAttribute('data-component', c.component);
+    card.dataset.hf = fleet; card.dataset.hm = model; card.dataset.hu = unit; card.dataset.hc = c.component;   // v4.14 — right-click → Hide
     card.style.cursor = 'pointer';
     card.addEventListener('click', function(ev) {
       if (ev.target.closest('.comp-tooltip')) return;
@@ -4240,6 +4457,7 @@ function loadLensJSON(json) {
   lensVisible = {};
   lensHideUnits = {};
   lensHideComponents = {};
+  lensHiddenComps = []; lensHideDefaultsOff = []; lensBenchHidden = []; _rebuildHidIdx();   // v4.14
   // Build FLEET_DATA
   FLEET_DATA = buildFleetData(json);
   if(typeof rebuildUnitIndex==='function') rebuildUnitIndex(); // DR-004: refresh search index after data load
@@ -4280,6 +4498,15 @@ function loadLensJSON(json) {
       }
     }
   } catch (e) { console.warn('[lens v4.3.6] localStorage overlay failed:', e); }
+  // v4.14 — the default hide (buckets and blades on dozers, excavators and loaders); an Unhide is remembered
+  try {
+    var _hd = _applyHideDefaults();
+    if (_hd) {
+      _lensAutosaveUISettings();
+      setTimeout(function() { showToast(_hd + ' bucket / blade component' + (_hd === 1 ? ' is' : 's are') + ' hidden by default (dozers, excavators, loaders). Cadence still shows ' + (_hd === 1 ? 'it' : 'them') + '. See "hidden" at the top of Pulse; SAVE FILE keeps this.', 'info', 6500); }, 2200);
+    }
+  } catch (e) { console.warn('hide defaults:', e); }
+  _renderHiddenChips();
   _updateUnsavedDot();
   // Build ConMon oil-sample index. V5: masterData.conditionMonitoring; V4 Flat: root conditionMonitoring or oil_samples.
   try { const n = buildConMonIdx(_readConMon(json)); if (n > 0) console.log('conMonByUnit:', n, 'units indexed'); } catch(e) { console.warn('buildConMonIdx:', e); }
@@ -4412,7 +4639,12 @@ function _flushEmbeds() {
 function exportFleetJSON(opts) {
   opts = opts || {};
   if (!lensRawData) { showToast('No fleet file loaded.', 'warn'); return Promise.resolve(null); }
-  return _flushEmbeds().then(function (r) {
+  // v4.14 (operator: "the suite cannot seem to save on the OneDrive folder… it defaults to downloading… wondering why it
+  // fails") — after the page reopens the browser asks again before Lens may edit the folder, and SAVE downloaded without a
+  // word. SAVE FILE is a click, so it asks here (before anything is awaited, or the browser won't show the question).
+  const _ws0 = window.NumaCoreWorkspace;
+  const _perm = (!opts.download && _ws0 && _ws0.needsEdit && _ws0.needsEdit()) ? _ws0.allowEdit() : Promise.resolve(null);
+  return _perm.then(function () { return _flushEmbeds(); }).then(function (r) {
     const ws = window.NumaCoreWorkspace;
     const toFolder = !opts.download && !!(ws && ws.canSavePlan && ws.canSavePlan());
     const saved = _exportFleetJSONNow({ download: !toFolder });
@@ -4421,11 +4653,12 @@ function exportFleetJSON(opts) {
       const st = ws && ws.state ? ws.state() : null;
       if (late) showToast('Saved. ' + late, 'warn', 6000);
       else if (!opts.download && st && st.connected && st.mode === 'view') showToast('Saved to your Downloads as ' + saved.fname + '. View only: the client folder is not changed.', 'info', 6000);
+      else if (!opts.download && ws && ws.whyNoSave && ws.whyNoSave() === 'permission') showToast('The browser did not allow Lens to edit the client folder' + (st && st.folderName ? ' "' + st.folderName + '"' : '') + ', so the plan was downloaded as ' + saved.fname + '. Press SAVE FILE again and choose Allow (or "Allow on every visit").', 'warn', 9000);   // v4.14
       return saved;
     }
     return ws.savePlan(saved.text, saved.fname).then(function (res) {
-      if (res.ok) { saved.folderFile = res.file; showToast('Saved into the client folder: ' + res.where + res.file + (late ? '. ' + late : ''), late ? 'warn' : 'success', 6000); return saved; }
-      _downloadText(saved.text, saved.fname); showToast('Could not save into the client folder, so the plan was downloaded as ' + saved.fname + '.', 'warn', 7000); return saved;
+      if (res.ok) { saved.folderFile = res.file; showToast('Saved into the client folder: ' + res.where + res.file + (late ? '. ' + late : '') + (res.note ? ' ' + res.note : ''), (late || res.note) ? 'warn' : 'success', res.note ? 9000 : 6000); return saved; }   // v4.14 + note
+      _downloadText(saved.text, saved.fname); showToast('Could not save into the client folder' + (res.reason === 'permission' ? ' (the browser did not allow Lens to edit it)' : res.reason === 'view' ? ' (view only)' : '') + ', so the plan was downloaded as ' + saved.fname + '.', 'warn', 8000); return saved;
     }).catch(function (e) {
       _downloadText(saved.text, saved.fname); showToast('Saving into the client folder failed (' + (e && e.message || e) + '), so the plan was downloaded as ' + saved.fname + '.', 'error', 8000); return saved;
     });
@@ -4514,6 +4747,13 @@ function _exportFleetJSONNow(opts) {
   return { out: out, fname: fname, text: text };   // v4.11 — the saved file, for the Meeting record
 }
 
+// v4.14 (operator: "I then uploaded a new json... but the data did not come through") — Chrome cannot read a file that
+// OneDrive is still syncing, or keeps online-only on this computer; the read failed and nothing was said.
+function _lensReadFailed(file, er) {
+  const nm = (file && file.name) || 'the file';
+  console.warn('Lens load — could not read', nm, er);
+  showToast('Could not read ' + nm + ' (' + ((er && er.name) || 'error') + '), so nothing was loaded. If it is in the OneDrive folder, OneDrive may still be syncing it or it is online-only on this computer: in File Explorer right-click it → Always keep on this device, wait for the green tick, then open it again (or copy it to your Desktop first).', 'error', 14000);
+}
 document.addEventListener('DOMContentLoaded', function initLoadScreen() {
   _landingRender();   // v4.12 — recent client folders
   // Wire file input
@@ -4532,6 +4772,7 @@ document.addEventListener('DOMContentLoaded', function initLoadScreen() {
           showToast('Could not parse file — ensure it is a valid NumaCore fleet JSON.', 'error', 4000);
         }
       };
+      reader.onerror = () => _lensReadFailed(file, reader.error);   // v4.14 — a failed read used to be silent
       reader.readAsText(file);
       fileInput.value = '';
     });
@@ -4559,6 +4800,7 @@ document.addEventListener('DOMContentLoaded', function initLoadScreen() {
         try { loadLensJSON(JSON.parse(ev.target.result)); }
         catch(err) { console.warn('Lens drop — JSON parse failed:', err); showToast('Could not parse file.', 'error'); }
       };
+      reader.onerror = () => _lensReadFailed(file, reader.error);   // v4.14
       reader.readAsText(file);
     });
   }
@@ -5278,7 +5520,7 @@ function renderHorizon() {
   Object.keys(FLEET_DATA).sort().forEach(function(fleet) {
     Object.keys(FLEET_DATA[fleet]).sort().forEach(function(model) {
       Object.keys(FLEET_DATA[fleet][model]).sort().forEach(function(unit) {
-        const comps = FLEET_DATA[fleet][model][unit] || [];
+        const comps = _visComps(fleet, model, unit, FLEET_DATA[fleet][model][unit] || []);   // v4.14 — hidden left out
         if (!comps.length) return;
         // Highest pct = most-due component on this unit; used for bar colour.
         let topPct = 0; let smu = 0; let util = 0;
@@ -5661,7 +5903,9 @@ function renderPulse() {
   // Only flag as overdue if benchmark exists (else it's "no benchmark" risk)
   var hasBench = filtered.filter(c => c.benchmark && c.benchmark > 0);
   var noBench  = filtered.filter(c => !c.benchmark || c.benchmark <= 0);
-  var overdue  = hasBench.filter(c => c.pct >= 1.0 || (c.pred_changeout && new Date(c.pred_changeout) < today));
+  // v4.14 (operator 2026-09-27: overdue comes from component hours only, as in Bench) — life over 100 %; a passed plan
+  // date alone is not overdue (it was: life >= 100 % OR the plan date before today)
+  var overdue  = hasBench.filter(c => c.pct > 1.0);
   overdue.sort((a,b) => (b.pct||0)-(a.pct||0));
   var ob = document.getElementById('pw-overdue-body');
   var oc = document.getElementById('pw-overdue-count');
@@ -5674,7 +5918,7 @@ function renderPulse() {
       ob.innerHTML = overdue.slice(0,20).map(c => {
         var clr = getHex(getColor(c.pct||0));
         var pctTxt = (c.pct !== null) ? Math.round((c.pct||0)*100)+'%' : '<span class="nb-tag">NB</span>'; // DR-003
-        return '<div class="pw-item" data-f="'+esc(c.fleet)+'" data-m="'+esc(c.model)+'" data-u="'+esc(c.unit)+'" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)">'+
+        return '<div class="pw-item"'+_hAttr(c)+' data-f="'+esc(c.fleet)+'" data-m="'+esc(c.model)+'" data-u="'+esc(c.unit)+'" onclick="navigateToUnit(this.dataset.f,this.dataset.m,this.dataset.u)">'+
           '<span class="pw-dot" style="background:'+clr+'"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -5685,7 +5929,7 @@ function renderPulse() {
   }
 
   // ── Near-due ──
-  var neardue = hasBench.filter(c => c.pct<1.0 && c.pred_changeout
+  var neardue = hasBench.filter(c => c.pct<=1.0 && c.pred_changeout   /* v4.14 — not overdue: life up to 100 % */
     && new Date(c.pred_changeout)>=today && new Date(c.pred_changeout)<=future30);
   neardue.sort((a,b) => new Date(a.pred_changeout)-new Date(b.pred_changeout));
   var nb = document.getElementById('pw-neardue-body');
@@ -5699,7 +5943,7 @@ function renderPulse() {
       nb.innerHTML = neardue.slice(0,20).map(c => {
         var clr = getHex(getColor(c.pct||0));
         var ds = c.pred_changeout ? c.pred_changeout.slice(0,10) : '—';
-        return '<div class="pw-item">'+
+        return '<div class="pw-item"'+_hAttr(c)+'>'+
           '<span class="pw-dot" style="background:'+clr+'"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -5719,7 +5963,7 @@ function renderPulse() {
     } else {
       // FIX-1: c.component, c.unit JSON-derived.
       nb_b.innerHTML = noBench.slice(0,20).map(c => {
-        return '<div class="pw-item">'+
+        return '<div class="pw-item"'+_hAttr(c)+'>'+
           '<span class="pw-dot" style="background:#b8ede0"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
@@ -5782,7 +6026,7 @@ function renderPulse() {
         var pctTxt = (c.pct !== null) ? Math.round((c.pct||0)*100)+'%' : '<span class="nb-tag">NB</span>'; // DR-003
         var ds = c.pred_changeout ? c.pred_changeout.slice(0,10) : '—';
         var fm = (c.fleet||'')+(c.model?' / '+c.model:'');
-        return '<div class="pr-row">'+
+        return '<div class="pr-row"'+_hAttr(c)+'>'+
           '<span class="pr-comp">'+esc(c.component)+'</span>'+
           '<span class="pr-unit">'+esc(c.unit)+'</span>'+
           '<span class="pr-fleet">'+esc(fm)+'</span>'+
@@ -6020,6 +6264,7 @@ function renderHeatmap(fleet, model) {
     const row = document.createElement('tr');
     const rh  = document.createElement('td');
     rh.className = 'hm-comp-header'; rh.textContent = comp; rh.title = comp;
+    rh.dataset.hf = fleet; rh.dataset.hc = comp; if (model) rh.dataset.hm = model;   // v4.14 — right-click → Hide
     row.appendChild(rh);
     const lc = document.createElement('td');
     lc.className = 'hm-life-cell';
@@ -6030,6 +6275,7 @@ function renderHeatmap(fleet, model) {
       var u = um.unit, m2 = um.model;
       const td    = document.createElement('td');
       const cData = lookup[u] && lookup[u][comp];
+      if (cData) { td.dataset.hf = fleet; td.dataset.hm = m2; td.dataset.hu = u; td.dataset.hc = comp; }   // v4.14 — right-click → Hide
       if (cData) {
         const hasBench = cData.benchmark && cData.benchmark > 0;
         if (hasBench) {

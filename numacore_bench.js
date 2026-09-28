@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_bench.js — BENCH (critical spares) for NumaCore Lens
-   v1.2.1 · 2026-09-27
+   v1.3.0 · 2026-09-27
 
    What it does
      Shows every critical component (majors + minors) per model with its stock
@@ -101,11 +101,30 @@
        – "Replace all 0 with - to make it more visible": a zero in any quantity cell (stock table, detail rows,
          subtotals, Part numbers, INV_MSTR rows, summary counts, tiles) is a dimmed en dash "–" (hover: 0).
          "—" still means no data. Sentences and board cards keep their numbers.
+     • v1.3.0 (operator, 2026-09-27, notes after using the suite):
+       – "Overdue should not read from the Project dates… only from the Component hrs as stated in Lens… anything > 100%
+         is overdue": a row is overdue when its worst life % is over 100 (shown under the %). "Next due (plan)" shows
+         the plan's date as it is and never calls it overdue.
+       – "Where you have a comment box under a component… leave the header card that I can open if I want": an opened
+         row keeps its SAP rows and one-line statement; the notes fold into one "Notes ▸" line (remembered in this browser).
+       – Hide (right-click a row or a board card): hidden on this model, kept in the plan (Lens's ui_settings). A
+         "Hidden on this model" bar shows the count and unhides. Hidden rows leave the board, table, tiles and counts; they
+         stay in the definition, and Cadence shows every component. Components hidden in Lens are left out of "not
+         matched" and the suggestions.
+       – "If there is no snapshot, bench should use the part numbers in Lens": for a model with no Component Snapshot in
+         the client folder, Lens's part numbers are the reference: a Lens component with the SAME name as a component here
+         (left / right / front / rear and words like "cyl" or "group" aside: "Front Differential" = "Differential", but
+         "Transmission Charging Pump" ≠ "Transmission"), with a part number its list doesn't have → suggest adding it. Same review, same log; never a
+         removal; a declined one is not suggested again. A Lens component with no component here is NOT suggested as a
+         new one (Lens tracks every component; the definition is the critical list): it stays in "Tracked in Lens, not
+         matched", as before.
 
    API
      NumaCoreBench.render(containerEl, host)
        host = { raw, fleetData, imageBase, planSaved, clientCode,
-                markUnsaved(msg), toast(msg, sev) }
+                markUnsaved(msg), toast(msg, sev),
+                v1.3.0 (optional): isHidden(fleet, model, unit, component) · benchHidden() → [{model, pid, label, at}] ·
+                setBenchHidden(list) · openHidden() }
      NumaCoreBench.setStock(rows, {fileName, dataAsOf, method, clientCode})   rows = [headers, ...]
      NumaCoreBench.clearStock()
      NumaCoreBench.setSnapshots([snapshot])            v1.2.0 — the Component Snapshots in the client folder
@@ -115,7 +134,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '1.2.1';
+  var VERSION = '1.3.0';
   var STOCK_AGE = { amber: 7, red: 14, refuse: 30 };   // days — operator 2026-09-26: 7/14 for every SAP source; nothing older than 30 days is loaded
   var XLSX_LOCAL = 'vendor/xlsx.full.min.js';
   var XLSX_CDN = 'https://cdn.jsdelivr.net/npm/xlsx@0.20.2/dist/xlsx.full.min.js';
@@ -143,8 +162,16 @@
     edit: false,            // Part numbers view: editing by hand
     pfilter: 'all',         // Part numbers view filter: all | nostock | nolens | snap
     raw: {},                // "pid|pn" -> true when its INV_MSTR rows are shown
-    unsaved: null           // {at, what} — the definition changed in this tab and SAVE FILE has not run since
+    unsaved: null,          // {at, what} — the definition changed in this tab and SAVE FILE has not run since
+    // v1.3.0
+    notesOpen: readPref('ncb_notes_open') === '1',   // an opened row's notes: folded unless the reader opened them
+    hidePanel: false,       // the "Hidden on this model" list is open
+    hideKeys: [],           // that list's rows → the pocket ids each one unhides
+    views: null,            // the model views of the last render (Lens suggestions read them)
+    bhLocal: null           // hidden rows when the host can't keep them (an older Lens): this tab only
   };
+  function readPref(k) { try { return root.localStorage ? root.localStorage.getItem(k) : null; } catch (e) { return null; } }
+  function writePref(k, v) { try { if (root.localStorage) root.localStorage.setItem(k, v); } catch (e) {} }
 
   // ── small helpers ─────────────────────────────────────────────────────────
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -377,10 +404,15 @@
     var want = units ? new Set(units.map(function (u) { return String(u).toUpperCase(); })) : null;
     Object.keys(fd[fk][mk]).forEach(function (u) {
       if (want && !want.has(u.toUpperCase())) return;
-      (fd[fk][mk][u] || []).forEach(function (c) { out.push(Object.assign({ unit: u }, c)); });
+      (fd[fk][mk][u] || []).forEach(function (c) { var o = Object.assign({ unit: u }, c); if (lensHidden(fk, mk, u, c.component)) o._hidden = true; out.push(o); });   // v1.3.0 + _hidden
     });
     return out;
   }
+  // v1.3.0 — hidden components: Lens's (right-click in Lens) and Bench rows (right-click here), both kept by the host
+  function lensHidden(f, m, u, c) { try { return !!(S.host && S.host.isHidden && S.host.isHidden(f, m, u, c)); } catch (e) { return false; } }
+  function benchHiddenList() { try { if (S.host && S.host.benchHidden) return S.host.benchHidden() || []; } catch (e) {} return S.bhLocal || (S.bhLocal = []); }
+  function setBenchHiddenList(list) { if (S.host && S.host.setBenchHidden) S.host.setBenchHidden(list); else S.bhLocal = list; }
+  function hiddenPocketSet(key) { var o = {}; benchHiddenList().forEach(function (h) { if (h.model === key) o[h.pid] = h; }); return o; }
   function modelUnits(m) {
     var fd = S.host.fleetData || {};
     var fk = Object.keys(fd).find(function (f) { return f.toUpperCase() === String(m.lens.fleet).toUpperCase(); });
@@ -449,7 +481,7 @@
     var comps = fleetModelComps(m.lens.fleet, m.lens.model, m.lens.units);
     var groups = {};
     comps.forEach(function (c) { (groups[c.component] = groups[c.component] || []).push(c); });
-    var unmatched = [];
+    var unmatched = [], hiddenLens = [];
     Object.keys(groups).sort().forEach(function (name) {
       var cs = groups[name], c0 = cs.find(function (c) { return c.mm_number || c.part_number; }) || cs[0];
       var hit = null, how = '', pnHit = '';
@@ -465,6 +497,8 @@
       // v1.1.2 — every part number Lens holds for this component, with its units (shown when it doesn't match a pocket)
       rec.pnc = {}; cs.forEach(function (c) { var k = String(c.part_number || '').trim() || '(none)', e = rec.pnc[k] || (rec.pnc[k] = { n: 0, units: [], mm: {} }); e.n++; e.units.push(c.unit); if (c.mm_number) e.mm[String(c.mm_number).trim()] = 1; });
       if (hit) { hit.lens.push(rec); return; }
+      // v1.3.0 — a component hidden in Lens (every unit of it) is left out of "not matched" and the suggestions
+      if (cs.every(function (c) { return c._hidden; })) { hiddenLens.push(name); return; }
       // a name may SUGGEST a pocket (shown as a check, never counted as a match)
       var cs0 = sig(name), cp = posOf(name), best = null, bestScore = 0;
       pockets.forEach(function (x) {
@@ -480,7 +514,10 @@
       rec.hint = best ? best.p : null;
       unmatched.push(rec);
     });
-    return { m: m, pockets: pockets, unmatched: unmatched, units: modelUnits(m), comps: comps.length };
+    // v1.3.0 — rows hidden on this model leave the board, table, tiles and counts (the Lens join above used every row)
+    var hp = hiddenPocketSet(m.key);
+    return { m: m, pockets: pockets.filter(function (x) { return !hp[x.p.id]; }), hiddenPockets: pockets.filter(function (x) { return hp[x.p.id]; }), allPockets: pockets,
+             unmatched: unmatched, hiddenLens: hiddenLens, units: modelUnits(m), comps: comps.length };
   }
   function lensModelsNotInReview() {
     var def = benchDef(), fd = S.host.fleetData || {}, out = [];
@@ -652,6 +689,17 @@
       '.ncb table.ncb-modeltbl{table-layout:fixed}.ncb table.ncb-modeltbl th{white-space:normal;vertical-align:bottom;line-height:1.25}.ncb table.ncb-modeltbl td{overflow-wrap:break-word}',
       '.ncb table.ncb-modeltbl td .ncb-pill{margin:1px 2px}',
       '.ncb-nw{white-space:nowrap}.ncb-zero{color:var(--nc-text-d);opacity:.85}',   /* the text stays beside its dot (it wrapped under it) */
+      // v1.3.0 — the notes line, the hidden bar and list, the right-click menu (on document.body, so not under .ncb)
+      '.ncb-notesbtn{display:flex;align-items:baseline;gap:6px;background:none;border:0;padding:2px 0;margin:2px 0 0;color:var(--ncb-accent);font:inherit;font-size:12.5px;cursor:pointer;text-align:left}',
+      '.ncb-notesbtn:hover{text-decoration:underline}.ncb-notesbtn .ncb-dim{font-size:12px}',
+      '.ncb-hiddenbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;margin:2px 0 8px;padding:6px 10px;border:1px dashed var(--nc-border,#2A2D3A);border-radius:4px}',
+      '.ncb-hidelist{border:1px solid var(--nc-border,#2A2D3A);border-radius:4px;margin:-4px 0 10px;padding:2px 10px}',
+      '.ncb-hidelist>div{display:flex;align-items:baseline;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)}.ncb-hidelist>div:last-child{border-bottom:0}',
+      '.ncb-ctx{position:fixed;z-index:9800;min-width:240px;max-width:400px;background:#0b1210;border:1px solid rgba(95,168,224,.4);border-radius:4px;box-shadow:0 8px 28px rgba(0,0,0,.55);padding:4px 0;font-family:var(--nc-font-body,Barlow,sans-serif)}',
+      '.ncb-ctx-t{padding:6px 12px 5px;font-family:var(--nc-font-mono,monospace);font-size:10px;letter-spacing:1px;color:rgba(95,168,224,.9);text-transform:uppercase;border-bottom:1px solid rgba(95,168,224,.18);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.ncb-ctx button{display:block;width:100%;text-align:left;background:none;border:0;color:#e8e9ed;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit}',
+      '.ncb-ctx button:hover,.ncb-ctx button:focus{background:rgba(95,168,224,.12);color:#9fd0f5;outline:none}',
+      '.ncb-ctx-n{padding:5px 12px 3px;font-size:11px;color:#8b8fa3;border-top:1px solid rgba(95,168,224,.12)}',
       '@media (max-width:1100px){.ncb-list{width:210px}.ncb-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}'
     ].join('\n');
     document.head.appendChild(st);
@@ -724,7 +772,7 @@
       if (S.defReview) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>A Bench definition file (<span class="ncb-mono">' + esc(S.defReview.fileName) + '</span>) is waiting for your before / after review. Nothing has changed yet.</span> <button class="ncb-btn solid" data-act="review">Review</button></div>';
       else if (pr.length) {
         var np = pr.filter(function (x) { return x.kind === 'add'; }).length, nc = pr.length - np;
-        h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>The Component Snapshots in the client folder list <b>' + np + '</b> part number' + (np === 1 ? '' : 's') + (nc ? ' and <b>' + nc + '</b> component' + (nc === 1 ? '' : 's') : '') + ' that the Bench definition doesn\'t have. Nothing changes until you review them.</span> <button class="ncb-btn solid" data-act="review">Review</button></div>';
+        h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>' + propSource(pr) + ' list <b>' + np + '</b> part number' + (np === 1 ? '' : 's') + (nc ? ' and <b>' + nc + '</b> component' + (nc === 1 ? '' : 's') : '') + ' that the Bench definition doesn\'t have. Nothing changes until you review them.</span> <button class="ncb-btn solid" data-act="review">Review</button></div>';
       }
     }
     if (!S.stock && !S.busy && benchDef() && folderOn()) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span>Stock comes from the client folder, and it has no INV_MSTR yet. Put the export in <b>1 New files</b>, press <b>↻</b> in the header, then <b>NEW FILES: CHECK</b> and Publish.</span></div>';
@@ -754,7 +802,7 @@
     // the fifth tile counts LENS components with no pocket — a different thing from the spares components the first
     // four count, so it stands apart and says so (UI audit: 20 + 11 + 1 + 6 + 9 = 47 on a 38-component model)
     var t = [['spare', c.spare, 'cover after inbound > 0'], ['nospare', c.nospare, 'cover 0: nothing spare, or no stock and no demand'], ['short', c.short, 'demand the shelf + inbound cannot meet'], ['notsap', c.notsap, 'no SAP material set up'], ['notin', v.unmatched.length, 'Lens components with no spares match — not part of the ' + rows.length]];
-    return '<div class="ncb-meta" style="margin-top:10px">Counting ' + rows.length + ' of ' + v.pockets.length + ' components · ' + FILTER_NAME[S.filter] + (v.pockets.some(function (x) { return x.fam; }) ? ' · each part number of a split component counts once' : '') + '</div>' +
+    return '<div class="ncb-meta" style="margin-top:10px">Counting ' + rows.length + ' of ' + v.pockets.length + ' components' + ((v.hiddenPockets || []).length ? ' (' + v.hiddenPockets.length + ' hidden)' : '') + ' · ' + FILTER_NAME[S.filter] + (v.pockets.some(function (x) { return x.fam; }) ? ' · each part number of a split component counts once' : '') + '</div>' +
       '<div class="ncb-tiles">' + t.map(function (x) { return '<div class="ncb-tile' + (x[0] === 'notin' ? ' aside' : '') + '"><div class="k" style="color:' + ST[x[0]].c + '"><span class="ncb-dot"></span>' + ST[x[0]].w + '</div><div class="v">' + (S.idx || x[0] === 'notin' ? z(x[1]) : '—') + '</div><div class="d">' + x[2] + '</div></div>'; }).join('') + '</div>';
   }
   // v1.1.1 — one signed-number format for card, table and statement (the card wrote "-3", the table "−3")
@@ -835,7 +883,10 @@
       });
       svg += '</svg>';
       board.innerHTML = svg + h;
-      board.querySelectorAll('[data-open]').forEach(function (el) { el.onclick = function () { var id = el.getAttribute('data-open'); S.open[id] = true; rerender(); var row = S.el.querySelector('tr.ncb-row[data-id="' + CSS.escape(id) + '"]'); if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' }); }; });
+      board.querySelectorAll('[data-open]').forEach(function (el) {
+        el.onclick = function () { var id = el.getAttribute('data-open'); S.open[id] = true; rerender(); var row = S.el.querySelector('tr.ncb-row[data-id="' + CSS.escape(id) + '"]'); if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
+        el.oncontextmenu = function (e) { pocketMenu(e, v, el.getAttribute('data-open')); };   // v1.3.0 — right-click → Hide
+      });
     }
   }
   function statement(st) {
@@ -862,6 +913,14 @@
   // A bar in the component's status colour runs from its row down through its detail rows.
   // An assembly's rows come grouped per sub-part group with a subtotal each; the binding subtotal equals the headline.
   function wayCell(o, t) { return z(o + t) + (o && t ? '<span class="ncb-kit">order ' + o + ' · transit ' + t + '</span>' : t ? '<span class="ncb-kit">in transit</span>' : ''); }
+  // v1.3.0 (operator: "Where you have a comment box under a component… please leave the header card that I can open if
+  // I want… takes up a lot of RE if always open") — the notes fold into one line that says what is inside; one click opens
+  // them for every row (remembered in this browser), another folds them again
+  function notesBlock(notes, what) {
+    var open = !!S.notesOpen;
+    return '<button class="ncb-notesbtn" data-act="notes" aria-expanded="' + open + '" title="' + (open ? 'Fold the notes' : 'Open the notes') + '">' + (open ? '▾' : '▸') + ' Notes <span class="ncb-dim">· ' + esc(what.join(' · ')) + '</span></button>' +
+      (open ? notes.map(function (n) { return '<div class="ncb-note">' + n + '</div>'; }).join('') : '');
+  }
   function detailRows(st, bar, notesHtml) {
     var out = [], tree = '<td><i class="ncb-tree"></i></td>', sty = ' style="--bar:' + bar + '"';
     var row = function (d, showCover) {
@@ -912,7 +971,6 @@
   }
   function unitChips(units) { return (units || []).map(function (u) { return '<span class="ncb-uchip">' + esc(u) + '</span>'; }).join(''); }
   function tableHtml(v) {
-    var today = localIso(new Date());
     var rows = filteredPockets(v);
     // v1.2.1 (operator: "when I open a component… the column widths change to fit the additional text… dont like these
     // jerky moves") — fixed columns: the status and number columns have set widths, Component and Tracked in Lens share
@@ -928,9 +986,12 @@
         : likely.length ? '<div class="ncb-warn">' + likely.map(function (u) { return esc(u.name); }).join(', ') + '</div><div class="ncb-how" style="color:#fdba74">part numbers don\'t match — open the row</div>'
           : '<div class="ncb-lens" style="color:var(--nc-text-d)">not tracked in Lens</div>';
       var worst = x.lens.length ? x.lens.map(function (l) { return l.worst; }).filter(function (w) { return w != null; }) : [];
-      var worstTxt = worst.length ? Math.round(Math.max.apply(null, worst) * 100) + '%' : '—';
+      // v1.3.0 (operator: "Overdue should not read from the Project dates… only from the Component hrs as stated in Lens…
+      // anything > 100% is overdue") — overdue is the worst life % over 100; the plan date is shown as it is, never judged
+      var wmax = worst.length ? Math.max.apply(null, worst) : null;
+      var worstTxt = wmax == null ? '—' : wmax > 1 ? '<span style="color:var(--ncb-short)">' + Math.round(wmax * 100) + '%</span><div class="ncb-how" style="color:var(--ncb-short)">overdue</div>' : Math.round(wmax * 100) + '%';
       var dueIso = x.lens.map(function (l) { return l.due; }).filter(Boolean).sort()[0];
-      var dueTxt = !dueIso ? '—' : (dueIso < today ? '<span style="color:var(--ncb-short)">overdue</span><div class="ncb-how">' + fmtDate(dueIso) + '</div>' : fmtDate(dueIso));
+      var dueTxt = !dueIso ? '—' : fmtDate(dueIso);
       var open = !!S.open[p.id];
       var types = st && st.types.length ? st.types.map(function (t) { return '<span class="ncb-pill ' + t + '">' + t + '</span>'; }).join('') : '<span style="color:var(--nc-text-d)">—</span>';
       var q = function (n) { return st && st.status !== 'notsap' ? n : '<span style="color:var(--nc-text-d)">—</span>'; };
@@ -948,14 +1009,70 @@
         if (f) notes.push('Split component: part number ' + f.n + ' of ' + f.of + ', fits ' + esc(f.units.join(', ') || 'the model') + '. ' + esc(SPLIT_WHY[f.reason] || SPLIT_WHY.multiple));
         if (p.alsoFits) notes.push('Also fits: ' + p.alsoFits.map(function (a) { return esc(a.model) + ' (' + esc((a.comps || []).join(', ')) + ')'; }).join(' · '));
         if (x.lens.length) notes.push('Lens components on this pocket: ' + x.lens.map(function (l) { return esc(l.name) + ' (' + l.n + ', part ' + esc(l.pn) + (l.mm ? ', SAP ' + esc(l.mm) : '') + (l.worst != null ? ', worst ' + Math.round(l.worst * 100) + '%' : '') + ')'; }).join(' · '));
-        h += detailRows(st, ST[k].c, '<div class="ncb-stmt">' + statement(st) + '</div>' + notes.map(function (n) { return '<div class="ncb-note">' + n + '</div>'; }).join(''));
+        var what = [];
+        if (!x.lens.length && likely.length) what.push('why the part numbers don\'t match');
+        if (st && st.ambiguous && st.ambiguous.length) what.push('a part number not counted');
+        if (st) what.push('SAP stock rule');
+        what.push('part numbers');
+        if (f) what.push('split component');
+        if (p.alsoFits) what.push('also fits');
+        if (x.lens.length) what.push('Lens components');
+        h += detailRows(st, ST[k].c, '<div class="ncb-stmt">' + statement(st) + '</div>' + notesBlock(notes, what));
       }
     });
     return h + '</tbody></table></div>';
   }
+  // v1.3.0 — what is hidden on this model, and the list to unhide it (split rows hide and unhide together)
+  function hiddenBar(v) {
+    var hp = v.hiddenPockets || [], hl = v.hiddenLens || [];
+    if (!hp.length && !hl.length) return '';
+    var groups = [], by = {};
+    hp.forEach(function (x) { var k = x.fam ? x.fam.head : x.p.id; if (!by[k]) { by[k] = { label: x.label, ids: [], tier: x.p.tier, vpn: x.p.vpn }; groups.push(by[k]); } by[k].ids.push(x.p.id); });
+    S.hideKeys = groups.map(function (g) { return g.ids; });
+    var h = '<div class="ncb-hiddenbar"><span class="ncb-dim">Hidden on this model:</span>' +
+      (groups.length ? ' <b>' + groups.length + '</b> component' + (groups.length === 1 ? '' : 's') + ' <button class="ncb-lnk" data-act="hidden">' + (S.hidePanel ? 'close' : 'show / unhide') + '</button>' : '') +
+      (hl.length ? (groups.length ? ' · ' : ' ') + '<b>' + hl.length + '</b> Lens component' + (hl.length === 1 ? '' : 's') + ' hidden in Lens (left out of "not matched")' + (S.host && S.host.openHidden ? ' <button class="ncb-lnk" data-act="lenshidden">manage in Lens</button>' : '') : '') +
+      '<span class="ncb-spacer"></span><span class="ncb-dim" style="font-size:11.5px">Right-click a row or card to hide it · hidden rows stay in the definition · Cadence shows every component</span></div>';
+    if (S.hidePanel && groups.length) h += '<div class="ncb-hidelist">' + groups.map(function (g, i) {
+      return '<div><span class="ncb-cname" style="font-size:13.5px">' + esc(g.label) + '</span><span class="ncb-meta">' + g.tier + ' · VPN ' + esc(g.vpn) + (g.ids.length > 1 ? ' · ' + g.ids.length + ' part-number rows' : '') + '</span><span class="ncb-spacer"></span><button class="ncb-lnk" data-unhide="' + i + '">unhide</button></div>';
+    }).join('') + (groups.length > 1 ? '<div><span class="ncb-spacer"></span><button class="ncb-lnk" data-unhide="*">unhide all</button></div>' : '') + '</div>';
+    return h;
+  }
+  function ctxClose() { var m = document.getElementById('ncb-ctx'); if (m) m.remove(); document.removeEventListener('mousedown', ctxAway, true); document.removeEventListener('keydown', ctxKey, true); }
+  function ctxAway(e) { if (!e.target.closest || !e.target.closest('#ncb-ctx')) ctxClose(); }
+  function ctxKey(e) { if (e.key === 'Escape') ctxClose(); }
+  function ctxMenu(e, title, items) {
+    ctxClose();
+    var d = document.createElement('div'); d.id = 'ncb-ctx'; d.className = 'ncb-ctx'; d.setAttribute('role', 'menu');
+    d.innerHTML = '<div class="ncb-ctx-t">' + esc(title) + '</div>' + items.map(function (it, i) { return '<button role="menuitem" data-i="' + i + '">' + esc(it[0]) + '</button>'; }).join('') +
+      '<div class="ncb-ctx-n">A hidden row stays in the definition; Cadence shows every component.</div>';
+    document.body.appendChild(d);
+    d.style.left = Math.max(4, Math.min(e.clientX, root.innerWidth - d.offsetWidth - 8)) + 'px';
+    d.style.top = Math.max(4, Math.min(e.clientY, root.innerHeight - d.offsetHeight - 8)) + 'px';
+    d.querySelectorAll('button[data-i]').forEach(function (b) { b.onclick = function () { var it = items[+b.getAttribute('data-i')]; ctxClose(); it[1](); }; });
+    var first = d.querySelector('button[data-i]'); if (first) first.focus();
+    setTimeout(function () { document.addEventListener('mousedown', ctxAway, true); document.addEventListener('keydown', ctxKey, true); }, 0);
+  }
+  function pocketMenu(e, v, pid) {
+    var all = v.allPockets || v.pockets, x = all.find(function (y) { return y.p.id === pid; });
+    if (!x) return;
+    e.preventDefault();
+    var ids = x.fam ? all.filter(function (y) { return y.fam && y.fam.head === x.fam.head; }).map(function (y) { return y.p.id; }) : [pid];
+    var items = [['Hide “' + x.label + '” on the ' + v.m.label + (ids.length > 1 ? ' (its ' + ids.length + ' part-number rows)' : ''), function () { hidePockets(v, ids, x.label); }]];
+    if ((v.hiddenPockets || []).length) items.push(['Hidden on this model (' + v.hiddenPockets.length + ')…', function () { S.hidePanel = true; rerender(); }]);
+    ctxMenu(e, x.label + ' · ' + v.m.label, items);
+  }
+  function hidePockets(v, ids, label) {
+    var list = benchHiddenList().slice(), at = stampNow();
+    ids.forEach(function (pid) { if (!list.some(function (h) { return h.model === v.m.key && h.pid === pid; })) list.push({ model: v.m.key, pid: pid, label: label, at: at }); delete S.open[pid]; });
+    setBenchHiddenList(list);
+    toast('Hidden on the ' + v.m.label + ': ' + label + '. It stays in the definition, and Cadence shows every component. Unhide it from "Hidden on this model" above the table; SAVE FILE keeps this in the plan.', 'info');
+    rerender();
+  }
   function gapPanel(v) {
     if (!v.unmatched.length) return '';
     return '<section class="ncb-panel"><h3>Tracked in Lens, not matched to a spares pocket (' + v.unmatched.length + ')</h3><p>Neither the SAP number nor the part number of these components appears in any ' + esc(v.m.label) + ' pocket. Where the name points at a pocket, the part number on file differs from that pocket\'s part list, so one of the two is out of date. They count as <b>Not in review</b> — never as covered, never as zero stock.</p>' +
+      ((v.hiddenLens || []).length ? '<p class="ncb-dim" style="margin-top:-4px">Hidden in Lens, so not listed: ' + esc(v.hiddenLens.join(', ')) + '.</p>' : '') +
       '<table class="ncb-mats"><thead><tr><th class="l">Lens component</th><th>Units</th><th>Part number</th><th>SAP number</th><th>Worst life</th><th class="l">What to check</th></tr></thead><tbody>' +
       v.unmatched.map(function (u) { return '<tr><td class="l">' + esc(u.name) + '</td><td class="n">' + u.n + '</td><td class="ncb-mono">' + (esc(u.pn) || '—') + '</td><td class="ncb-mono">' + (esc(u.mm) || '—') + '</td><td class="n">' + (u.worst != null ? Math.round(u.worst * 100) + '%' : '—') + '</td><td class="l">' + (u.hint ? 'Name suggests <b>' + esc(baseName(u.hint)) + '</b> (parts ' + esc((u.hint.vpns || []).slice(0, 3).join(', ')) + (u.hint.vpns.length > 3 ? ', …' : '') + ') — confirm which part number is current' : '<span style="color:var(--nc-text-m)">No pocket for this component on the ' + esc(v.m.label) + ' — add one, or accept the gap</span>') + '</td></tr>'; }).join('') + '</tbody></table></section>';
   }
@@ -1050,7 +1167,47 @@
     });
     return out;
   }
-  function allProposals() { return snapProposals(benchDef(), S.snaps); }
+  // v1.3.0 (operator: "if there is no snapshot, bench should use the part numbers in Lens") — for a model with no Component
+  // Snapshot in the client folder, the part numbers Lens holds are the reference: a Lens component that is not linked
+  // and has the SAME name as a component here, position words aside ("Front Differential" = "Differential"; the looser
+  // "points at" hint would put a Transmission Charging Pump's number on the Transmission) → 'add' its part numbers. Same review, same log; never
+  // a removal; hidden Lens components are left out; a declined one is not suggested again. A Lens component with no
+  // component here is not suggested as a new one: Lens tracks every component, the definition is the critical list
+  // (it stays in "Tracked in Lens, not matched"). Two Lens components pointing at one component with the same part
+  // number (left / right) make one suggestion.
+  function lensProposals(def) {
+    if (!def || !S.host || !S.host.fleetData) return [];
+    var out = [], byId = {}, dec = declinedIds(def), views = S.views || {};
+    def.models.forEach(function (m) {
+      if (snapsFor(m.key).length) return;
+      var v = views[m.key] || modelView(m);
+      v.unmatched.forEach(function (u) {
+        var pns = Object.keys(u.pnc || {}).filter(function (k) { return k !== '(none)' && joinKey(k); });
+        if (!pns.length) return;
+        var from = 'Lens: ' + u.name + ' (' + u.n + ' unit' + (u.n === 1 ? '' : 's') + ')';
+        var on = function (pn) { var e = u.pnc[pn]; return e.n + ' unit' + (e.n === 1 ? '' : 's'); };
+        if (!u.hint || (u.hint.groups && u.hint.groups.length)) return;   // no component here; or an assembly (edited in the definition file)
+        if (sameName(u.name) !== sameName(u.hint.component)) return;   // the same component, not just a name that contains its words
+        var pk = pocketKeys(u.hint);
+        pns.forEach(function (pn) {
+          if (pk.has(joinKey(pn))) return;
+          var id = 'lens|add|' + m.key + '|' + u.hint.id + '|' + joinKey(pn);
+          if (dec[id]) return;
+          var e = byId[id], n = u.pnc[pn].n;
+          if (e) { e.files.push(from); e.comp += ', ' + u.name; e.nu += n; e.col = e.nu + ' units'; return; }
+          e = byId[id] = { id: id, kind: 'add', by: 'Lens', model: m.key, pid: u.hint.id, pn: pn, type: catOf(pn), prefix: 'Lens', col: on(pn), nu: n, comp: u.name, how: 'the component name', files: [from] };
+          out.push(e);
+        });
+      });
+    });
+    return out;
+  }
+  function sameName(s) { var o = {}; sig(s).forEach(function (t) { o[t] = 1; }); return Object.keys(o).sort().join(' '); }
+  function allProposals() { var d = benchDef(); return snapProposals(d, S.snaps).concat(lensProposals(d)); }
+  function propSource(pr) {
+    var sn = pr.some(function (x) { return x.by !== 'Lens'; }), ln = pr.some(function (x) { return x.by === 'Lens'; });
+    return sn && ln ? 'The Component Snapshots in the client folder, and Lens\'s part numbers for models with no snapshot,' : sn ? 'The Component Snapshots in the client folder' : 'Lens\'s part numbers (for models with no Component Snapshot)';
+  }
   function previewSnapshot(sn, d) { var ps = snapProposals(d || benchDef(), [sn]); return { adds: ps.filter(function (p) { return p.kind === 'add'; }).length, newComps: ps.filter(function (p) { return p.kind === 'new'; }).length }; }
   // one part number's stock, read-only: every material it finds (with "SEE" redirects), summed as the pocket does
   function pnStock(pn) {
@@ -1080,7 +1237,7 @@
                         pn: it.pn, type: it.type || catOf(it.pn), col: it.col || '', before: before, after: p.vpns.slice(), id: it.id });
         n++;
       } else if (it.kind === 'new') {
-        var base = m.key + '-snap-' + nameKey(it.name).toLowerCase(), pid = base, q = 2;
+        var base = m.key + (it.by === 'Lens' ? '-lens-' : '-snap-') + nameKey(it.name).toLowerCase(), pid = base, q = 2;   // v1.3.0 + Lens
         while (findPocket(m, pid)) pid = base + '-' + (q++);
         var vp = it.pns.map(function (x) { return x.pn; }), news = it.pns.filter(function (x) { return x.type === 'NEW'; });
         m.pockets.push({ id: pid, tier: 'minor', component: it.name, location: it.location || '', vpn: news.length ? news[news.length - 1].pn : vp[0], vpns: vp, added: { from: (it.files || []).join(', '), at: at } });
@@ -1230,9 +1387,11 @@
       ' · ' + (tot.comps - tot.nolens) + ' of ' + tot.comps + ' linked to Lens</div>';
     var snapLine = snaps.length ? 'Snapshot' + (snaps.length > 1 ? 's' : '') + ' in the client folder: ' + snaps.map(function (s) { return '<span class="ncb-mono">' + esc(snapFile(s)) + '</span>' + (s.inUse && s.inUse.refreshedAt ? ' (filed ' + fmtDate(String(s.inUse.refreshedAt).slice(0, 10)) + ')' : ''); }).join(', ') +
         (props.length ? ' · <b>' + props.length + '</b> suggestion' + (props.length === 1 ? '' : 's') + ' not in the definition <button class="ncb-btn" data-act="review">Review</button>' : (function () { var dn = ((benchDef() || {}).log || []).filter(function (e) { return e.model === m.key && e.change === 'declined'; }).length; return ' · nothing left to review' + (dn ? ' (' + dn + ' declined suggestion' + (dn === 1 ? '' : 's') + ', in the change log)' : ': the definition has everything they list'); })())
-      : 'No Component Snapshot for this model in the client folder' + ((m.snapshots || []).length ? ' (the definition was built from ' + esc(m.snapshots.join(', ')) + ')' : '') + '. Drop one in <b>1 New files</b> to compare.';
+      : 'No Component Snapshot for this model in the client folder' + ((m.snapshots || []).length ? ' (the definition was built from ' + esc(m.snapshots.join(', ')) + ')' : '') + '. Drop one in <b>1 New files</b> to compare. ' +
+        // v1.3.0 — until then Lens's part numbers are the reference
+        'Until then <b>Lens\'s part numbers</b> are the reference' + (props.length ? ': <b>' + props.length + '</b> suggestion' + (props.length === 1 ? '' : 's') + ' not in the definition <button class="ncb-btn" data-act="review">Review</button>' : ': they add nothing the definition doesn\'t have.');
     h += '<div class="ncb-note" style="margin-bottom:8px">' + snapLine + '</div>';
-    h += '<div class="ncb-filters">' + [['all', 'All'], ['nostock', 'No stock record'], ['nolens', 'Not linked to Lens'], ['snap', 'Snapshot suggestions']].map(function (f) { return '<button class="ncb-fb' + (S.pfilter === f[0] ? ' on' : '') + '" data-pfilter="' + f[0] + '">' + f[1] + '</button>'; }).join('') +
+    h += '<div class="ncb-filters">' + [['all', 'All'], ['nostock', 'No stock record'], ['nolens', 'Not linked to Lens'], ['snap', 'Suggestions']].map(function (f) { return '<button class="ncb-fb' + (S.pfilter === f[0] ? ' on' : '') + '" data-pfilter="' + f[0] + '">' + f[1] + '</button>'; }).join('') +
       '<span class="ncb-spacer"></span>' + (S.edit ? '<button class="ncb-btn solid" data-act="editoff">Done editing</button>' : '<button class="ncb-btn" data-act="editon" title="Add or remove part numbers by hand. Nothing changes until you review and apply.">✎ Edit part numbers</button>') + '</div>';
     if (S.staged.length) h += '<div class="ncb-banner info"><span class="ncb-dot" style="color:var(--ncb-accent)"></span><span><b>' + S.staged.length + '</b> change' + (S.staged.length === 1 ? '' : 's') + ' by hand waiting for review (nothing has changed yet).</span> <button class="ncb-btn solid" data-act="review">Review and apply</button></div>';
     h += '<div class="ncb-tscroll"><table class="ncb-parts"><colgroup><col style="width:70px"><col style="width:150px"><col><col style="width:72px"><col style="width:112px"><col style="width:78px"><col style="width:120px"><col style="width:84px"><col style="width:92px"></colgroup>' +
@@ -1266,13 +1425,13 @@
       });
       b.sug.forEach(function (pr) {
         var ps = pnStock(pr.pn);
-        h += '<tr class="ncb-pnrow sugg"><td><span class="ncb-pill ' + esc(pr.type) + '">' + esc(pr.type) + '</span></td><td class="l"><span class="ncb-mono">' + esc(pr.pn) + '</span> <span class="ncb-dim" style="font-size:10px" title="In the snapshot, not in the definition yet">· suggested</span></td><td class="l pt">' + pullCell(ps || { mats: [] }) + '</td>' + qtyCells(ps) +
+        h += '<tr class="ncb-pnrow sugg"><td><span class="ncb-pill ' + esc(pr.type) + '">' + esc(pr.type) + '</span></td><td class="l"><span class="ncb-mono">' + esc(pr.pn) + '</span> <span class="ncb-dim" style="font-size:10px" title="' + (pr.by === 'Lens' ? 'On Lens components' : 'In the snapshot') + ', not in the definition yet">· suggested</span></td><td class="l pt">' + pullCell(ps || { mats: [] }) + '</td>' + qtyCells(ps) +
           '<td><span class="ncb-mono" style="font-size:11px">' + esc(pr.prefix) + ' · ' + esc(pr.col) + '</span></td><td class="n">' + ((lensPn[joinKey(pr.pn)] || []).length || '<span class="ncb-dim">—</span>') + '</td><td><button class="ncb-lnk" data-act="review">review</button></td></tr>';
       });
     });
     var newc = props.filter(function (pr) { return pr.kind === 'new'; });
     if (newc.length && (S.pfilter === 'all' || S.pfilter === 'snap')) {
-      h += '<tr class="ncb-prow"><td colspan="9"><div class="ncb-pline"><span class="ncb-cname" style="color:#a7f3d0">In the snapshot, not in the definition</span><span class="ncb-meta">' + newc.length + ' component' + (newc.length === 1 ? '' : 's') + ' · suggestions until you review them</span><span class="ncb-spacer"></span><button class="ncb-btn" data-act="review">Review</button></div></td></tr>';
+      h += '<tr class="ncb-prow"><td colspan="9"><div class="ncb-pline"><span class="ncb-cname" style="color:#a7f3d0">' + (newc.every(function (pr) { return pr.by === 'Lens'; }) ? 'In Lens' : newc.some(function (pr) { return pr.by === 'Lens'; }) ? 'In a snapshot or in Lens' : 'In the snapshot') + ', not in the definition</span><span class="ncb-meta">' + newc.length + ' component' + (newc.length === 1 ? '' : 's') + ' · suggestions until you review them</span><span class="ncb-spacer"></span><button class="ncb-btn" data-act="review">Review</button></div></td></tr>';
       newc.forEach(function (pr) {
         pr.pns.forEach(function (x, i) {
           var ps = pnStock(x.pn);
@@ -1317,7 +1476,7 @@
       return h;
     }
     var props = allProposals(), hand = S.staged, n = 0;
-    if (!props.length && !hand.length) return h + '<div class="ncb-empty" style="margin:30px 0">Nothing to review: no changes by hand, and the Component Snapshots in the client folder list nothing the definition doesn\'t have.<p><button class="ncb-btn" data-act="back">Back</button></p></div>';
+    if (!props.length && !hand.length) return h + '<div class="ncb-empty" style="margin:30px 0">Nothing to review: no changes by hand, the Component Snapshots in the client folder list nothing the definition doesn\'t have, and for models with no snapshot Lens\'s part numbers add nothing.<p><button class="ncb-btn" data-act="back">Back</button></p></div>';
     if (hand.length) {
       h += '<h3 class="ncb-h3">By hand · ' + hand.length + '</h3>';
       var byP = {};
@@ -1328,33 +1487,36 @@
           '<span class="ncb-dim">Change</span><div>' + list.map(function (s) { n++; return '<label class="ncb-tickl">' + tickBox(s.id) + chip(s.pn, s.kind === 'add' ? 'add' : 'rem', s.kind === 'add' ? stockWords(s.pn) : '') + '</label>'; }).join('') + '</div></div></div>';
       });
     }
-    if (props.length) {
-      h += '<h3 class="ncb-h3">From Component Snapshots · ' + props.length + '</h3><div class="ncb-note">Part numbers and components a snapshot in <code>2 In use\\Snapshots</code> lists and the definition doesn\'t. Untick what should not be added: it is declined, logged, and not suggested again.</div>';
+    // v1.3.0 — snapshot suggestions, then Lens's (models with no snapshot), each in its own section
+    [props.filter(function (pr) { return pr.by !== 'Lens'; }), props.filter(function (pr) { return pr.by === 'Lens'; })].forEach(function (props, sec) {
+      if (!props.length) return;
+      h += sec === 0 ? '<h3 class="ncb-h3">From Component Snapshots · ' + props.length + '</h3><div class="ncb-note">Part numbers and components a snapshot in <code>2 In use\\Snapshots</code> lists and the definition doesn\'t. Untick what should not be added: it is declined, logged, and not suggested again.</div>'
+        : '<h3 class="ncb-h3">From Lens · ' + props.length + '</h3><div class="ncb-note">For a model with <b>no Component Snapshot</b> in the client folder, the part numbers Lens holds are the reference: a Lens component with the same name as a component here (the same words once left / right / front / rear and words like "cyl" are set aside), with a part number its list doesn\'t have. (A Lens component with no component of that name here is not suggested: it stays in "Tracked in Lens, not matched".) Components hidden in Lens are left out. Untick what should not be added: it is declined, logged, and not suggested again.</div>';
       var models = []; props.forEach(function (pr) { if (models.indexOf(pr.model) < 0) models.push(pr.model); });
       models.forEach(function (mk) {
         var m = findModel(mk), mp = props.filter(function (pr) { return pr.model === mk; });
         var files = []; mp.forEach(function (pr) { pr.files.forEach(function (f) { if (files.indexOf(f) < 0) files.push(f); }); });
-        h += '<div class="ncb-rmodel"><b>' + esc(m.label) + '</b> <span class="ncb-dim">· from ' + esc(files.join(', ')) + '</span></div>';
+        h += '<div class="ncb-rmodel"><b>' + esc(m.label) + '</b> <span class="ncb-dim">· from ' + (sec === 0 ? esc(files.join(', ')) : 'Lens (no Component Snapshot for this model)') + '</span></div>';
         var byP = {}, order = [];
         mp.forEach(function (pr) { var k = pr.kind === 'new' ? pr.id : pr.pid; if (!byP[k]) { byP[k] = []; order.push(k); } byP[k].push(pr); });
         order.forEach(function (k) {
           var list = byP[k];
           if (list[0].kind === 'new') {
             var pr = list[0]; n++;
-            h += '<div class="ncb-rcard new"><h4><label class="ncb-tickl">' + tickBox(pr.id) + ' New component: ' + esc(pr.name) + '</label> <span class="ncb-meta">' + esc(m.label) + (pr.location ? ' · ' + esc(pr.location) : '') + ' · added as a minor component</span></h4>' +
+            h += '<div class="ncb-rcard new"><h4><label class="ncb-tickl">' + tickBox(pr.id) + ' New component: ' + esc(pr.name) + '</label> <span class="ncb-meta">' + esc(m.label) + (pr.location ? ' · ' + esc(pr.location) : '') + (pr.by === 'Lens' ? ' · ' + esc(pr.files[0]) : '') + ' · added as a minor component</span></h4>' +
               '<div class="ncb-ba"><span class="ncb-dim">Now</span><div class="ncb-dim">not in the definition</div><span class="ncb-dim">After</span><div>' + pr.pns.map(function (x) { return chip(x.pn, 'add', ' <span class="ncb-dim" style="font-size:10px">' + esc(x.col) + '</span>' + stockWords(x.pn)); }).join('') + '</div></div>' +
               (pr.note ? '<div class="ncb-note">Snapshot note: ' + esc(pr.note) + '</div>' : '') + '</div>';
             return;
           }
           var p = findPocket(m, k);
-          h += '<div class="ncb-rcard"><h4>' + esc(baseName(p)) + ' <span class="ncb-meta">' + esc(m.label) + ' · ' + p.tier + ' · snapshot row "' + esc(list[0].comp) + '", matched by ' + esc(list[0].how) + '</span></h4>' +
+          h += '<div class="ncb-rcard"><h4>' + esc(baseName(p)) + ' <span class="ncb-meta">' + esc(m.label) + ' · ' + p.tier + (list[0].by === 'Lens' ? ' · Lens component "' + esc(list[0].comp) + '" (same name)' : ' · snapshot row "' + esc(list[0].comp) + '", matched by ' + esc(list[0].how)) + '</span></h4>' +
             '<div class="ncb-ba"><span class="ncb-dim">Now</span><div>' + (p.vpns || []).map(function (x) { return chip(x); }).join('') + '</div>' +
             '<span class="ncb-dim">Add</span><div>' + list.map(function (pr) { n++; return '<label class="ncb-tickl">' + tickBox(pr.id) + chip(pr.pn, 'add', ' <span class="ncb-dim" style="font-size:10px">' + esc(pr.col) + '</span>' + stockWords(pr.pn)) + '</label>'; }).join('') + '</div></div></div>';
         });
       });
-    }
+    });
     h += '<div class="ncb-revfoot"><button class="ncb-btn solid" data-act="apply">Apply the ticked changes</button><button class="ncb-btn ghost" data-act="back">Back (nothing changes)</button>' +
-      '<span class="ncb-note" style="margin:0">' + n + ' item' + (n === 1 ? '' : 's') + '. Unticked snapshot suggestions are declined (logged); unticked hand edits stay waiting.</span></div>';
+      '<span class="ncb-note" style="margin:0">' + n + ' item' + (n === 1 ? '' : 's') + '. Unticked suggestions are declined (logged); unticked hand edits stay waiting.</span></div>';
     return h;
   }
   function logHtml() {
@@ -1388,6 +1550,7 @@
     var main;
     var views = {};
     if (def) def.models.forEach(function (m) { views[m.key] = modelView(m); });
+    S.views = views;   // v1.3.0 — Lens's suggestions read this render's model views
     if (!def && S.defReview) S.page = 'review';
     if (S.page === 'review') main = topBar() + banners() + reviewHtml();
     else if (S.page === 'log' && def) main = topBar() + banners() + logHtml();
@@ -1399,9 +1562,9 @@
       var v = views[S.model];
       if (!v) { S.model = ''; return render(el, host); }
       main = topBar() + banners() + viewSwitch() + boardHtml(v) + tiles(v) +
-        '<div class="ncb-rule"><b>Cover after inbound</b> = on the shelf + on the way (on order + in transit) − reserved. The status is judged on it; every row still shows all four, so a spare that exists only on a truck is never mistaken for one on the shelf. Click a card or a row for the SAP detail.</div>' +
+        '<div class="ncb-rule"><b>Cover after inbound</b> = on the shelf + on the way (on order + in transit) − reserved. The status is judged on it; every row still shows all four, so a spare that exists only on a truck is never mistaken for one on the shelf. Click a card or a row for the SAP detail; right-click one to hide it.</div>' +
         '<div class="ncb-filters">' + [['all', 'All ' + v.pockets.length], ['major', 'Majors'], ['minor', 'Minors'], ['attn', 'Needs attention']].map(function (f) { return '<button class="ncb-fb' + (S.filter === f[0] ? ' on' : '') + '" data-filter="' + f[0] + '">' + f[1] + '</button>'; }).join('') + '</div>' +
-        tableHtml(v) + gapPanel(v);
+        hiddenBar(v) + tableHtml(v) + gapPanel(v);   // v1.3.0 + hiddenBar
     }
     // keep the reader where they were: a re-render (opening a row, a filter) must not jump to the top
     var pm = el.querySelector('.ncb-main'), pl = el.querySelector('.ncb-list');
@@ -1414,7 +1577,7 @@
     if (nl) nl.scrollTop = keepList;
   }
   function wire(el, views) {
-    el.querySelectorAll('[data-model]').forEach(function (n) { n.onclick = function () { S.model = n.getAttribute('data-model'); S.filter = 'all'; S.open = {}; S.raw = {}; if (S.page === 'log' || (S.page === 'review' && !S.defReview)) S.page = ''; rerender(); var mn = el.querySelector('.ncb-main'); if (mn) mn.scrollTop = 0; }; });
+    el.querySelectorAll('[data-model]').forEach(function (n) { n.onclick = function () { S.model = n.getAttribute('data-model'); S.filter = 'all'; S.open = {}; S.raw = {}; S.hidePanel = false; if (S.page === 'log' || (S.page === 'review' && !S.defReview)) S.page = ''; rerender(); var mn = el.querySelector('.ncb-main'); if (mn) mn.scrollTop = 0; }; });
     el.querySelectorAll('[data-filter]').forEach(function (n) { n.onclick = function () { S.filter = n.getAttribute('data-filter'); rerender(); }; });
     // v1.2.0 — the Part numbers view, editing by hand, the review
     el.querySelectorAll('[data-view]').forEach(function (n) { n.onclick = function () { S.view = n.getAttribute('data-view'); rerender(); }; });
@@ -1436,7 +1599,21 @@
       n.onclick = go;
       if (inp) inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } };
     });
-    el.querySelectorAll('tr.ncb-row[data-id]').forEach(function (n) { n.onclick = function () { var id = n.getAttribute('data-id'); S.open[id] = !S.open[id]; rerender(); }; });
+    el.querySelectorAll('tr.ncb-row[data-id]').forEach(function (n) {
+      n.onclick = function () { var id = n.getAttribute('data-id'); S.open[id] = !S.open[id]; rerender(); };
+      n.oncontextmenu = function (e) { var v = views[S.model]; if (v) pocketMenu(e, v, n.getAttribute('data-id')); };   // v1.3.0 — right-click → Hide
+    });
+    // v1.3.0 — unhide from the "Hidden on this model" list
+    el.querySelectorAll('[data-unhide]').forEach(function (n) {
+      n.onclick = function () {
+        var k = n.getAttribute('data-unhide'), key = S.model, ids = k === '*' ? null : (S.hideKeys[+k] || []);
+        var list = benchHiddenList().filter(function (h) { return h.model !== key || (ids && ids.indexOf(h.pid) < 0); });
+        setBenchHiddenList(list);
+        if (!list.some(function (h) { return h.model === key; })) S.hidePanel = false;
+        toast('Shown again on the Bench board and table. SAVE FILE keeps this in the plan.', 'info');
+        rerender();
+      };
+    });
     var inv = el.querySelector('#ncb-file-inv'), defIn = el.querySelector('#ncb-file-def');
     el.querySelectorAll('[data-act]').forEach(function (n) {
       n.onclick = function () {
@@ -1465,6 +1642,9 @@
         else if (a === 'editon') { S.edit = true; S.view = 'parts'; rerender(); }
         else if (a === 'editoff') { S.edit = false; rerender(); }
         else if (a === 'parts') { S.view = 'parts'; S.page = ''; rerender(); }
+        else if (a === 'notes') { S.notesOpen = !S.notesOpen; writePref('ncb_notes_open', S.notesOpen ? '1' : '0'); rerender(); }   // v1.3.0
+        else if (a === 'hidden') { S.hidePanel = !S.hidePanel; rerender(); }
+        else if (a === 'lenshidden') { if (S.host && S.host.openHidden) S.host.openHidden(); }
       };
     });
     if (inv) inv.onchange = function () { var f = inv.files[0]; inv.value = ''; if (f) ingestFile(f); };
@@ -1526,6 +1706,7 @@
                  ambiguousCode: ambiguousCode, families: families, labels: labels, baseName: baseName, qtyWords: qtyWords, signed: signed,   // v1.1.1 — for the reconcile test
                  snapProposals: snapProposals, matchPocket: matchPocket, applyItems: applyItems, defDiff: defDiff, pnStock: pnStock, modelView: modelView, stageToggle: stageToggle,   // v1.2.0
                  applyDefinition: applyDefinition, applyReview: applyReview, partsHtml: partsHtml, reviewHtml: reviewHtml, logHtml: logHtml,
+                 lensProposals: lensProposals, allProposals: allProposals, hiddenBar: hiddenBar, notesBlock: notesBlock, tableHtml: tableHtml, benchHiddenList: benchHiddenList, sameName: sameName,   // v1.3.0
                  setHost: function (h) { S.host = h; },
                  setIndex: function (idx, stock) { S.idx = idx; S.stock = stock; S.askDate = !stock.dataAsOf; rerender(); } }
   };

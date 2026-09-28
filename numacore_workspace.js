@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.3.0 · 2026-09-27
+   v0.3.1 · 2026-09-27
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -57,6 +57,22 @@
        – Snapshots are reference lists, not SAP state: no data date, no age limits.
        – A Bench definition JSON is filed in 3 Archive\Definitions\ on Publish and
          handed to Bench's before / after review (host.onDefinition).
+     • v0.3.1 (operator, 2026-09-27: "the suite cannot seem to save on the OneDrive folder… it defaults to
+       downloading… wondering why it fails"):
+       – After the page reopens, the browser asks again before Lens may edit the folder. Until then SAVE FILE
+         downloaded without saying why. SAVE now asks for the permission itself (allowEdit, called from the click),
+         and when it still has to download, Lens says why (whyNoSave).
+       – Moving the OLDER plan out of lens\plan can fail on OneDrive (a moved file stays listed for a while, or is
+         locked). That no longer makes a finished save look failed: a ghost listing is skipped, any other failure is
+         a note on the successful save, and the older plan simply stays in lens\plan (Lens opens the newest).
+       – The plan write is retried once, and the written file's size is checked against what was saved.
+       – (Operator, same evening: "I tried to put a new JSON in the NEW folder, it saw it but said it was blocked from
+         loading it".) Chrome cannot read a file OneDrive is still syncing, or one that is online-only on this computer
+         ("NotReadableError … typically due to permission problems"). The reader now keeps trying for ~30 s (was ~3 s)
+         and says so; if it still can't, the card says in plain words that this is not a block by Lens and what fixes
+         it (File Explorer → Always keep on this device → green tick), with a Try again button.
+       – Opening a folder: a plan OneDrive still lists after it was moved is skipped, and a plan that can't be read
+         is named with the same advice (Lens never opens an older plan in its place).
 
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
@@ -81,10 +97,14 @@
              host.benchPreview(snapshot) → {adds, newComps} for the check card (optional)
              host.onSnapshots([snapshot]) — every snapshot in 2 In use, on each plan open and Publish
              host.onDefinition({fileName, json}) — a Bench definition published from 1 New files
+     v0.3.1: needsEdit() — edit mode, but the browser has not (re)granted edit yet
+             allowEdit() → Promise<bool> — asks the browser (call it straight from a click)
+             whyNoSave() → '' | 'no folder' | 'view' | 'permission'
+             savePlan(…) → {ok, where, file, note} — note: the older plan could not be archived (the save is done)
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.3.0';
+  var VERSION = '0.3.1';
   var AGE = { amber: 7, red: 14, refuse: 30 };
   var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans',   // v0.2.0 + plan / Plans
               SNAPS: 'Snapshots', DEFS: 'Definitions' };   // v0.3.0
@@ -452,7 +472,7 @@
             leftovers: [] };  // v0.3.0 — originals whose checked copy is filed but which could not be removed yet
   function toast(msg, sev) { try { if (S.host && S.host.toast) S.host.toast(msg, sev); } catch (e) {} }
   function setState(p) { for (var k in p) S[k] = p[k]; renderStrip(); try { if (S.host && S.host.onState) S.host.onState(publicState()); } catch (e) {} }
-  function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded, mode: S.mode, canSavePlan: canSavePlan() }; }
+  function publicState() { return { connected: !!S.handle && S.perm === 'granted', perm: S.perm, folderName: S.folderName, newFiles: S.newFiles.length, sources: S.register ? S.register.sources : {}, loaded: S.loaded, mode: S.mode, canSavePlan: canSavePlan(), needsEdit: needsEdit() }; }   // v0.3.1 + needsEdit
 
   // IndexedDB: the folder handle per client (own DB; never bump numacore_bench)
   function idb() {
@@ -725,14 +745,24 @@
     }).catch(function () { return []; }).then(function (list) { setState({ newFiles: list }); return list; });
   }
   // v0.3.0 — read a new file, retrying while OneDrive (or another program) holds it; a file that has gone is reported as gone
-  function readNewFile(d, name, asText) {
-    var waits = [0, 800, 2000];
+  function readNewFile(d, name, asText, onWait) {
+    var waits = [0, 1000, 2500, 5000, 9000, 14000];   // v0.3.1 — ~30 s (was ~3 s): a 30 MB fleet JSON can take OneDrive that long
     function attempt(i) {
+      if (i > 0 && onWait) onWait(i + 1, waits.length);
       return sleep(waits[i]).then(function () { return d.getFileHandle(name); }).then(function (fh) { return fh.getFile(); })
         .then(function (f) { return (asText ? f.text() : f.arrayBuffer()).then(function (body) { return { f: f, body: body }; }); })
         .catch(function (e) { if (e && e.name === 'NotFoundError') throw e; if (i + 1 < waits.length) return attempt(i + 1); throw e; });
     }
     return attempt(0);
+  }
+  // v0.3.1 — why Chrome could not read a file in the synced folder, and what fixes it. Chrome's own words ("…typically
+  // due to permission problems…") read like a block by Lens (operator: "it said it was blocked from loading it").
+  function unreadableWords(e, what) {
+    var nr = e && (e.name === 'NotReadableError' || e.name === 'NotAllowedError' || /could not be read|permission/i.test(e.message || ''));
+    return (nr ? 'Chrome could not read ' + (what || 'it') + ' yet. This is not a block by Lens: OneDrive was still syncing the file, or it is "online-only" on this computer. ' +
+                 'In File Explorer, right-click the file (or the whole client folder) → Always keep on this device, wait for the green tick, then press Try again.'
+               : 'Could not read ' + (what || 'the file') + '.') +
+      ' (Chrome: ' + ((e && e.name) || 'error') + (e && e.message ? ' — ' + String(e.message).replace(/\.+$/, '') : '') + '.)';
   }
   function refreshAll() { return loadRegister().then(loadCopies).then(tidyLeftovers).then(scanNew).then(function () { renderStrip(); }); }   // v0.3.0 + tidyLeftovers
 
@@ -749,12 +779,12 @@
         return p.then(function () {
           setCardsMsg('Reading ' + name + '…  (a full INV_MSTR takes up to half a minute)');
           var isJson = /\.json$/i.test(name);
-          return sleep(60).then(function () { return readNewFile(d, name, isJson); }).then(function (r) {
+          return sleep(60).then(function () { return readNewFile(d, name, isJson, function (k, n) { setCardsMsg('OneDrive has not finished with ' + name + ' yet: trying again (' + k + ' of ' + n + ')…'); }); }).then(function (r) {
             if (isJson) cards.push(assessJson(name, r.f, r.body));   // v0.2.0
             else cards.push(assess(XLSX, name, r.f, r.body));
           }).catch(function (e) {   // v0.3.0 — a file that has gone is not an error; anything else says what to do
             if (e && e.name === 'NotFoundError') { cards.push({ name: name, status: 'ignore', reasons: ['It is no longer in 1 New files (moved or deleted while Lens was looking, or OneDrive is finishing a move). Nothing to do.'], warnings: [] }); return; }
-            cards.push({ name: name, status: 'error', reasons: ['Could not read the file (' + ((e && e.name) || 'error') + ': ' + (e && e.message || e) + '). Tried three times. If OneDrive shows it syncing (blue arrows), wait for the green tick; if it is open in another program (Excel, Notepad), close it. Then press CHECK again.'], warnings: [] });
+            cards.push({ name: name, status: 'error', reasons: [unreadableWords(e, 'it') + ' Tried for about 30 seconds. If it is open in another program (Excel, Notepad), close it first.'], warnings: [] });   // v0.3.1
           });
         });
       }, Promise.resolve());
@@ -1014,6 +1044,22 @@
 
   // ── v0.2.0 — the plan in the folder: lens\plan\ (latest) + 3 Archive\Plans\ (earlier ones; nothing deleted) ──
   function canSavePlan() { return !!S.handle && S.perm === 'granted' && S.mode === 'edit'; }
+  // v0.3.1 — after the page reopens the browser's edit permission is back to "ask" (unless the person chose "allow on
+  // every visit"). SAVE FILE is a click, so Lens calls allowEdit() from it and the browser can ask there and then.
+  function needsEdit() { return !!S.handle && S.mode === 'edit' && S.perm !== 'granted'; }
+  function allowEdit() {
+    if (!needsEdit()) return Promise.resolve(canSavePlan());
+    var h = S.handle;
+    return h.requestPermission({ mode: 'readwrite' }).then(function (p) {
+      if (p !== 'granted') return false;
+      return useHandle(h, false).then(function (ok) { if (ok) refreshAll(); return !!ok && canSavePlan(); });
+    }).catch(function () { return false; });
+  }
+  function whyNoSave() { return !S.handle ? 'no folder' : S.mode === 'view' ? 'view' : S.perm !== 'granted' ? 'permission' : ''; }
+  // v0.3.1 — one retry for a write a synced folder refuses (OneDrive can hold a file for a moment)
+  function writeWithRetry(d, name, data) {
+    return writeFile(d, name, data).catch(function () { return sleep(1500).then(function () { return writeFile(d, name, data); }); });
+  }
   function listJson(dirH) {
     var it = dirH.values(), out = [];
     function step() { return it.next().then(function (r) { if (r.done) return out; var e = r.value; if (e.kind === 'file' && /\.json$/i.test(e.name) && !/^~\$|^\./.test(e.name)) out.push(e); return step(); }); }
@@ -1023,7 +1069,16 @@
     return listJson(planDir).then(function (files) {
       var old = files.filter(function (e) { return e.name !== keep; });
       if (!old.length) return;
-      return path([DIR.ARCHIVE, DIR.PLANS], true).then(function (ad) { return old.reduce(function (p, e) { return p.then(function () { return moveFile(planDir, e.name, ad); }); }, Promise.resolve()); });
+      // v0.3.1 — a moved plan can stay listed on OneDrive for a while (NotFoundError when read): skip it. Any other
+      // failure is collected and reported once, after the rest have been moved.
+      var failed = [];
+      return path([DIR.ARCHIVE, DIR.PLANS], true).then(function (ad) {
+        return old.reduce(function (p, e) {
+          return p.then(function () {
+            return moveFile(planDir, e.name, ad).catch(function (err) { if (err && err.name === 'NotFoundError') return; failed.push(e.name + ' (' + ((err && (err.message || err.name)) || err) + ')'); });
+          });
+        }, Promise.resolve());
+      }).then(function () { if (failed.length) throw new Error('could not move ' + failed.join(', ')); });
     });
   }
   function placePlan(fromDir, name) {   // the new plan in first, then the others out: lens\plan is never empty
@@ -1032,27 +1087,49 @@
       .then(function (placed) { return archiveOldPlans(planDir, placed).then(function () { putMeta({ planFile: placed }); return placed; }); });
   }
   function savePlan(text, fileName) {
-    if (!canSavePlan()) return Promise.resolve({ ok: false, reason: S.mode === 'view' ? 'view' : 'no folder' });
-    var planDir;
+    if (!canSavePlan()) return Promise.resolve({ ok: false, reason: whyNoSave() });
+    var planDir, nm, want = new Blob([text]).size;
     return path([DIR.LENS, DIR.PLAN], true).then(function (d) { planDir = d; return freeName(d, fileName); })
-      .then(function (nm) { return writeFile(planDir, nm, text).then(function () { return nm; }); })
-      .then(function (nm) { return archiveOldPlans(planDir, nm).then(function () { return nm; }); })
-      .then(function (nm) { putMeta({ planFile: nm, planSaved: localStamp(new Date()) }); setTimeout(reportLeftovers, 6200); return { ok: true, where: DIR.LENS + '\\' + DIR.PLAN + '\\', file: nm }; });
+      .then(function (n) { nm = n; return writeWithRetry(planDir, nm, text); })
+      .then(function () { return planDir.getFileHandle(nm).then(function (fh) { return fh.getFile(); }); })
+      .then(function (f) { if (f.size !== want) throw new Error('the plan written to lens\\plan is incomplete (' + f.size + ' of ' + want + ' bytes)'); })
+      // v0.3.1 — the new plan is in and checked. Moving the older ones out is tidying: a failure is a note, not a failed save.
+      .then(function () {
+        return archiveOldPlans(planDir, nm).then(function () { return ''; }, function (e) {
+          return 'The older plan could not be moved to 3 Archive\\Plans yet (' + ((e && e.message) || e) + '). It stays in lens\\plan; Lens opens the newest.';
+        });
+      })
+      .then(function (note) { putMeta({ planFile: nm, planSaved: localStamp(new Date()) }); setTimeout(reportLeftovers, 6200); return { ok: true, where: DIR.LENS + '\\' + DIR.PLAN + '\\', file: nm, note: note }; });
   }
   function stampOf(d) { return localIso(d) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds()); }
   function planStamp(name) { var m = /(\d{4}-\d{2}-\d{2})[_ T](\d{2})[-:.]?(\d{2})[-:.]?(\d{2})?/.exec(name); return m ? m[1] + 'T' + m[2] + m[3] + (m[4] || '00') : ''; }
   // the newest fleet plan in a folder: lens\plan\ first, else a fleet JSON waiting in 1 New files
+  // v0.3.1 — a plan's text, retried while OneDrive finishes with it; gone → null (skipped); unreadable → a clear error
+  // naming it (Lens must never open an older plan in place of the newest one it could not read)
+  function readPlanText(x) {
+    var waits = [0, 1000, 3000];
+    function attempt(i) {
+      return sleep(waits[i]).then(function () { return i ? x.fh.getFile() : x.f; }).then(function (f) { return f.text(); }).catch(function (e) {
+        if (e && e.name === 'NotFoundError') return null;
+        if (i + 1 < waits.length) return attempt(i + 1);
+        throw new Error(unreadableWords(e, 'the plan ' + x.f.name).replace('then press Try again', 'then open the folder again'));
+      });
+    }
+    return attempt(0);
+  }
   function findPlan(h) {
     function sub(names) { var p = Promise.resolve(h); names.forEach(function (n) { p = p.then(function (d) { return d.getDirectoryHandle(n); }); }); return p; }
     function newest(dirH, where) {
       return listJson(dirH).then(function (files) {
-        return Promise.all(files.map(function (fh) { return fh.getFile().then(function (f) { return { f: f, key: planStamp(f.name) || stampOf(new Date(f.lastModified)) }; }); }));
+        // v0.3.1 — a plan OneDrive still lists after it was moved (NotFoundError) is skipped, not a failed open
+        return Promise.all(files.map(function (fh) { return fh.getFile().then(function (f) { return { fh: fh, f: f, key: planStamp(f.name) || stampOf(new Date(f.lastModified)) }; }, function () { return null; }); }));
       }).then(function (xs) {
+        xs = xs.filter(Boolean);
         xs.sort(function (a, b) { return String(b.key).localeCompare(String(a.key)); });
         return xs.reduce(function (p, x) {
           return p.then(function (found) {
             if (found) return found;
-            return x.f.text().then(function (t) { var j; try { j = JSON.parse(t); } catch (e) { return null; } var pi = planInfo(j); return pi ? { json: j, fileName: x.f.name, info: pi, where: where } : null; });
+            return readPlanText(x).then(function (t) { if (t === null) return null; var j; try { j = JSON.parse(t); } catch (e) { return null; } var pi = planInfo(j); return pi ? { json: j, fileName: x.f.name, info: pi, where: where } : null; });
           });
         }, Promise.resolve(null));
       });
@@ -1199,11 +1276,12 @@
       (c.warnings || []).forEach(function (w) { h += '<div class="r warn">⚠ ' + esc(w) + '</div>'; });
       h += '</div>';
     });
-    if (cards.length) h += '<div class="ncw-foot"><button class="ncw-btn" data-ncw-x="1">Cancel</button><button class="ncw-btn solid" data-ncw-pub="1"' + (acc + ref ? '' : ' disabled') + '>Publish' + (acc ? ' ' + acc + ' file' + (acc > 1 ? 's' : '') : '') + (ref ? ' · move ' + ref + ' to Not used' : '') + '</button></div>';
+    if (cards.length) h += '<div class="ncw-foot">' + (cards.some(function (c) { return c.status === 'error'; }) ? '<button class="ncw-btn gold" data-ncw-again="1" title="Read the new files again (after OneDrive shows the green tick)">↻ Try again</button>' : '') + '<button class="ncw-btn" data-ncw-x="1">Cancel</button><button class="ncw-btn solid" data-ncw-pub="1"' + (acc + ref ? '' : ' disabled') + '>Publish' + (acc ? ' ' + acc + ' file' + (acc > 1 ? 's' : '') : '') + (ref ? ' · move ' + ref + ' to Not used' : '') + '</button></div>';
     h += '</div>';
     OV.innerHTML = h;
     var q = function (sel) { return OV.querySelectorAll(sel); };
     q('[data-ncw-x]').forEach(function (b) { b.onclick = closeCards; });
+    q('[data-ncw-again]').forEach(function (b) { b.onclick = function () { closeCards(); S.cards = null; checkNew(); }; });   // v0.3.1
     q('[data-ncw-pub]').forEach(function (b) { b.onclick = function () { if (S.cards && S.cards.some(function (c) { return c.status === 'ask'; })) { setCardsMsg('Answer the date question first (or press "Don\'t know").'); return; } publish(); }; });
     q('[data-ncw-use]').forEach(function (b) { b.onclick = function () { var i = +b.getAttribute('data-ncw-use'), c = S.cards[i], v = (OV.querySelector('[data-ncw-date="' + i + '"]') || {}).value; if (!v) return; c.dataAsOf = v; c.method = 'entered'; c.status = 'accept'; judgeDate(c, curOf(c.src)); openCards(S.cards, ''); }; });
     q('[data-ncw-unknown]').forEach(function (b) { b.onclick = function () { var c = S.cards[+b.getAttribute('data-ncw-unknown')]; c.dataAsOf = null; c.method = 'unknown'; c.status = 'accept'; c.warnings.push('Stock date unknown: stock shows red everywhere until a dated export replaces it.'); openCards(S.cards, ''); }; });
@@ -1264,6 +1342,7 @@
       '<li>An older file never replaces a newer one without your say-so. An old export renamed with a new date is caught.</li>' +
       '<li>Never edit anything in <code>2 In use</code>, <code>3 Archive</code> or <code>lens</code>. Lens moves the files; <b>nothing is ever deleted</b>.</li>' +
       '<li>One folder per client. A folder is refused for another client\'s plan.</li>' +
+      '<li>Keep the client folder on this computer: in File Explorer, right-click it → <b>Always keep on this device</b>. Chrome cannot read a file that OneDrive keeps online-only or is still syncing (blue arrows).</li>' +   // v0.3.1
       '<li><b>What "edit" allows:</b> this web address can change files in this one folder only, nothing else on your PC or OneDrive. Lens only creates its folders, moves files between them (copy, check, then remove the original), and writes its own files (dated copies, register, log, plans, meeting records). OneDrive keeps version history and a recycle bin for all of it. To withdraw it: the icon left of the address bar → Site settings.</li></ul>' +
       (S.handle && S.perm === 'granted' ? '<div class="ncw-foot" style="justify-content:flex-start">' + (S.mode === 'view' ? '<button class="ncw-btn gold" data-ncw-sm="edit">I refresh this folder — switch to edit</button>' : '<button class="ncw-btn" data-ncw-sm="view">Switch this browser to view only</button>') + '</div>' : '') +
       '<div class="ncw-foot"><button class="ncw-btn solid" data-ncw-hx="1">Got it</button></div></div>';
@@ -1301,11 +1380,13 @@
     version: VERSION, AGE: AGE,
     attach: attach, mountStrip: mountStrip, connect: connect, allow: allow, checkNew: checkNew, rescan: scanNew,
     openFolder: openFolder, openRecent: openRecent, recent: recent, savePlan: savePlan, canSavePlan: canSavePlan, setMode: setMode,   // v0.2.0
+    needsEdit: needsEdit, allowEdit: allowEdit, whyNoSave: whyNoSave,   // v0.3.1
     meetingRecord: meetingRecord, forDeploy: forDeploy, forBench: forBench, state: publicState,
     _internal: { REG: REG, norm: norm, mapColumns: mapColumns, recognise: recognise, findHeaderRow: findHeaderRow, coerce: coerce, dateFromFileName: dateFromFileName,
       iw39DataDate: iw39DataDate, readWorkbook: readWorkbook, buildDigest: buildDigest, toScript: toScript, parseScript: parseScript, ageDays: ageDays, ageClass: ageClass,
       useHandle: useHandle, refreshAll: refreshAll, publish: publish, assess: assess, S: S,
       assessJson: assessJson, planInfo: planInfo, findPlan: findPlan, inspectFolder: inspectFolder, placePlan: placePlan, planStamp: planStamp,
-      parseSnapshot: parseSnapshot, matchModel: matchModel, assessSnapshot: assessSnapshot, snapKey: snapKey, isSnapshot: isSnapshot }   // v0.3.0
+      parseSnapshot: parseSnapshot, matchModel: matchModel, assessSnapshot: assessSnapshot, snapKey: snapKey, isSnapshot: isSnapshot,   // v0.3.0
+      savePlan: savePlan, archiveOldPlans: archiveOldPlans, writeWithRetry: writeWithRetry }   // v0.3.1 — for the save test
   };
 })(typeof window !== 'undefined' ? window : this);
