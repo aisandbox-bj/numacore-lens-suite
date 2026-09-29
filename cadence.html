@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.13.1 — NumaCore Lens Suite</title>
+<title>Cadence v18.14 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -318,6 +318,8 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 #optControls h2{font-size:13px;font-weight:700;color:#c9d1d9}
 #optControls span{font-size:11px;color:#484f58}
 #optScroll{flex:1;overflow:auto}
+/* v18.14 — timeline zoom / pan slider host */
+.cadzoom{flex:0 0 auto;padding:6px 12px 8px;border-top:1px solid #21262d;background:#0d1117;box-sizing:border-box;}
 .opt-wrap{display:inline-flex;flex-direction:column;min-width:100%;vertical-align:top}
 .opt-header{position:sticky;top:0;z-index:20;background:#161b22;border-bottom:1px solid #30363d;display:flex;flex-shrink:0}
 .opt-corner{flex-shrink:0;background:#161b22;border-right:1px solid #30363d}
@@ -2228,6 +2230,309 @@ function getRowTopY(targetKey) {
   return -1;
 }
 
+// ══ NumaCore range slider — a dataZoom-style zoom / pan window over a date axis ══════════════════════════════════════
+// Built for Lens v4.16.1 (Horizon timeline); written as ONE self-contained component so Cadence v18.14 can reuse it
+// verbatim (Schedule + Project Optimiser), then it is harvested into Building Blocks `ui-kit`.
+// Look: WIR Lens / ECharts dataZoom — track #0d1320, window fill rgba(61,201,160,.16), handles #3DC9A0, presets 3M–All.
+// It owns NO state beyond the DOM: the host app decides the full range, the window and where the window is kept
+// (Lens keeps it per-viewer in localStorage, never in the plan file). It has no dependency on any app global; its date
+// maths is internal, so dropping the file into another tool and calling NumaRangeSlider(cfg) is all that is needed.
+//
+// NumaRangeSlider(cfg) where cfg =
+//   { el,                         the host element (its contents are replaced)
+//     fullStart, fullEnd,         ISO 'YYYY-MM-DD' — the whole axis
+//     winStart, winEnd,           ISO — the visible window inside it (defaults to the full range)
+//     minDays,                    smallest window, in days (default 28)
+//     presets,                    [{ label, months } | { label, all:true }] (default 3M · 6M · 1Y · 3Y · All)
+//     marks,                      [{ iso, kind }] drawn as ticks in the overview (kind: arrive|end|park|any)
+//     today,                      ISO — an optional marker in the overview
+//     fmt,                        iso -> display string (default a plain 'D Mon YYYY')
+//     onChange(a, b, final) }     called while dragging (final=false) and once on release / preset (final=true)
+// returns { update(fullStart, fullEnd, winStart, winEnd, marks), getWindow(), destroy(), el }.
+(function (root) {
+  var STYLE_ID = 'nrs-style';
+  var CSS =
+    '.nrs{display:flex;align-items:center;gap:12px;font-family:inherit;-webkit-user-select:none;user-select:none;}' +
+    '.nrs-presets{display:flex;gap:4px;flex:0 0 auto;}' +
+    '.nrs-presets button{background:rgba(61,201,160,0.10);border:1px solid rgba(61,201,160,0.35);color:#b8ede0;' +
+      'border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit;line-height:1.4;}' +
+    '.nrs-presets button:hover{background:rgba(61,201,160,0.22);}' +
+    '.nrs-presets button.nrs-on{background:#3DC9A0;border-color:#3DC9A0;color:#04231b;font-weight:600;}' +
+    '.nrs-track{position:relative;flex:1 1 auto;height:34px;min-width:120px;background:#0d1320;' +
+      'border:1px solid rgba(61,201,160,0.22);border-radius:5px;overflow:hidden;cursor:pointer;}' +
+    '.nrs-ov{position:absolute;inset:0;width:100%;height:100%;display:block;}' +
+    '.nrs-mask{position:absolute;top:0;bottom:0;background:rgba(4,14,28,0.66);pointer-events:none;}' +
+    '.nrs-win{position:absolute;top:0;bottom:0;background:rgba(61,201,160,0.16);' +
+      'border-left:2px solid #3DC9A0;border-right:2px solid #3DC9A0;cursor:grab;box-sizing:border-box;}' +
+    '.nrs-win.nrs-drag{cursor:grabbing;}' +
+    '.nrs-h{position:absolute;top:50%;width:9px;height:22px;margin-top:-11px;background:#3DC9A0;border-radius:3px;' +
+      'cursor:ew-resize;box-shadow:0 0 0 1px rgba(0,0,0,0.5);}' +
+    '.nrs-h::after{content:"";position:absolute;left:3px;top:5px;width:1px;height:12px;background:rgba(4,35,27,0.7);' +
+      'box-shadow:2px 0 0 rgba(4,35,27,0.7);}' +
+    '.nrs-h-l{left:-6px;} .nrs-h-r{right:-6px;}' +
+    '.nrs-cap{flex:0 0 auto;font-size:11px;color:#5dcaa5;letter-spacing:0.02em;min-width:150px;text-align:right;' +
+      'white-space:nowrap;}';
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style'); s.id = STYLE_ID; s.textContent = CSS; document.head.appendChild(s);
+  }
+
+  function msOf(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function isoOf(ms) { var d = new Date(ms); return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+  function addMonths(iso, n) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso)); if (!m) return iso;
+    var y = +m[1], mo = +m[2] - 1 + n, d = +m[3];
+    return isoOf(Date.UTC(y + Math.floor(mo / 12), ((mo % 12) + 12) % 12, d));
+  }
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function defFmt(iso) { var ms = msOf(iso); if (ms === null) return String(iso || ''); var d = new Date(ms); return d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  function capFmt(iso) { var ms = msOf(iso); if (ms === null) return ''; var d = new Date(ms); return MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  var MARK_COLOR = { arrive: '#5fa8e0', end: '#f09595', park: '#ffd54f', any: '#5dcaa5' };
+
+  function NumaRangeSlider(cfg) {
+    ensureStyle();
+    var host = cfg.el;
+    var presets = cfg.presets || [
+      { label: '3M', months: 3 }, { label: '6M', months: 6 }, { label: '1Y', months: 12 },
+      { label: '3Y', months: 36 }, { label: 'All', all: true }
+    ];
+    var minDays = cfg.minDays || 28;
+    var fmt = cfg.fmt || defFmt;
+    var onChange = cfg.onChange || function () {};
+
+    var st = { fs: 0, fe: 0, ws: 0, we: 0, today: null, marks: [] };
+
+    host.className = (host.className || '').replace(/\bnrs\b/g, '').trim();
+    host.classList.add('nrs');
+    host.innerHTML =
+      '<div class="nrs-presets"></div>' +
+      '<div class="nrs-track"><svg class="nrs-ov" preserveAspectRatio="none"></svg>' +
+        '<div class="nrs-mask nrs-mask-l"></div><div class="nrs-mask nrs-mask-r"></div>' +
+        '<div class="nrs-win"><i class="nrs-h nrs-h-l"></i><i class="nrs-h nrs-h-r"></i></div></div>' +
+      '<div class="nrs-cap"></div>';
+    var elPresets = host.querySelector('.nrs-presets'),
+        elTrack = host.querySelector('.nrs-track'),
+        elOv = host.querySelector('.nrs-ov'),
+        elMaskL = host.querySelector('.nrs-mask-l'),
+        elMaskR = host.querySelector('.nrs-mask-r'),
+        elWin = host.querySelector('.nrs-win'),
+        elCap = host.querySelector('.nrs-cap');
+
+    presets.forEach(function (p, i) {
+      var b = document.createElement('button'); b.textContent = p.label; b.dataset.i = i; elPresets.appendChild(b);
+    });
+
+    function pct(ms) { return st.fe > st.fs ? Math.max(0, Math.min(100, (ms - st.fs) / (st.fe - st.fs) * 100)) : 0; }
+
+    function paintWindow() {
+      var l = pct(st.ws), r = pct(st.we);
+      elWin.style.left = l + '%'; elWin.style.width = Math.max(0, r - l) + '%';
+      elMaskL.style.left = '0'; elMaskL.style.width = l + '%';
+      elMaskR.style.left = r + '%'; elMaskR.style.width = Math.max(0, 100 - r) + '%';
+      elCap.textContent = capFmt(isoOf(st.ws)) + ' – ' + capFmt(isoOf(st.we));
+      var span = st.we - st.ws, full = st.fe - st.fs, onI = -1;
+      if (full > 0 && span >= full - 86400000 * 2) { onI = presets.findIndex(function (p) { return p.all; }); }
+      else {
+        presets.forEach(function (p, i) {
+          if (p.all) return;
+          var want = msOf(addMonths(isoOf(st.fs), p.months)) - st.fs;
+          if (Math.abs(span - Math.min(want, full)) < 86400000 * 3 && Math.abs(st.ws - st.fs) < 86400000 * 3) onI = i;
+        });
+      }
+      [].forEach.call(elPresets.children, function (b, i) { b.classList.toggle('nrs-on', i === onI); });
+    }
+
+    function paintOverview() {
+      var W = 1000, H = 34, out = '';
+      // faint year gridlines across the whole axis
+      var y0 = new Date(st.fs).getUTCFullYear(), y1 = new Date(st.fe).getUTCFullYear();
+      for (var y = y0 + 1; y <= y1; y++) {
+        var x = pct(Date.UTC(y, 0, 1)) / 100 * W;
+        out += '<line x1="' + x.toFixed(1) + '" y1="0" x2="' + x.toFixed(1) + '" y2="' + H + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
+      }
+      // event ticks
+      (st.marks || []).forEach(function (mk) {
+        var ms = msOf(mk.iso); if (ms === null || ms < st.fs || ms > st.fe) return;
+        var x = pct(ms) / 100 * W, c = MARK_COLOR[mk.kind] || MARK_COLOR.any;
+        out += '<line x1="' + x.toFixed(1) + '" y1="7" x2="' + x.toFixed(1) + '" y2="' + (H - 7) + '" stroke="' + c + '" stroke-width="1.4" opacity="0.85"/>';
+      });
+      if (st.today != null) {
+        var tms = msOf(st.today);
+        if (tms !== null && tms >= st.fs && tms <= st.fe) {
+          var tx = pct(tms) / 100 * W;
+          out += '<line x1="' + tx.toFixed(1) + '" y1="0" x2="' + tx.toFixed(1) + '" y2="' + H + '" stroke="#e24b4a" stroke-width="1"/>';
+        }
+      }
+      elOv.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      elOv.innerHTML = out;
+    }
+
+    function clampWindow() {
+      if (st.ws < st.fs) st.ws = st.fs;
+      if (st.we > st.fe) st.we = st.fe;
+      var minMs = minDays * 86400000;
+      if (st.we - st.ws < minMs) st.we = Math.min(st.fe, st.ws + minMs);
+      if (st.we - st.ws < minMs) st.ws = Math.max(st.fs, st.we - minMs);
+    }
+
+    function fire(final) { onChange(isoOf(st.ws), isoOf(st.we), final); }
+
+    // ── dragging (mouse; matches the host tools' handle drags) ──
+    function beginDrag(mode, ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var rect = elTrack.getBoundingClientRect(), full = st.fe - st.fs;
+      var startX = ev.clientX, ws0 = st.ws, we0 = st.we;
+      elWin.classList.add('nrs-drag');
+      var moved = false;
+      function msAt(clientX) { var f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)); return st.fs + f * full; }
+      function move(e) {
+        moved = true;
+        if (mode === 'pan') {
+          var d = (e.clientX - startX) / rect.width * full, w = we0 - ws0;
+          st.ws = ws0 + d; st.we = we0 + d;
+          if (st.ws < st.fs) { st.ws = st.fs; st.we = st.fs + w; }
+          if (st.we > st.fe) { st.we = st.fe; st.ws = st.fe - w; }
+        } else if (mode === 'l') {
+          st.ws = Math.min(msAt(e.clientX), st.we - minDays * 86400000); if (st.ws < st.fs) st.ws = st.fs;
+        } else {
+          st.we = Math.max(msAt(e.clientX), st.ws + minDays * 86400000); if (st.we > st.fe) st.we = st.fe;
+        }
+        paintWindow(); fire(false);
+      }
+      function up() {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+        elWin.classList.remove('nrs-drag');
+        if (moved) { clampWindow(); paintWindow(); fire(true); }
+      }
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }
+
+    host.querySelector('.nrs-h-l').addEventListener('mousedown', function (e) { beginDrag('l', e); });
+    host.querySelector('.nrs-h-r').addEventListener('mousedown', function (e) { beginDrag('r', e); });
+    elWin.addEventListener('mousedown', function (e) { if (e.target.classList.contains('nrs-h')) return; beginDrag('pan', e); });
+    // click on the empty track = centre the window there (a quick jump), without changing its width
+    elTrack.addEventListener('mousedown', function (e) {
+      if (e.target !== elTrack && e.target !== elOv) return;
+      var rect = elTrack.getBoundingClientRect(), full = st.fe - st.fs;
+      var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), c = st.fs + f * full, w = st.we - st.ws;
+      st.ws = c - w / 2; st.we = c + w / 2;
+      if (st.ws < st.fs) { st.ws = st.fs; st.we = st.fs + w; }
+      if (st.we > st.fe) { st.we = st.fe; st.ws = st.fe - w; }
+      paintWindow(); fire(true);
+    });
+
+    elPresets.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      var p = presets[+b.dataset.i];
+      if (p.all) { st.ws = st.fs; st.we = st.fe; }
+      else { st.ws = st.fs; st.we = Math.min(st.fe, msOf(addMonths(isoOf(st.fs), p.months))); }
+      clampWindow(); paintWindow(); fire(true);
+    });
+
+    function setState(fs, fe, ws, we, marks) {
+      st.fs = msOf(fs); st.fe = msOf(fe);
+      st.ws = ws != null ? msOf(ws) : st.fs; st.we = we != null ? msOf(we) : st.fe;
+      if (st.we <= st.ws) { st.ws = st.fs; st.we = st.fe; }
+      if (marks) st.marks = marks;
+      st.today = cfg.today != null ? cfg.today : st.today;
+      clampWindow(); paintOverview(); paintWindow();
+    }
+
+    setState(cfg.fullStart, cfg.fullEnd, cfg.winStart, cfg.winEnd, cfg.marks || []);
+
+    return {
+      el: host,
+      update: function (fs, fe, ws, we, marks) { setState(fs, fe, ws, we, marks); },
+      getWindow: function () { return { start: isoOf(st.ws), end: isoOf(st.we) }; },
+      destroy: function () { host.innerHTML = ''; host.classList.remove('nrs'); }
+    };
+  }
+
+  root.NumaRangeSlider = NumaRangeSlider;
+})(window);
+
+// ══ v18.14 — timeline zoom / pan range slider (reuses numacore_rangeslider.js above) ════════════════════════════════
+// Schedule + Project Optimiser. VIEW ONLY: each tab's window is per browser (localStorage cadence_view_<client>), never
+// the fleet JSON or the saved plan. pixPerDay() returns today's exact values until a window is set, so the default
+// timeline is byte-identical until the slider is used. Pan = scrollLeft (no redraw); zoom = one redraw on release
+// (the same full re-render as the Month / Week toggle). The slider is inert while any timeline bar is being dragged.
+var _cadTab = 'schedule';
+var _cadWins = { schedule: null, optimiser: null };     // {start,end} ISO, or null = the whole horizon
+var _cadRendered = { schedule: null, optimiser: null }; // days of the window the tab is currently drawn at (null = full)
+var _cadSliders = { schedule: null, optimiser: null };
+var _cadViewLoaded = false;
+function _cadDs(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function _cadDays(a, b) { return (new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / DAY_MS; }
+function _cadHorizon() { var s = timelineStart(); var e = new Date(s); e.setMonth(e.getMonth() + state.visibleMonths); return { start: _cadDs(s), end: _cadDs(e) }; }
+function _cadWin() { return _cadWins[_cadTab] || null; }
+function _cadScrollEl(tab) { return document.getElementById((tab || _cadTab) === 'optimiser' ? 'optScroll' : 'timelineScroll'); }
+function _cadViewportW() { var el = _cadScrollEl(); var off = _cadTab === 'optimiser' ? OPT_LABEL_W : 0; return el && el.clientWidth ? Math.max(200, el.clientWidth - off) : 1000; }
+function _cadViewKey() { var cc = (typeof _meta !== 'undefined' && _meta && _meta.clientCode) ? String(_meta.clientCode).replace(/[^A-Z0-9_]/gi, '_') : 'DEFAULT'; return 'cadence_view_' + cc; }
+function _cadViewLoad() { try { return JSON.parse(localStorage.getItem(_cadViewKey()) || '{}') || {}; } catch (e) { return {}; } }
+function _cadViewSave() { try { var o = _cadViewLoad(); o[_cadTab] = _cadWins[_cadTab]; localStorage.setItem(_cadViewKey(), JSON.stringify(o)); } catch (e) {} }
+function _cadViewInit() {
+  if (_cadViewLoaded) return; _cadViewLoaded = true;
+  var o = _cadViewLoad();
+  ['schedule', 'optimiser'].forEach(function (t) { if (o[t] && o[t].start && o[t].end) { _cadWins[t] = { start: String(o[t].start).slice(0, 10), end: String(o[t].end).slice(0, 10) }; } });
+}
+function _cadWinClamp(tab) {
+  var h = _cadHorizon(), w = _cadWins[tab]; if (!w) return;
+  var a = w.start < h.start ? h.start : w.start, b = w.end > h.end ? h.end : w.end;
+  if (!(a < b) || (a <= h.start && b >= h.end)) { _cadWins[tab] = null; return; }
+  _cadWins[tab] = { start: a, end: b };
+}
+// the overview marks under the slider: each change-out date (shows where the busy months are)
+function _cadMarks() {
+  var marks = [];
+  (typeof DATA !== 'undefined' ? DATA : []).forEach(function (c) { if (c && c.changeout_date) marks.push({ iso: String(c.changeout_date).slice(0, 10), kind: 'any' }); });
+  return marks;
+}
+function _cadScrollToWin(tab, a) { var el = _cadScrollEl(tab); if (el) el.scrollLeft = Math.max(0, dateToX(a)); }
+function _cadRenderTab(tab) { _cadTab = tab; if (tab === 'optimiser') renderProjectOptimiser(); else render(); }
+function _cadOnZoom(tab, a, b, final) {
+  _cadTab = tab;
+  var full = _cadHorizon(), days = _cadDays(a, b), isFull = (a <= full.start && b >= full.end);
+  if (final) {
+    var newRendered = isFull ? null : days;
+    _cadWins[tab] = isFull ? null : { start: a, end: b };
+    _cadViewSave();
+    if (newRendered !== _cadRendered[tab]) { _cadRendered[tab] = newRendered; _cadRenderTab(tab); }  // redraw only when the scale changed
+    _cadScrollToWin(tab, a);
+  } else {
+    var rdDays = _cadRendered[tab] != null ? _cadRendered[tab] : _cadDays(full.start, full.end);
+    if (Math.abs(days - rdDays) < 0.6) _cadScrollToWin(tab, a);   // a pan (width unchanged) → live scroll, no redraw
+  }
+}
+function _cadMountSlider(tab) {
+  _cadViewInit();
+  var panel = document.getElementById(tab === 'optimiser' ? 'optimiserPanel' : 'timelinePanel');
+  if (!panel || typeof NumaRangeSlider !== 'function') return;
+  var host = document.getElementById('cadzoom-' + tab);
+  if (!host) { host = document.createElement('div'); host.id = 'cadzoom-' + tab; host.className = 'cadzoom'; panel.appendChild(host); }
+  host.style.paddingLeft = (tab === 'optimiser' ? OPT_LABEL_W : 0) + 'px';
+  _cadWinClamp(tab);
+  var h = _cadHorizon(), w = _cadWins[tab] || h, marks = _cadMarks();
+  _cadRendered[tab] = _cadWins[tab] ? _cadDays(w.start, w.end) : null;
+  if (!_cadSliders[tab]) {
+    _cadSliders[tab] = NumaRangeSlider({ el: host, fullStart: h.start, fullEnd: h.end, winStart: w.start, winEnd: w.end,
+      today: _cadDs(TODAY), marks: marks, minDays: 21, onChange: function (a, b, fin) { _cadOnZoom(tab, a, b, fin); } });
+  } else {
+    _cadSliders[tab].update(h.start, h.end, w.start, w.end, marks);
+  }
+}
+// the slider is inert while any timeline bar is being dragged (a captured pointer + mouse events could otherwise clash)
+function _cadLock(on) { ['cadzoom-schedule', 'cadzoom-optimiser'].forEach(function (id) { var el = document.getElementById(id); if (el) el.style.pointerEvents = on ? 'none' : ''; }); }
+(function () {
+  document.addEventListener('pointerdown', function (e) { if (e.target && e.target.closest && e.target.closest('#timelineBody, #optWrap')) _cadLock(true); }, true);
+  document.addEventListener('pointerup', function () { _cadLock(false); }, true);
+  document.addEventListener('pointercancel', function () { _cadLock(false); }, true);
+})();
+
 // ─── TIMELINE GEOMETRY ────────────────────────────────────────────
 const MONTH_W = 72;
 const WEEK_W  = 28;
@@ -2268,6 +2573,12 @@ function _recomputeTimelineStart() {
   _timelineStartCache = d < _thisMonth ? new Date(_thisMonth) : d;
 }
 function pixPerDay() {
+  // v18.14 — window mode: the active tab's window fills the viewport (clamped ~0.25–24 px/day). No window = today's exact values.
+  var w = _cadWin();
+  if (w) {
+    var days = _cadDays(w.start, w.end), vw = _cadViewportW();
+    if (days > 0 && vw > 0) return Math.max(0.25, Math.min(24, vw / days));
+  }
   return state.granularity === 'week' ? WEEK_W / 7 : MONTH_W / 30.5;
 }
 function totalWidth() {
@@ -2584,7 +2895,10 @@ function buildTimelineHeaderHtml(tw) {
       const isToday = d.getFullYear()===TODAY.getFullYear() && d.getMonth()===TODAY.getMonth();
       const lbl = d.toLocaleDateString('en-CA',{timeZone:APP_TZ,month:'short',year:'2-digit'});
       const cls = isToday?'today-month':isQ?'q-start':'';
-      hh += `<div class="month-header ${cls}" style="left:${x}px;width:${MONTH_W}px">${lbl}</div>`;
+      const dNextM = new Date(d); dNextM.setMonth(dNextM.getMonth() + 1);
+      const mw = dateToX(dNextM.toISOString().split('T')[0]) - x;   // v18.14 — boundary width (=MONTH_W at default zoom)
+      let mlbl = lbl; if (mw < 34) mlbl = isQ ? lbl : ''; if (mw < 12) mlbl = d.getMonth() === 0 ? lbl : '';   // v18.14 — thin when narrow
+      hh += `<div class="month-header ${cls}" style="left:${x}px;width:${mw}px">${mlbl}</div>`;
     }
     hh += `<div id="today-line" style="left:${tx}px"></div>`;
     return hh;
@@ -2599,7 +2913,7 @@ function buildTimelineHeaderHtml(tw) {
       const mw = dateToX(dNext.toISOString().split('T')[0]) - x;
       const lbl = d.toLocaleDateString('en-CA',{timeZone:APP_TZ,month:'short',year:'2-digit'});
       const isToday = d.getFullYear()===TODAY.getFullYear() && d.getMonth()===TODAY.getMonth();
-      hh += `<div class="week-month-hdr${isToday?' today-month':''}" style="left:${x}px;width:${mw}px">${lbl}</div>`;
+      hh += `<div class="week-month-hdr${isToday?' today-month':''}" style="left:${x}px;width:${mw}px">${mw >= 28 ? lbl : ''}</div>`;   // v18.14 — thin
     }
     // Week labels (bottom half)
     for (let day = 0; day < totalDays; day += 7) {
@@ -2609,7 +2923,8 @@ function buildTimelineHeaderHtml(tw) {
       const todayDs = _localDs(TODAY);   // v18.12 A: local date (toISOString is UTC = tomorrow after 6 pm Edmonton)
       const wkEnd = new Date(d.getTime() + 7 * DAY_MS).toISOString().split('T')[0];
       const isThisWk = todayDs >= d.toISOString().split('T')[0] && todayDs < wkEnd;
-      hh += `<div class="week-hdr${isThisWk?' wk-today':''}" style="left:${x}px;width:${WEEK_W}px">${lbl}</div>`;
+      const wkNext = dateToX(new Date(d.getTime() + 7 * DAY_MS).toISOString().split('T')[0]) - x;   // v18.14 — boundary width (=WEEK_W at default zoom)
+      hh += `<div class="week-hdr${isThisWk?' wk-today':''}" style="left:${x}px;width:${wkNext}px">${wkNext >= 20 ? lbl : ''}</div>`;
     }
     hh += `<div id="today-line" style="left:${tx}px"></div>`;
     return hh;
@@ -3855,6 +4170,7 @@ function assignOptRows(projs) {
 }
 
 function renderProjectOptimiser() {
+  _cadTab = 'optimiser';   // v18.14
   const wrap = document.getElementById('optWrap');
   if (!wrap) return;
   wrap.innerHTML = '';
@@ -4014,6 +4330,7 @@ function renderProjectOptimiser() {
       wrap.appendChild(laneRow);
     });
   });
+  _cadMountSlider('optimiser');   // v18.14 — the zoom / pan slider follows this render
 }
 
 function hexToRgb(hex) {
@@ -4302,6 +4619,7 @@ function _setMainTab(tab) {
 
 // ─── RENDER ──────────────────────────────────────────────────────
 function render() {
+  _cadTab = 'schedule';   // v18.14
   buildRows();
   renderTree();
   renderTimeline();
@@ -4311,6 +4629,7 @@ function render() {
   // (covers reload-restore, programmatic state changes, and shell load-fleet pushes)
   const _projBtn = document.getElementById('projToggleBtn');
   if (_projBtn) _projBtn.classList.toggle('active', !!state.showProjections);
+  _cadMountSlider('schedule');   // v18.14 — the zoom / pan slider follows this render
 }
 
 // ─── DETAIL PANEL ────────────────────────────────────────────────
