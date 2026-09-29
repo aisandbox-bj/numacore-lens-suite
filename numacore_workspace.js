@@ -104,7 +104,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.3.1';
+  var VERSION = '0.3.2';
   var AGE = { amber: 7, red: 14, refuse: 30 };
   var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans',   // v0.2.0 + plan / Plans
               SNAPS: 'Snapshots', DEFS: 'Definitions' };   // v0.3.0
@@ -922,12 +922,24 @@
     if (c.status !== 'refuse' && c.status !== 'error' && c.status !== 'ignore') c.status = 'accept';
   }
 
+  // v0.3.2 — one file could not be published (a ghost or briefly-locked file on a synced folder): record it, leave it in
+  // 1 New files, and let the rest of the batch finish; it is retried at the next Publish. Replaces the old behaviour where
+  // any single file's error aborted the whole Publish ("Publish stopped: … could not be found") and left the drop half-done.
+  function publishSkip(c, e, log, stamp, failed) {
+    if (e && e.name === 'NotFoundError') {
+      c._skip = 'sync';
+      log.push([stamp, c.src || '', c.name, '', '', '', '', '', 'skipped', 'no longer in 1 New files (OneDrive was finishing a move) - retried at the next Publish', VERSION]);
+    } else {
+      c._skip = 'fail'; failed.push(c.name);
+      log.push([stamp, c.src || '', c.name, '', '', '', '', '', 'not published', 'left in 1 New files: ' + ((e && (e.message || e.name)) || String(e)) + ' - try Publish again', VERSION]);
+    }
+  }
   // ── publish ──────────────────────────────────────────────────────────────
   function publish() {
     var cards = S.cards || [], accepted = cards.filter(function (c) { return c.status === 'accept'; }), refused = cards.filter(function (c) { return c.status === 'refuse'; });
     if (!accepted.length && !refused.length) { closeCards(); return Promise.resolve(); }
     S.busy = true; setCardsMsg('Publishing…');
-    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now), planPublished = null, defPublished = null;
+    var reg = S.register || newRegister(), newDir, inUse, dataDir, archive, log = [], now = new Date(), stamp = localStamp(now), planPublished = null, defPublished = null, failed = [];
     reg.meta.generatedAt = stamp; reg.meta.toolVersion = VERSION; reg.meta.clientCode = S.cc;
     reg.ageLimits = { amber: AGE.amber, red: AGE.red, refuse: AGE.refuse };
     return path([DIR.NEW], true).then(function (d) { newDir = d; return path([DIR.INUSE], true); }).then(function (d) { inUse = d; return path([DIR.LENS, DIR.DATA], true); })
@@ -935,6 +947,7 @@
       .then(function () {
         return accepted.reduce(function (p, c) {
           return p.then(function () {
+          return Promise.resolve().then(function () {   // v0.3.2 — each accepted file publishes on its own; a ghost/locked file skips, never aborting the batch
             if (c.src === 'PLAN') {   // v0.2.0 — a plan: into lens\plan\, the previous one to 3 Archive\Plans\
               return placePlan(newDir, c.name).then(function (placed) {
                 reg.plan = { current: { file: placed, from: c.name, savedAt: c.plan.saved || null, filedAt: stamp, units: c.plan.units, shape: c.plan.shape } };
@@ -993,6 +1006,7 @@
                 if (c.override) reg.overrides.push({ at: stamp, source: src, file: c.name, reason: 'older than the file in use (' + (prev && prev.dataAsOf) + '); used by the refresher' });
                 log.push([stamp, src, c.name, DIR.INUSE + '\\' + placed, c.dataAsOf || 'unknown', /* v0.3.0 — with its folder, like the other lines */ methodWords(c.method), c.rowsIn, c.rowsOut, c.override ? 'published (override)' : 'published', c.warnings.join(' | '), VERSION]);
               });
+          }).catch(function (e) { publishSkip(c, e, log, stamp, failed); });   // v0.3.2 — this file skipped; the rest carry on
           });
         }, Promise.resolve());
       })
@@ -1000,7 +1014,7 @@
         return refused.reduce(function (p, c) {
           return p.then(function () { return path([DIR.NEW, DIR.NOTUSED], true).then(function (nu) { return moveFile(newDir, c.name, nu); }).then(function (placed) {
             log.push([stamp, c.src || '', c.name, DIR.NOTUSED + '\\' + placed, c.dataAsOf || '', c.method ? methodWords(c.method) : '', c.rowsIn || '', c.rowsOut || '', 'not used', c.reasons.map(String).join(' | '), VERSION]);
-          }); });
+          }).catch(function (e) { publishSkip(c, e, log, stamp, failed); }); });   // v0.3.2 — a refused file that can't be moved is left, not fatal
         }, Promise.resolve());
       })
       .then(function () { return writeFile(dataDir, REGISTER, toScript(reg, 'register', 'Lens client-folder register · ' + S.cc + ' · written ' + stamp)); })
@@ -1011,7 +1025,8 @@
       .then(function () {
         S.register = reg; S.busy = false; S.cards = null; closeCards();
         setTimeout(reportLeftovers, 5200);   /* after the Published toast */
-        toast('Published: ' + accepted.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : c.src === 'SNAPSHOT' ? 'snapshot ' + c.snap.model + ' ' + c.snap.prefix : c.src === 'BENCHDEF' ? 'Bench definition (review it in Bench)' : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : ''), 'success');
+        var okC = accepted.filter(function (c) { return !c._skip; }), syncC = accepted.filter(function (c) { return c._skip === 'sync'; });   // v0.3.2
+        toast('Published: ' + (okC.length ? okC.map(function (c) { return c.src === 'PLAN' ? 'plan ' + c.name : c.src === 'SNAPSHOT' ? 'snapshot ' + c.snap.model + ' ' + c.snap.prefix : c.src === 'BENCHDEF' ? 'Bench definition (review it in Bench)' : REG[c.src].short + ' ' + (c.dataAsOf ? fmtShort(c.dataAsOf) : 'date unknown'); }).join(' · ') : 'nothing new') + (refused.length ? ' · ' + refused.length + ' moved to Not used' : '') + (syncC.length ? ' · ' + syncC.length + ' still syncing — press Publish again in a moment' : '') + (failed.length ? ' · ' + failed.length + ' could not be moved (left in 1 New files; try Publish again)' : ''), failed.length ? 'warn' : 'success');   // v0.3.2
         if (planPublished && S.host && S.host.onPlan) { try { S.host.onPlan({ fileName: planPublished.fileName, json: JSON.parse(planPublished.text) }); } catch (e) { console.warn('workspace onPlan:', e); } }
         if (defPublished && S.host && S.host.onDefinition) { try { S.host.onDefinition({ fileName: defPublished.fileName, json: JSON.parse(defPublished.text) }); } catch (e) { console.warn('workspace onDefinition:', e); } }   // v0.3.0
         return loadCopies().then(scanNew);

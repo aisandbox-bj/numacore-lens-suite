@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NumaCore Intake v8.14</title>
+<title>NumaCore Intake v8.15</title>
 <script src="numacore_lib.js"></script>
 <!-- v8.13 — the client-folder reader, for its IW39 parser (reused, not rebuilt: the Building Blocks ingest rule).
      Optional: without it the IW39 input says so, and everything else works. -->
@@ -100,6 +100,34 @@ header {
 /* ── PANEL ── */
 .panel { display: none; padding: 24px 28px 60px; }
 .panel.active { display: block; }
+/* v8.15 FIX-4 — cap the content width to the Calibre Trend graphs (hero included), centred */
+header, .mode-bar, .panel { max-width: 1120px; margin-left: auto; margin-right: auto; }
+/* v8.15 FIX-3 — grouped, collapsible update results (counter cards = filters) */
+.fcards { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.fcard { cursor:pointer; border:1px solid var(--border); border-radius:8px; padding:8px 12px; min-width:92px; background:var(--bg2); transition:.12s; user-select:none; }
+.fcard:hover { border-color:var(--gold); }
+.fcard.fcard-off { opacity:.38; }
+.fcard .fcard-n { font-size:20px; font-weight:700; line-height:1; }
+.fcard .fcard-l { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:.04em; margin-top:3px; }
+.fcard.s-red .fcard-n { color:var(--red); } .fcard.s-green .fcard-n { color:var(--green); } .fcard.s-yellow .fcard-n { color:var(--yellow); } .fcard.s-blue .fcard-n { color:var(--blue); }
+.fcard-tools { margin-left:auto; display:flex; gap:6px; }
+#fTreeHost { margin:12px 0 6px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.fnode > .fkids { display:block; }
+.fnode:not(.open) > .fkids { display:none; }
+.frow { padding:5px 10px; font-size:12px; border-bottom:1px solid rgba(255,255,255,.04); display:flex; align-items:center; gap:6px; }
+.frow[data-toggle] { cursor:pointer; }
+.frow[data-toggle]:hover { background:rgba(255,255,255,.03); }
+.fcaret { display:inline-block; width:10px; transition:transform .12s; color:var(--text3); font-size:10px; }
+.fnode.open > .frow > .fcaret { transform:rotate(90deg); }
+.fl0 { font-weight:700; background:var(--bg3); }
+.fl1 { padding-left:22px; font-weight:600; }
+.fl2 { padding-left:40px; color:var(--text2); }
+.fl3 { padding-left:58px; }
+.fleaf { color:var(--text2); }
+.frow .fn { color:var(--text3); font-size:10px; font-weight:600; background:var(--bg1); border-radius:8px; padding:0 6px; margin-left:2px; }
+.fdet { color:var(--text3); font-size:11px; }
+.fsub { font-size:9px; font-weight:700; text-transform:uppercase; padding:1px 5px; border-radius:6px; }
+.fsub-new { background:rgba(240,180,60,.18); color:var(--yellow); } .fsub-change { background:rgba(90,200,120,.15); color:var(--green); } .fsub-orphan { background:rgba(240,82,82,.15); color:var(--red); }
 
 /* ── CARDS ── */
 .card {
@@ -308,10 +336,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
 <!-- ════════════════════════════════════════════════════════ MODE TABS -->
 <div class="mode-bar">
-  <button class="mode-btn active" onclick="setMode('build')" id="modeBtn-build">⊕ BUILD</button>
-  <button class="mode-btn" onclick="setMode('update')" id="modeBtn-update">↻ UPDATE</button>
+  <button class="mode-btn active" onclick="setMode('update')" id="modeBtn-update">↻ UPDATE</button>
   <button class="mode-btn" onclick="setMode('conmon')" id="modeBtn-conmon">⊙ CONMON</button>
   <button class="mode-btn" onclick="setMode('idling')" id="modeBtn-idling">⊘ IDLING</button>
+  <button class="mode-btn" onclick="setMode('build')" id="modeBtn-build">⊕ BUILD</button>
 </div>
 
 <!-- v8.8 FEAT-1 — Session JSON banner. Visible whenever an apply has retained a
@@ -325,7 +353,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 </div>
 
 <!-- ════════════════════════════════════════════════════════ BUILD MODE -->
-<div id="mode-build" class="panel active">
+<div id="mode-build" class="panel" style="display:none">
 
   <!-- STEP FLOW -->
   <div class="step-flow" id="buildStepFlow"></div>
@@ -553,7 +581,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 </div><!-- /mode-build -->
 
 <!-- ════════════════════════════════════════════════════════ UPDATE MODE -->
-<div id="mode-update" class="panel" style="display:none">
+<div id="mode-update" class="panel active">
 
   <div class="section-title">Update Existing Fleet JSON</div>
   <div class="section-sub" style="margin-bottom:20px">Select what you want to update, then load your source file and existing fleet JSON.</div>
@@ -580,14 +608,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
   <!-- File loaders for UPDATE -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-    <div class="card" style="margin-bottom:0">
-      <div class="card-title">Source File (XLSX / CSV)</div>
-      <div class="drop-zone" id="dropZoneUpdate" style="padding:24px" onclick="document.getElementById('fileInputUpdate').click()" ondragover="onDragOver(event,'update')" ondragleave="onDragLeave(event,'update')" ondrop="onDrop(event,'update')">
-        <div class="drop-icon" style="font-size:24px">📄</div>
-        <p style="font-size:12px">Drop XLSX / CSV here or <span>browse</span></p>
-      </div>
-      <input type="file" id="fileInputUpdate" accept=".xlsx,.xls,.csv" style="display:none" onchange="onFileSelectUpdate(event)">
-    </div>
+    <!-- v8.15 FIX-5 — Existing Fleet JSON first, then the source sheet (operator's workflow order) -->
     <div class="card" style="margin-bottom:0">
       <div class="card-title">Existing Fleet JSON</div>
       <div class="drop-zone" id="dropZoneJSON" style="padding:24px" onclick="document.getElementById('fileInputJSON').click()" ondragover="onDragOver(event,'json')" ondragleave="onDragLeave(event,'json')" ondrop="onDrop(event,'json')">
@@ -597,6 +618,14 @@ hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
       <input type="file" id="fileInputJSON" accept=".json" style="display:none" onchange="onFileSelectJSON(event)">
       <!-- v8.8 FEAT-1 — chain off the in-memory session result instead of re-uploading -->
       <button class="btn btn-outline btn-sm" id="useSessionUpdateBtn" style="display:none;margin-top:8px;width:100%" onclick="useSessionInUpdate()">⛓ Use session JSON (no re-upload)</button>
+    </div>
+    <div class="card" style="margin-bottom:0">
+      <div class="card-title">Source File (XLSX / CSV)</div>
+      <div class="drop-zone" id="dropZoneUpdate" style="padding:24px" onclick="document.getElementById('fileInputUpdate').click()" ondragover="onDragOver(event,'update')" ondragleave="onDragLeave(event,'update')" ondrop="onDrop(event,'update')">
+        <div class="drop-icon" style="font-size:24px">📄</div>
+        <p style="font-size:12px">Drop XLSX / CSV here or <span>browse</span></p>
+      </div>
+      <input type="file" id="fileInputUpdate" accept=".xlsx,.xls,.csv" style="display:none" onchange="onFileSelectUpdate(event)">
     </div>
   </div>
 
@@ -885,7 +914,7 @@ function getStorageKey() {
   const code = String(state.clientCode || 'default').replace(/[^A-Z0-9_]/gi, '_');
   return _STORAGE_KEY_PREFIX + '_' + code;
 }
-const VERSION = '8.14';
+const VERSION = '8.15';
 const SCHEMA_VERSION = 5;
 
 // V5 field definitions — what columns can map to
@@ -1911,6 +1940,8 @@ function processMapping() {
         if (last_smu > (compsMap[comp_id].last_smu || 0)) {
           compsMap[comp_id].last_smu  = last_smu;
           compsMap[comp_id].last_read = last_date;
+        } else if (last_smu === (compsMap[comp_id].last_smu || 0) && last_smu > 0 && last_date && last_date <= _localISO() && (!compsMap[comp_id].last_read || last_date > compsMap[comp_id].last_read)) {
+          compsMap[comp_id].last_read = last_date;   // v8.15 FIX-1 — flat hours, a newer read date: advance the read date; hours unchanged
         }
       }
     }
@@ -2675,6 +2706,138 @@ function applyAcceptedReductions() {
   if (window.NumaCoreLib && NumaCoreLib.showToast) NumaCoreLib.showToast(`Applied ${appliedUnits} reduced-hours unit(s) — ${appliedComps} component(s) updated. Re-download to save.`, 'success', 4000);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+//  v8.15 FIX-3 — grouped, collapsible update results; the counter cards ARE the filters.
+//  Issue type → Model → Unit → Component, each level collapsible (Expand/Collapse all + a caret per node).
+//  Additive & safe: it snapshots the JSON before the update and diffs the result (no change to the update logic), folds
+//  the existing issue lists (date issues, arrivals, reduced hours), and mounts above the detailed panels, which stay.
+// ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+var _findings = [], _fModelMap = {}, _fActive = null;   // _fActive: null = all types; else a Set of shown type keys
+var _FTYPES = [
+  ['date',      'Date issues',              'red'],
+  ['updates',   'Updates',                  'green'],
+  ['reduced',   'Reduced hours',            'yellow'],
+  ['replaced',  'Replaced · still linked', 'yellow'],
+  ['arrival',   'Not on site yet',          'blue'],
+  ['unmatched', 'Unmatched / unreadable',   'yellow']
+];
+var _FSUB = { 'new': 'New', 'change': 'Change', 'orphan': 'Orphan' };
+function _fModel(unit) { return _fModelMap[String(unit || '').toUpperCase()] || '—'; }
+function _pushFinding(type, sub, unit, component, detail, model) {
+  _findings.push({ type: type, sub: sub || '', model: model || _fModel(unit), unit: String(unit || '—'), component: component || '', detail: detail || '' });
+}
+function _fComps(j) { return (j && (j.components || (j.masterData && j.masterData.components))) || []; }
+function _fProjLinks(j) {
+  var m = {}; var ps = (j && ((j.working && j.working.projects) || (j.workingData && j.workingData.projects))) || [];
+  ps.forEach(function (p) { (p.linkedIds || []).forEach(function (id) { m[String(id)] = p; }); });
+  return m;
+}
+// build findings from a before/after diff + the current-run issue structures
+function _buildFindings(after, before, extra) {
+  _findings = []; _fModelMap = {}; _fActive = null; extra = extra || {};
+  var bComps = _fComps(before), aComps = _fComps(after);
+  var bById = {}, bUnits = {};
+  bComps.forEach(function (c) {
+    var u = String(c.unit || c.unit_id || c.unit_floc || '').toUpperCase();
+    if (u) { bUnits[u] = 1; if (!_fModelMap[u]) _fModelMap[u] = c.model || c.fleet || c.fleet_id || '—'; }
+    bById[String(c.id)] = { smu: c.last_smu || 0, read: c.last_read || null, idate: c.install_date || null, ihours: c.install_hours || 0,
+      bench: c.benchmark || null, cost: c.cost || null, pn: c.part_number || null, unit: c.unit || c.unit_id, component: c.component || c.name, model: c.model || c.fleet || '—' };
+  });
+  aComps.forEach(function (c) { var u = String(c.unit || c.unit_id || c.unit_floc || '').toUpperCase(); if (u && !_fModelMap[u]) _fModelMap[u] = c.model || c.fleet || c.fleet_id || '—'; });
+  var links = _fProjLinks(after), seenNewUnit = {};
+  aComps.forEach(function (c) {
+    var id = String(c.id), unit = c.unit || c.unit_id || c.unit_floc, comp = c.component || c.name, model = c.model || c.fleet || '—';
+    var b = bById[id];
+    if (!b) {
+      var uk = String(unit || '').toUpperCase();
+      if (uk && !bUnits[uk] && !seenNewUnit[uk]) { seenNewUnit[uk] = 1; _pushFinding('updates', 'new', unit, '', 'new machine', model); }
+      _pushFinding('updates', 'new', unit, comp, 'new component', model); return;
+    }
+    var det = [], type = 'updates';
+    var smuNow = c.last_smu || 0, readNow = c.last_read || null, idateNow = c.install_date || null, ihNow = c.install_hours || 0;
+    if (idateNow !== b.idate || ihNow !== b.ihours) {
+      if (links[id]) { type = 'replaced'; det.push('install ' + (b.idate || '—') + ' → ' + (idateNow || '—') + ' · still linked to ' + ((links[id].name || links[id].id) || 'a project')); }
+      else det.push('replaced · install ' + (b.idate || '—') + ' → ' + (idateNow || '—'));
+    }
+    if (smuNow !== b.smu) det.push('hours ' + b.smu + ' → ' + smuNow + (readNow !== b.read ? ', read ' + (b.read || '—') + ' → ' + (readNow || '—') : ''));
+    else if (readNow !== b.read) det.push('read date ' + (b.read || '—') + ' → ' + (readNow || '—') + ' (flat hours · idle)');
+    if ((c.benchmark || null) !== b.bench) det.push('benchmark ' + (b.bench || '—') + ' → ' + (c.benchmark || '—'));
+    if ((c.cost || null) !== b.cost) det.push('cost ' + (b.cost || '—') + ' → ' + (c.cost || '—'));
+    if ((c.part_number || null) !== b.pn) det.push('part # ' + (b.pn || '—') + ' → ' + (c.part_number || '—'));
+    if (det.length) _pushFinding(type, type === 'replaced' ? '' : 'change', unit, comp, det.join(' · '), model);
+  });
+  var aIds = {}; aComps.forEach(function (c) { aIds[String(c.id)] = 1; });
+  Object.keys(bById).forEach(function (id) { if (!aIds[id]) { var b = bById[id]; _pushFinding('updates', 'orphan', b.unit, b.component, 'removed from the plan', b.model); } });
+  (_sheetDateIssues || []).forEach(function (d) { _pushFinding('date', '', d.unit, d.component === '(machine)' ? '' : d.component, (d.field ? d.field + ': ' : '') + (d.why || 'not a usable date')); });
+  (_arrivals || []).forEach(function (a) { _pushFinding('arrival', '', a.unit, '', 'arrives ' + (a.date || '?') + (a.comps ? ' · ' + a.comps + ' component' + (a.comps === 1 ? '' : 's') : '')); });
+  ((state && state.pendingReductions) || []).forEach(function (r) { _pushFinding('reduced', '', r.unit, '', 'hours ' + (r.oldSmu != null ? r.oldSmu : '?') + ' → ' + (r.newSmu != null ? r.newSmu : '?') + ' (below the file — needs your accept)'); });
+  (extra.unmatched || []).forEach(function (u) { _pushFinding('unmatched', '', u, '', 'source unit matched nothing in the plan'); });
+}
+function _fCount(type) { return _findings.filter(function (f) { return f.type === type; }).length; }
+function _fSetAllOpen(open) { var t = document.getElementById('fTreeHost'); if (t) t.querySelectorAll('.fnode').forEach(function (n) { n.classList.toggle('open', open); }); }
+function _fRenderTree(host) {
+  var active = _findings.filter(function (f) { return !_fActive || _fActive.has(f.type); });
+  var byType = {};
+  active.forEach(function (f) {
+    var T = (byType[f.type] = byType[f.type] || {}), M = (T[f.model] = T[f.model] || {}), U = (M[f.unit] = M[f.unit] || {});
+    var ck = f.component || '(machine)'; var leaf = (U[ck] = U[ck] || { sub: f.sub, det: [] }); if (f.detail) leaf.det.push(f.detail);
+  });
+  var html = '';
+  _FTYPES.forEach(function (t) {
+    if (!byType[t[0]]) return;
+    var T = byType[t[0]], models = Object.keys(T).sort(), tn = active.filter(function (f) { return f.type === t[0]; }).length;
+    html += '<div class="fnode ftype open"><div class="frow fl0 s-' + t[2] + '" data-toggle><span class="fcaret">▸</span>' + esc(t[1]) + ' <span class="fn">' + tn + '</span></div><div class="fkids">';
+    models.forEach(function (m) {
+      var M = T[m], units = Object.keys(M).sort(), mn = units.reduce(function (s, u) { return s + Object.keys(M[u]).length; }, 0);
+      html += '<div class="fnode open"><div class="frow fl1" data-toggle><span class="fcaret">▸</span>' + esc(m) + ' <span class="fn">' + mn + '</span></div><div class="fkids">';
+      units.forEach(function (u) {
+        var U = M[u], comps = Object.keys(U).sort();
+        html += '<div class="fnode open"><div class="frow fl2" data-toggle><span class="fcaret">▸</span>' + esc(u) + ' <span class="fn">' + comps.length + '</span></div><div class="fkids">';
+        comps.forEach(function (ck) {
+          var leaf = U[ck];
+          html += '<div class="frow fl3 fleaf">' + (leaf.sub ? '<span class="fsub fsub-' + leaf.sub + '">' + esc(_FSUB[leaf.sub] || leaf.sub) + '</span> ' : '') + '<b>' + esc(ck) + '</b>' + (leaf.det.length ? ' <span class="fdet">' + esc(leaf.det.join(' · ')) + '</span>' : '') + '</div>';
+        });
+        html += '</div></div>';
+      });
+      html += '</div></div>';
+    });
+    html += '</div></div>';
+  });
+  host.innerHTML = html;
+  host.onclick = function (e) { var r = e.target.closest('.frow[data-toggle]'); if (r) r.parentElement.classList.toggle('open'); };
+}
+function _fMount(statsId, detailId) {
+  var stats = document.getElementById(statsId), detail = document.getElementById(detailId);
+  if (!stats || !detail) return;
+  var cards = _FTYPES.filter(function (t) { return _fCount(t[0]) > 0; });
+  if (!cards.length) return;   // nothing to group — leave the normal summary + detail as they are
+  stats.className = 'fcards';
+  stats.innerHTML = cards.map(function (t) {
+    var on = !_fActive || _fActive.has(t[0]);
+    return '<div class="fcard s-' + t[2] + (on ? '' : ' fcard-off') + '" data-ftype="' + t[0] + '" title="Click to show/hide this group"><div class="fcard-n">' + _fCount(t[0]) + '</div><div class="fcard-l">' + esc(t[1]) + '</div></div>';
+  }).join('') + '<div class="fcard-tools"><button class="btn btn-outline btn-sm" data-fex="all">Expand all</button><button class="btn btn-outline btn-sm" data-fex="none">Collapse all</button><button class="btn btn-outline btn-sm" data-fex="clear">All types</button></div>';
+  var treeHost = document.getElementById('fTreeHost');
+  if (!treeHost) { treeHost = document.createElement('div'); treeHost.id = 'fTreeHost'; detail.insertBefore(treeHost, detail.firstChild); }
+  _fRenderTree(treeHost);
+  stats.onclick = function (e) {
+    var c = e.target.closest('.fcard');
+    if (c) {
+      var ty = c.dataset.ftype, keys = cards.map(function (x) { return x[0]; });
+      if (!_fActive) _fActive = new Set(keys);
+      if (_fActive.has(ty)) _fActive.delete(ty); else _fActive.add(ty);
+      if (_fActive.size === keys.length) _fActive = null;
+      _fMount(statsId, detailId); return;
+    }
+    var b = e.target.closest('[data-fex]');
+    if (b) { var a = b.dataset.fex; if (a === 'clear') { _fActive = null; _fMount(statsId, detailId); } else _fSetAllOpen(a === 'all'); }
+  };
+}
+// the one entry point the update functions call, after they render their normal results
+function _showFindings(after, before, extra) {
+  try { _buildFindings(after, before, extra); _fMount('updateResultStats', 'updateResultDetail'); }
+  catch (e) { try { console.warn('findings tree:', e); } catch (_) {} }   // never break the results screen
+}
+
 function runSMUUpdate() {
   const sheetName = document.getElementById('updateSheetSelect').value;
   const ws = state.updateWorkbook.Sheets[sheetName];
@@ -2705,7 +2868,7 @@ function runSMUUpdate() {
   const isV17 = Array.isArray(fleetJSON.components);
   const compArray = isV17 ? fleetJSON.components : (fleetJSON.masterData && fleetJSON.masterData.components) || [];
 
-  let updatedComponents = 0;
+  let updatedComponents = 0, dateOnlyUpdates = 0;   // v8.15 — flat-hours read-date advances
   state.pendingReductions = [];   // v8.11 — reset reduced-hours review for this run
   _sheetDateIssues = []; _arrivals = [];   // v8.14 — dates read as in Component / Full Update; machines not on site yet
   const _uSmu = _unitSmuMax(compArray);   // v8.14 — each machine's hours on file
@@ -2752,6 +2915,10 @@ function runSMUUpdate() {
           c.last_smu  = smu;
           c.last_read = date;
           updatedComponents++;
+        } else if (smu === (c.last_smu || 0) && smu > 0 && date && date <= now && (!c.last_read || date > c.last_read)) {
+          // v8.15 FIX-1 — flat hours, a newer read date (the machine idled): advance the read date; the hours are unchanged. Without this the idle period never reaches the forecast.
+          c.last_read = date;
+          dateOnlyUpdates++;
         }
       });
     }
@@ -2769,6 +2936,7 @@ function runSMUUpdate() {
   document.getElementById('updateResults').style.display = 'block';
   document.getElementById('updateResultStats').innerHTML = `
     <div class="stat-pill"><div class="stat-num s-green">${updatedComponents}</div><div class="stat-lbl">Components Updated</div></div>
+    ${dateOnlyUpdates > 0 ? `<div class="stat-pill"><div class="stat-num s-blue">${dateOnlyUpdates}</div><div class="stat-lbl">Read Date Advanced (flat hours)</div></div>` : ''}
     <div class="stat-pill"><div class="stat-num s-blue">${dataRows.length}</div><div class="stat-lbl">Source Rows</div></div>
     ${unmatchedUnits.size > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${unmatchedUnits.size}</div><div class="stat-lbl">Unmatched Units</div></div>` : ''}
     ${skippedBadSmu > 0 ? `<div class="stat-pill"><div class="stat-num s-yellow">${skippedBadSmu}</div><div class="stat-lbl">Unreadable SMU Cells</div></div>` : ''}
@@ -2785,7 +2953,8 @@ function runSMUUpdate() {
          ⚠ ${skippedBadSmu} row(s) had an SMU cell that could not be read as a number and were skipped.
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML =
-    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.</div>${unmatchedHTML}${badSmuHTML}${_sheetDateHTML()}${_arrivalHTML()}`;
+    `<div class="alert alert-ok">✓ SMU update complete. ${updatedComponents} component last_smu values refreshed.${dateOnlyUpdates ? ' ' + dateOnlyUpdates + ' read date(s) advanced on flat hours (idle).' : ''}</div>${unmatchedHTML}${badSmuHTML}${_sheetDateHTML()}${_arrivalHTML()}`;
+  _showFindings(fleetJSON, state.updateFleetJSON, { unmatched: [...unmatchedUnits] });   // v8.15 FIX-3
   renderReductionsReview();   // v8.11 — surface any reduced-hours units for accept
 }
 
@@ -3594,7 +3763,7 @@ function runFullUpdate() {
     if (comp) xlCompMap[`${unit.toUpperCase()}||${comp.toUpperCase()}`] = row;
   });
 
-  let smuUpdates = 0, replacements = 0, fieldUpdates = 0, newUnits = 0, newComponents = 0;
+  let smuUpdates = 0, replacements = 0, fieldUpdates = 0, newUnits = 0, newComponents = 0, dateAdvances = 0;   // v8.15 — flat-hours read-date advances
   const replacementLog = [];
   const _rwl = _rwlStart(fleetJSON, histArray);   // v8.13 — project links + older history records given one shape
   const erpDateLog     = [];
@@ -3630,6 +3799,10 @@ function runFullUpdate() {
       const _rk = String(c.unit || c.unit_id || '').toUpperCase();
       if (!_redMap[_rk]) _redMap[_rk] = { unit: c.unit || c.unit_id, oldSmu: c.last_smu || 0, newSmu: unitData.smu, oldDate: c.last_read || null, newDate: unitData.date || now, mode: 'full' };
       else if ((c.last_smu || 0) > _redMap[_rk].oldSmu) { _redMap[_rk].oldSmu = c.last_smu || 0; _redMap[_rk].oldDate = c.last_read || null; }
+    } else if (unitData && unitData.smu && unitData.smu === (c.last_smu || 0) && unitData.date && unitData.date <= now && (!c.last_read || unitData.date > c.last_read)) {
+      // v8.15 FIX-1 — flat hours, a newer read date (the machine idled): advance the read date; the hours are unchanged. Without this the idle period never reaches the forecast.
+      c.last_read = unitData.date;
+      dateAdvances++;
     } else if (unitData && !unitData.smu && unitData.date && unitData.date > now && !(_uSmu[unitKey] > 0)) {
       // v8.14 — not on site yet: 0 h on file and in the sheet, a last read date after today → that date is its last read
       const before = c.last_read || null;
@@ -4024,6 +4197,7 @@ function runFullUpdate() {
 
   document.getElementById('updateResultStats').innerHTML   = `
     <div class="stat-pill"><div class="stat-num s-green">${smuUpdates}</div><div class="stat-lbl">SMU Updates</div></div>
+    ${dateAdvances > 0 ? `<div class="stat-pill"><div class="stat-num s-blue">${dateAdvances}</div><div class="stat-lbl">Read Date Advanced (flat hours)</div></div>` : ''}
     <div class="stat-pill"><div class="stat-num s-green">${replacements}</div><div class="stat-lbl">Replacements</div></div>
     <div class="stat-pill"><div class="stat-num s-blue">${fieldUpdates}</div><div class="stat-lbl">Fields Synced</div></div>
     <div class="stat-pill"><div class="stat-num s-yellow">${newUnits}</div><div class="stat-lbl">New Units Added</div></div>
@@ -4045,7 +4219,8 @@ function runFullUpdate() {
          </div>
        </div>` : '';
   document.getElementById('updateResultDetail').innerHTML  =
-    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${_sheetDateHTML()}${_arrivalHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
+    `<div class="alert alert-ok">✓ Full update complete — ${smuUpdates} SMU${dateAdvances ? ' (+' + dateAdvances + ' read-date advance' + (dateAdvances === 1 ? '' : 's') + ')' : ''}, ${replacements} replacement(s), ${newUnits} new unit(s), ${fieldUpdates} field(s) synced.</div>${overridesHTML}${_sheetDateHTML()}${_arrivalHTML()}${_rwlPanel(fleetJSON, _rwlNew, _rwl.histFilled)}${logHTML}${erpHTML ? '<div style="margin-top:12px">' + erpHTML + '</div>' : ''}`;
+  _showFindings(fleetJSON, state.updateFleetJSON, {});   // v8.15 FIX-3
 
   // [TWEAK-2] Click-to-sort on result tables (in-place DOM sort, date/number/text autodetect)
   attachTableSort(document.getElementById('updateResultDetail'));
