@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.16 — Mission Control</title>
+<title>NumaCore Lens v4.16.1 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.1"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -502,6 +502,7 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #tab-horizon select.hz-inh { color:#6a7fa0; border-color:rgba(55,138,221,0.15); background:transparent; }
 #tab-horizon .hz-tag { font-size:10px; color:#c9c6f5; border:1px solid rgba(155,151,232,0.5); border-radius:8px; padding:0 6px; }
 #tab-horizon .hz-st-arrive { color:#85b7eb; } #tab-horizon .hz-st-planned { color:#c9c6f5; } #tab-horizon .hz-st-parked { color:#ffd54f; } #tab-horizon .hz-st-gone { color:#f09595; }
+#tab-horizon .hz-zoom { margin:0 0 10px; padding:6px 10px; background:rgba(8,26,21,0.6); border:1px solid rgba(255,255,255,0.07); border-radius:8px; }
 #tab-horizon .hz-empty { padding:24px; color:#5dcaa5; opacity:0.7; font-size:12px; }
 #hz-ov { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9100; display:none; align-items:center; justify-content:center; }
 #hz-ov.open { display:flex; }
@@ -1934,6 +1935,7 @@ body { background: #030f0c; }
         <span><i style="background:#f09595;width:8px"></i>end handle (decommissioned after it)</span>
         <span>Drag a handle to move a date; click a machine to edit it. The fleet class sets Pulse's and Bench's order.</span>
       </div>
+      <div class="hz-zoom" id="hz-zoom" title="Zoom and pan the timeline. This view is kept in this browser only."></div>
       <div class="hz-grid" id="hz-body"></div>
     </div>
     <!-- BENCH PANEL — critical spares (v4.10 FEAT-1). Content is rendered by numacore_bench.js. -->
@@ -1984,7 +1986,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.16';
+const VERSION = '4.16.1';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -5760,6 +5762,232 @@ window.addEventListener('message', function onEmbedMessage(ev) {
 // Long-range capital planning per unit. Scaffold lists every unit with a
 // 5-year lifecycle bar stub and an "EOL remaining" estimate driven from
 // expected_life_hours and current SMU. Real chart logic lands in Chunk 10.
+// ══ NumaCore range slider — a dataZoom-style zoom / pan window over a date axis ══════════════════════════════════════
+// Built for Lens v4.16.1 (Horizon timeline); written as ONE self-contained component so Cadence v18.14 can reuse it
+// verbatim (Schedule + Project Optimiser), then it is harvested into Building Blocks `ui-kit`.
+// Look: WIR Lens / ECharts dataZoom — track #0d1320, window fill rgba(61,201,160,.16), handles #3DC9A0, presets 3M–All.
+// It owns NO state beyond the DOM: the host app decides the full range, the window and where the window is kept
+// (Lens keeps it per-viewer in localStorage, never in the plan file). It has no dependency on any app global; its date
+// maths is internal, so dropping the file into another tool and calling NumaRangeSlider(cfg) is all that is needed.
+//
+// NumaRangeSlider(cfg) where cfg =
+//   { el,                         the host element (its contents are replaced)
+//     fullStart, fullEnd,         ISO 'YYYY-MM-DD' — the whole axis
+//     winStart, winEnd,           ISO — the visible window inside it (defaults to the full range)
+//     minDays,                    smallest window, in days (default 28)
+//     presets,                    [{ label, months } | { label, all:true }] (default 3M · 6M · 1Y · 3Y · All)
+//     marks,                      [{ iso, kind }] drawn as ticks in the overview (kind: arrive|end|park|any)
+//     today,                      ISO — an optional marker in the overview
+//     fmt,                        iso -> display string (default a plain 'D Mon YYYY')
+//     onChange(a, b, final) }     called while dragging (final=false) and once on release / preset (final=true)
+// returns { update(fullStart, fullEnd, winStart, winEnd, marks), getWindow(), destroy(), el }.
+(function (root) {
+  var STYLE_ID = 'nrs-style';
+  var CSS =
+    '.nrs{display:flex;align-items:center;gap:12px;font-family:inherit;-webkit-user-select:none;user-select:none;}' +
+    '.nrs-presets{display:flex;gap:4px;flex:0 0 auto;}' +
+    '.nrs-presets button{background:rgba(61,201,160,0.10);border:1px solid rgba(61,201,160,0.35);color:#b8ede0;' +
+      'border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;font-family:inherit;line-height:1.4;}' +
+    '.nrs-presets button:hover{background:rgba(61,201,160,0.22);}' +
+    '.nrs-presets button.nrs-on{background:#3DC9A0;border-color:#3DC9A0;color:#04231b;font-weight:600;}' +
+    '.nrs-track{position:relative;flex:1 1 auto;height:34px;min-width:120px;background:#0d1320;' +
+      'border:1px solid rgba(61,201,160,0.22);border-radius:5px;overflow:hidden;cursor:pointer;}' +
+    '.nrs-ov{position:absolute;inset:0;width:100%;height:100%;display:block;}' +
+    '.nrs-mask{position:absolute;top:0;bottom:0;background:rgba(4,14,28,0.66);pointer-events:none;}' +
+    '.nrs-win{position:absolute;top:0;bottom:0;background:rgba(61,201,160,0.16);' +
+      'border-left:2px solid #3DC9A0;border-right:2px solid #3DC9A0;cursor:grab;box-sizing:border-box;}' +
+    '.nrs-win.nrs-drag{cursor:grabbing;}' +
+    '.nrs-h{position:absolute;top:50%;width:9px;height:22px;margin-top:-11px;background:#3DC9A0;border-radius:3px;' +
+      'cursor:ew-resize;box-shadow:0 0 0 1px rgba(0,0,0,0.5);}' +
+    '.nrs-h::after{content:"";position:absolute;left:3px;top:5px;width:1px;height:12px;background:rgba(4,35,27,0.7);' +
+      'box-shadow:2px 0 0 rgba(4,35,27,0.7);}' +
+    '.nrs-h-l{left:-6px;} .nrs-h-r{right:-6px;}' +
+    '.nrs-cap{flex:0 0 auto;font-size:11px;color:#5dcaa5;letter-spacing:0.02em;min-width:150px;text-align:right;' +
+      'white-space:nowrap;}';
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    var s = document.createElement('style'); s.id = STYLE_ID; s.textContent = CSS; document.head.appendChild(s);
+  }
+
+  function msOf(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function isoOf(ms) { var d = new Date(ms); return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate()); }
+  function addMonths(iso, n) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso)); if (!m) return iso;
+    var y = +m[1], mo = +m[2] - 1 + n, d = +m[3];
+    return isoOf(Date.UTC(y + Math.floor(mo / 12), ((mo % 12) + 12) % 12, d));
+  }
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function defFmt(iso) { var ms = msOf(iso); if (ms === null) return String(iso || ''); var d = new Date(ms); return d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  function capFmt(iso) { var ms = msOf(iso); if (ms === null) return ''; var d = new Date(ms); return MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+  var MARK_COLOR = { arrive: '#5fa8e0', end: '#f09595', park: '#ffd54f', any: '#5dcaa5' };
+
+  function NumaRangeSlider(cfg) {
+    ensureStyle();
+    var host = cfg.el;
+    var presets = cfg.presets || [
+      { label: '3M', months: 3 }, { label: '6M', months: 6 }, { label: '1Y', months: 12 },
+      { label: '3Y', months: 36 }, { label: 'All', all: true }
+    ];
+    var minDays = cfg.minDays || 28;
+    var fmt = cfg.fmt || defFmt;
+    var onChange = cfg.onChange || function () {};
+
+    var st = { fs: 0, fe: 0, ws: 0, we: 0, today: null, marks: [] };
+
+    host.className = (host.className || '').replace(/\bnrs\b/g, '').trim();
+    host.classList.add('nrs');
+    host.innerHTML =
+      '<div class="nrs-presets"></div>' +
+      '<div class="nrs-track"><svg class="nrs-ov" preserveAspectRatio="none"></svg>' +
+        '<div class="nrs-mask nrs-mask-l"></div><div class="nrs-mask nrs-mask-r"></div>' +
+        '<div class="nrs-win"><i class="nrs-h nrs-h-l"></i><i class="nrs-h nrs-h-r"></i></div></div>' +
+      '<div class="nrs-cap"></div>';
+    var elPresets = host.querySelector('.nrs-presets'),
+        elTrack = host.querySelector('.nrs-track'),
+        elOv = host.querySelector('.nrs-ov'),
+        elMaskL = host.querySelector('.nrs-mask-l'),
+        elMaskR = host.querySelector('.nrs-mask-r'),
+        elWin = host.querySelector('.nrs-win'),
+        elCap = host.querySelector('.nrs-cap');
+
+    presets.forEach(function (p, i) {
+      var b = document.createElement('button'); b.textContent = p.label; b.dataset.i = i; elPresets.appendChild(b);
+    });
+
+    function pct(ms) { return st.fe > st.fs ? Math.max(0, Math.min(100, (ms - st.fs) / (st.fe - st.fs) * 100)) : 0; }
+
+    function paintWindow() {
+      var l = pct(st.ws), r = pct(st.we);
+      elWin.style.left = l + '%'; elWin.style.width = Math.max(0, r - l) + '%';
+      elMaskL.style.left = '0'; elMaskL.style.width = l + '%';
+      elMaskR.style.left = r + '%'; elMaskR.style.width = Math.max(0, 100 - r) + '%';
+      elCap.textContent = capFmt(isoOf(st.ws)) + ' – ' + capFmt(isoOf(st.we));
+      var span = st.we - st.ws, full = st.fe - st.fs, onI = -1;
+      if (full > 0 && span >= full - 86400000 * 2) { onI = presets.findIndex(function (p) { return p.all; }); }
+      else {
+        presets.forEach(function (p, i) {
+          if (p.all) return;
+          var want = msOf(addMonths(isoOf(st.fs), p.months)) - st.fs;
+          if (Math.abs(span - Math.min(want, full)) < 86400000 * 3 && Math.abs(st.ws - st.fs) < 86400000 * 3) onI = i;
+        });
+      }
+      [].forEach.call(elPresets.children, function (b, i) { b.classList.toggle('nrs-on', i === onI); });
+    }
+
+    function paintOverview() {
+      var W = 1000, H = 34, out = '';
+      // faint year gridlines across the whole axis
+      var y0 = new Date(st.fs).getUTCFullYear(), y1 = new Date(st.fe).getUTCFullYear();
+      for (var y = y0 + 1; y <= y1; y++) {
+        var x = pct(Date.UTC(y, 0, 1)) / 100 * W;
+        out += '<line x1="' + x.toFixed(1) + '" y1="0" x2="' + x.toFixed(1) + '" y2="' + H + '" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>';
+      }
+      // event ticks
+      (st.marks || []).forEach(function (mk) {
+        var ms = msOf(mk.iso); if (ms === null || ms < st.fs || ms > st.fe) return;
+        var x = pct(ms) / 100 * W, c = MARK_COLOR[mk.kind] || MARK_COLOR.any;
+        out += '<line x1="' + x.toFixed(1) + '" y1="7" x2="' + x.toFixed(1) + '" y2="' + (H - 7) + '" stroke="' + c + '" stroke-width="1.4" opacity="0.85"/>';
+      });
+      if (st.today != null) {
+        var tms = msOf(st.today);
+        if (tms !== null && tms >= st.fs && tms <= st.fe) {
+          var tx = pct(tms) / 100 * W;
+          out += '<line x1="' + tx.toFixed(1) + '" y1="0" x2="' + tx.toFixed(1) + '" y2="' + H + '" stroke="#e24b4a" stroke-width="1"/>';
+        }
+      }
+      elOv.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      elOv.innerHTML = out;
+    }
+
+    function clampWindow() {
+      if (st.ws < st.fs) st.ws = st.fs;
+      if (st.we > st.fe) st.we = st.fe;
+      var minMs = minDays * 86400000;
+      if (st.we - st.ws < minMs) st.we = Math.min(st.fe, st.ws + minMs);
+      if (st.we - st.ws < minMs) st.ws = Math.max(st.fs, st.we - minMs);
+    }
+
+    function fire(final) { onChange(isoOf(st.ws), isoOf(st.we), final); }
+
+    // ── dragging (mouse; matches the host tools' handle drags) ──
+    function beginDrag(mode, ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var rect = elTrack.getBoundingClientRect(), full = st.fe - st.fs;
+      var startX = ev.clientX, ws0 = st.ws, we0 = st.we;
+      elWin.classList.add('nrs-drag');
+      var moved = false;
+      function msAt(clientX) { var f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)); return st.fs + f * full; }
+      function move(e) {
+        moved = true;
+        if (mode === 'pan') {
+          var d = (e.clientX - startX) / rect.width * full, w = we0 - ws0;
+          st.ws = ws0 + d; st.we = we0 + d;
+          if (st.ws < st.fs) { st.ws = st.fs; st.we = st.fs + w; }
+          if (st.we > st.fe) { st.we = st.fe; st.ws = st.fe - w; }
+        } else if (mode === 'l') {
+          st.ws = Math.min(msAt(e.clientX), st.we - minDays * 86400000); if (st.ws < st.fs) st.ws = st.fs;
+        } else {
+          st.we = Math.max(msAt(e.clientX), st.ws + minDays * 86400000); if (st.we > st.fe) st.we = st.fe;
+        }
+        paintWindow(); fire(false);
+      }
+      function up() {
+        document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+        elWin.classList.remove('nrs-drag');
+        if (moved) { clampWindow(); paintWindow(); fire(true); }
+      }
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+    }
+
+    host.querySelector('.nrs-h-l').addEventListener('mousedown', function (e) { beginDrag('l', e); });
+    host.querySelector('.nrs-h-r').addEventListener('mousedown', function (e) { beginDrag('r', e); });
+    elWin.addEventListener('mousedown', function (e) { if (e.target.classList.contains('nrs-h')) return; beginDrag('pan', e); });
+    // click on the empty track = centre the window there (a quick jump), without changing its width
+    elTrack.addEventListener('mousedown', function (e) {
+      if (e.target !== elTrack && e.target !== elOv) return;
+      var rect = elTrack.getBoundingClientRect(), full = st.fe - st.fs;
+      var f = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)), c = st.fs + f * full, w = st.we - st.ws;
+      st.ws = c - w / 2; st.we = c + w / 2;
+      if (st.ws < st.fs) { st.ws = st.fs; st.we = st.fs + w; }
+      if (st.we > st.fe) { st.we = st.fe; st.ws = st.fe - w; }
+      paintWindow(); fire(true);
+    });
+
+    elPresets.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      var p = presets[+b.dataset.i];
+      if (p.all) { st.ws = st.fs; st.we = st.fe; }
+      else { st.ws = st.fs; st.we = Math.min(st.fe, msOf(addMonths(isoOf(st.fs), p.months))); }
+      clampWindow(); paintWindow(); fire(true);
+    });
+
+    function setState(fs, fe, ws, we, marks) {
+      st.fs = msOf(fs); st.fe = msOf(fe);
+      st.ws = ws != null ? msOf(ws) : st.fs; st.we = we != null ? msOf(we) : st.fe;
+      if (st.we <= st.ws) { st.ws = st.fs; st.we = st.fe; }
+      if (marks) st.marks = marks;
+      st.today = cfg.today != null ? cfg.today : st.today;
+      clampWindow(); paintOverview(); paintWindow();
+    }
+
+    setState(cfg.fullStart, cfg.fullEnd, cfg.winStart, cfg.winEnd, cfg.marks || []);
+
+    return {
+      el: host,
+      update: function (fs, fe, ws, we, marks) { setState(fs, fe, ws, we, marks); },
+      getWindow: function () { return { start: isoOf(st.ws), end: isoOf(st.we) }; },
+      destroy: function () { host.innerHTML = ''; host.classList.remove('nrs'); }
+    };
+  }
+
+  root.NumaRangeSlider = NumaRangeSlider;
+})(window);
+
 // ══ v4.16 — HORIZON: MACHINE TIMELINE · FLEET CLASSES · PLANNED MACHINES ═════════════════════════════════════════
 // Operator 2026-09-28: "each machine in the component sheet has to be on there, with a timeline... active from / to
 // dates and a gantt style line that can be dragged. A budget timeline (today until which year)"; "we can also add a new
@@ -5819,11 +6047,85 @@ function _benchFleetData() {
   return out;
 }
 
-// ── the axis: from the start of this month to the end of the budget horizon's year ──
-function _hzAxis() {
+// ── the axis ──
+// v4.16.1 — the FULL axis (this month → end of the budget-horizon year) and, inside it, a per-viewer VIEW WINDOW that the
+// zoom / pan slider sets. _hzAxis() returns the window, so every position, bar and drag below follows it; _hzFullAxis()
+// stays the whole range (the budget-horizon dropdown, the "no end" gesture, the slider's own extent). The window lives in
+// this browser only (localStorage lens_hz_view_<client>), never in the plan file.
+let _hzView = null, _hzViewClient = null, _hzSlider = null;
+function _hzFullAxis() {
   const t = new Date(), h = _hz(), y0 = t.getFullYear();
   const endY = (h && Number(h.horizonEnd) > y0) ? Number(h.horizonEnd) : y0 + 10;
   return { start: y0 + '-' + _hzPad(t.getMonth() + 1) + '-01', end: endY + '-12-31', endY: endY, y0: y0 };
+}
+function _hzViewKey() {
+  const cc = (typeof lensMeta !== 'undefined' && lensMeta && lensMeta.clientCode) || (lensRawData && lensRawData.meta && lensRawData.meta.clientCode) || 'DEFAULT';
+  return 'lens_hz_view_' + String(cc).replace(/[^A-Z0-9_]/gi, '_');
+}
+function _hzViewLoad() {
+  try { const r = JSON.parse(localStorage.getItem(_hzViewKey()) || 'null'); if (r && r.start && r.end) return { start: String(r.start).slice(0, 10), end: String(r.end).slice(0, 10) }; } catch (e) {}
+  return null;
+}
+function _hzViewSave() { try { if (_hzView) localStorage.setItem(_hzViewKey(), JSON.stringify(_hzView)); } catch (e) {} }
+function _hzViewClamp() {
+  const fx = _hzFullAxis(), key = _hzViewKey();
+  if (_hzViewClient !== key) { _hzView = _hzViewLoad(); _hzViewClient = key; }   // a new client file → its own saved view
+  if (!_hzView) { _hzView = { start: fx.start, end: fx.end }; return fx; }
+  let a = _hzView.start < fx.start ? fx.start : _hzView.start;
+  let b = _hzView.end > fx.end ? fx.end : _hzView.end;
+  if (!(a < b)) { a = fx.start; b = fx.end; }
+  _hzView = { start: a, end: b };
+  return fx;
+}
+function _hzAxis() {
+  const fx = _hzViewClamp(), a = _hzView.start, b = _hzView.end;
+  return { start: a, end: b, y0: +a.slice(0, 4), endY: +b.slice(0, 4), full: fx };
+}
+// the axis labels: years across a wide window, months once it is zoomed in (≤ ~2 years visible)
+function _hzAxisTicks(ax) {
+  const e = _lensIsoMs(ax.end), spanDays = (e - _lensIsoMs(ax.start)) / 86400000, MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  let out = '';
+  if (spanDays <= 760) {
+    let cur = ax.start.slice(0, 7) + '-01';
+    while (_lensIsoMs(cur) <= e) {
+      const yy = +cur.slice(0, 4), mm = +cur.slice(5, 7);
+      const nxt = (mm === 12) ? (yy + 1) + '-01-01' : yy + '-' + _hzPad(mm + 1) + '-01';
+      const a = _hzPct(cur < ax.start ? ax.start : cur, ax), b = _hzPct(nxt > ax.end ? ax.end : nxt, ax);
+      if (cur > ax.start) out += '<i class="hz-yrl" style="left:' + a + '%"></i>';
+      if (b - a >= 3) { const lbl = MON[mm - 1] + ((mm === 1 || cur === ax.start.slice(0, 7) + '-01') ? " '" + String(yy).slice(2) : ''); out += '<span class="hz-yr" style="left:' + ((a + b) / 2) + '%">' + lbl + '</span>'; }
+      cur = nxt;
+    }
+  } else {
+    for (let y = ax.y0; y <= ax.endY; y++) {
+      const a = _hzPct(y === ax.y0 ? ax.start : y + '-01-01', ax), b = _hzPct(y === ax.endY ? ax.end : (y + 1) + '-01-01', ax);
+      if (y > ax.y0) out += '<i class="hz-yrl" style="left:' + a + '%"></i>';
+      if (b - a >= 4) out += '<span class="hz-yr" style="left:' + ((a + b) / 2) + '%">' + y + '</span>';
+    }
+  }
+  return out;
+}
+// the slider's overview ticks: each machine's arrival, end and parked-start
+function _hzMarks() {
+  const marks = [];
+  _hzRows().forEach(function (r) {
+    if (r.arrival) marks.push({ iso: r.arrival, kind: 'arrive' });
+    if (r.end) marks.push({ iso: r.end, kind: 'end' });
+    (r.parked || []).forEach(function (p) { if (p && p.from) marks.push({ iso: p.from, kind: 'park' }); });
+  });
+  return marks;
+}
+function _hzMountSlider(ax) {
+  const host = document.getElementById('hz-zoom'); if (!host || typeof NumaRangeSlider !== 'function') return;
+  const fx = ax.full, marks = _hzMarks();
+  if (!_hzSlider) {
+    _hzSlider = NumaRangeSlider({
+      el: host, fullStart: fx.start, fullEnd: fx.end, winStart: ax.start, winEnd: ax.end,
+      today: _lensTodayISO(), marks: marks, fmt: _lensFmtD, minDays: 28,
+      onChange: function (a, b, final) { _hzView = { start: a, end: b }; if (final) { _hzViewSave(); renderHorizon(); } }
+    });
+  } else {
+    _hzSlider.update(fx.start, fx.end, ax.start, ax.end, marks);
+  }
 }
 function _hzPct(iso, ax) {
   const s = _lensIsoMs(ax.start), e = _lensIsoMs(ax.end), x = _lensIsoMs(iso);
@@ -5855,13 +6157,13 @@ function _hzStatus(r) {
 function renderHorizon() {
   const body = document.getElementById('hz-body');
   if (!body) return;
-  const endSel = document.getElementById('hz-end'), fSel = document.getElementById('hz-fleet'), ax = _hzAxis();
+  const endSel = document.getElementById('hz-end'), fSel = document.getElementById('hz-fleet'), ax = _hzAxis(), fx = ax.full;
   if (!lensRawData || !FLEET_DATA || !Object.keys(FLEET_DATA).length) {
     body.innerHTML = '<div class="hz-empty">Load a fleet file to see every machine on its timeline.</div>';
     return;
   }
   if (endSel) {
-    let o = ''; for (let y = ax.y0 + 1; y <= ax.y0 + 30; y++) o += '<option value="' + y + '"' + (y === ax.endY ? ' selected' : '') + '>' + y + '</option>';
+    let o = ''; for (let y = fx.y0 + 1; y <= fx.y0 + 30; y++) o += '<option value="' + y + '"' + (y === fx.endY ? ' selected' : '') + '>' + y + '</option>';
     endSel.innerHTML = o;
   }
   const rows = _hzRows();
@@ -5874,13 +6176,7 @@ function renderHorizon() {
   const order = Object.keys(fleets).filter(function (f) { return !_hzFleetFilter || f === _hzFleetFilter; })
     .sort(function (a, b) { const ra = fc[a] && HZ_RANK[fc[a]] != null ? HZ_RANK[fc[a]] : 9, rb = fc[b] && HZ_RANK[fc[b]] != null ? HZ_RANK[fc[b]] : 9; return (ra - rb) || a.localeCompare(b); });
   // the axis row: years, today
-  let yrs = '';
-  for (let y = ax.y0; y <= ax.endY; y++) {
-    // a year's label sits in the middle of its span; the part of this year that is left is labelled only if there is room
-    const a = _hzPct(y === ax.y0 ? ax.start : y + '-01-01', ax), b = _hzPct(y === ax.endY ? ax.end : (y + 1) + '-01-01', ax);
-    if (y > ax.y0) yrs += '<i class="hz-yrl" style="left:' + a + '%"></i>';
-    if (b - a >= 4) yrs += '<span class="hz-yr" style="left:' + ((a + b) / 2) + '%">' + y + '</span>';
-  }
+  const yrs = _hzAxisTicks(ax);
   const today = _hzPct(_lensTodayISO(), ax);
   let html = '<div class="hz-row hz-axisrow"><div>Machine</div><div>Class</div><div>Status</div><div class="hz-axis">' + yrs + '<i class="hz-today" style="left:' + today + '%" title="today"></i></div></div>';
   const clsOpts = function (sel, fleetDefault) {
@@ -5897,6 +6193,7 @@ function renderHorizon() {
     list.forEach(function (r) { html += _hzRowHTML(r, ax, today, clsOpts(r.own, fc[f] ? _hzClassName(fc[f]) : '')); });
   });
   body.innerHTML = html;
+  _hzMountSlider(ax);   // v4.16.1 — the zoom / pan slider follows the current axis (it lives outside #hz-body, so it persists)
 }
 function _hzRowHTML(r, ax, today, clsOpts) {
   const st = _hzStatus(r);
@@ -5910,8 +6207,8 @@ function _hzRowHTML(r, ax, today, clsOpts) {
       const a = _hzPct(p.from > from ? p.from : from, ax), b = _hzPct(p.to < to ? p.to : to, ax);
       if (b > a) track += '<div class="hz-park" style="left:' + a + '%;width:' + (b - a) + '%" title="parked ' + esc(_lensFmtD(p.from)) + ' – ' + esc(_lensFmtD(p.to)) + '"></div>';
     });
-    if (movable) track += '<i class="hz-h" data-u="' + esc(r.unit) + '" data-w="from" style="left:' + x0 + '%" title="arrival: drag to move"></i>';
-    track += '<i class="hz-h hz-hend' + (r.end ? '' : ' hz-open') + '" data-u="' + esc(r.unit) + '" data-w="to" style="left:' + x1 + '%" title="' + (r.end ? 'end ' + esc(_lensFmtD(r.end)) + ': drag to move, or to the far right for no end' : 'no end date: drag left to set one') + '"></i>';
+    if (movable) track += '<i class="hz-h" data-u="' + esc(r.unit) + '" data-w="from" data-d="' + esc(r.arrival) + '" style="left:' + x0 + '%" title="arrival: drag to move"></i>';
+    track += '<i class="hz-h hz-hend' + (r.end ? '' : ' hz-open') + '" data-u="' + esc(r.unit) + '" data-w="to" data-d="' + esc(r.end || '') + '" style="left:' + x1 + '%" title="' + (r.end ? 'end ' + esc(_lensFmtD(r.end)) + ': drag to move, or to the far right for no end' : 'no end date: drag left to set one') + '"></i>';
   }
   return '<div class="hz-row' + (st.kind === 'gone' ? ' hz-dim' : '') + '" data-u="' + esc(r.unit) + '">' +
     '<div><b>' + esc(r.unit) + '</b> <span class="hz-mdl">' + esc(r.model) + '</span>' + (r.planned ? ' <span class="hz-tag">planned' + (r.like ? ' · like ' + esc(r.like) : '') + '</span>' : '') + '</div>' +
@@ -5947,14 +6244,14 @@ function _hzSetEnd(unit, iso) {
   _hzLog(m, iso ? 'end' : 'end cleared', (before ? _lensFmtD(before) : 'none') + ' → ' + (iso ? _lensFmtD(iso) : 'none'));
 }
 function _hzCommitDrag(unit, which, iso) {
-  const t = _lensTodayISO(), ax = _hzAxis(), row = _hzRows().find(function (r) { return r.unit === unit; }) || {};
+  const t = _lensTodayISO(), ax = _hzAxis(), fx = _hzFullAxis(), row = _hzRows().find(function (r) { return r.unit === unit; }) || {};
   if (which === 'from') {
     if (iso <= t) { iso = _lensIsoAdd(t, 1); showToast('An arrival has to be after today; set to ' + _lensFmtD(iso) + '.', 'warn', 4000); }
     if (row.end && iso >= row.end) { showToast('The arrival has to be before the end date (' + _lensFmtD(row.end) + ').', 'warn', 4500); renderHorizon(); return; }
     _hzSetArrival(unit, iso);
     _hzAfterChange(unit + ' arrives ' + _lensFmtD(iso) + '. Its components are planned from then. SAVE FILE keeps it.', true);
   } else {
-    if (iso >= _lensIsoAdd(ax.end, -10)) { _hzSetEnd(unit, null); _hzAfterChange(unit + ': no end date.'); return; }
+    if (iso >= _lensIsoAdd(fx.end, -10)) { _hzSetEnd(unit, null); _hzAfterChange(unit + ': no end date.'); return; }
     if (row.arrival && iso <= row.arrival) { showToast('The end date has to be after the arrival (' + _lensFmtD(row.arrival) + ').', 'warn', 4500); renderHorizon(); return; }
     if (iso < t && !confirm('Decommission ' + unit + ' from ' + _lensFmtD(iso) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it; clear the end date to bring it back).')) { renderHorizon(); return; }
     _hzSetEnd(unit, iso);
@@ -6123,7 +6420,9 @@ function _hzRemovePlanned(unit) {
   document.addEventListener('mousedown', function (ev) {
     const hd = ev.target.closest && ev.target.closest('#tab-horizon .hz-h'); if (!hd) return;
     ev.preventDefault(); ev.stopPropagation();
-    const track = hd.parentElement, rect = track.getBoundingClientRect(), ax = _hzAxis(), s0 = _lensIsoMs(ax.start), e0 = _lensIsoMs(ax.end);
+    const track = hd.parentElement, rect = track.getBoundingClientRect(), ax = _hzAxis(), fx = ax.full, s0 = _lensIsoMs(ax.start), e0 = _lensIsoMs(ax.end);
+    const _dISO = hd.dataset.d || '';
+    if (_dISO && (_dISO < ax.start || _dISO > ax.end)) { if (typeof showToast === 'function') showToast('Zoom the timeline out to reach this date, then drag it.', 'info', 3000); return; }   // v4.16.1
     const bar = track.querySelector('.hz-bar'), which = hd.dataset.w, unit = hd.dataset.u;
     let tip = document.getElementById('hz-tip'); if (!tip) { tip = document.createElement('div'); tip.id = 'hz-tip'; document.body.appendChild(tip); }
     let cur = null, moved = false;
@@ -6132,7 +6431,7 @@ function _hzRemovePlanned(unit) {
       moved = true; const p = at(e.clientX); cur = p.iso; hd.style.left = (p.f * 100) + '%';
       if (bar) { const l = parseFloat(bar.style.left), w = parseFloat(bar.style.width); if (which === 'from') { bar.style.left = (p.f * 100) + '%'; bar.style.width = Math.max(0.4, l + w - p.f * 100) + '%'; } else bar.style.width = Math.max(0.4, p.f * 100 - l) + '%'; }
       tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px';
-      tip.textContent = (which === 'from' ? 'arrives ' : (p.iso >= _lensIsoAdd(ax.end, -10) ? 'no end date' : 'end ')) + (which === 'to' && p.iso >= _lensIsoAdd(ax.end, -10) ? '' : _lensFmtD(p.iso));
+      tip.textContent = (which === 'from' ? 'arrives ' : (p.iso >= _lensIsoAdd(fx.end, -10) ? 'no end date' : 'end ')) + (which === 'to' && p.iso >= _lensIsoAdd(fx.end, -10) ? '' : _lensFmtD(p.iso));
     };
     const up = function () { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); tip.style.display = 'none'; if (moved && cur) _hzCommitDrag(unit, which, cur); };
     document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
