@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.16.2 — Mission Control</title>
+<title>NumaCore Lens v4.17 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.2"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -494,6 +494,9 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #tab-horizon .hz-h { position:absolute; top:1px; width:8px; height:20px; margin-left:-4px; border-radius:3px; background:#e0faf2; cursor:ew-resize; z-index:3; box-shadow:0 0 0 1px rgba(0,0,0,0.5); }
 #tab-horizon .hz-h.hz-hend { background:#f09595; }
 #tab-horizon .hz-h.hz-open { background:rgba(224,250,242,0.35); }
+.hz-proj { position:absolute; top:50%; transform:translate(-50%,-50%); width:9px; height:9px; z-index:4; cursor:help; border:1px solid rgba(0,0,0,0.5); }
+.hz-proj-done { background:#3fb950; border-radius:2px; }
+.hz-proj-cancel { background:#f85149; border-radius:50%; }
 #tab-horizon .hz-grp { display:flex; align-items:center; gap:12px; padding:7px 10px; background:rgba(55,138,221,0.08); border-bottom:1px solid rgba(55,138,221,0.2); font-size:12px; color:#e0faf2; cursor:pointer; }
 #tab-horizon .hz-grp .hz-n { color:#8b8fa3; font-size:11px; }
 #tab-horizon .hz-grp .hz-cl { margin-left:auto; font-size:11px; color:#8b8fa3; cursor:default; }
@@ -1986,7 +1989,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.16.2';
+const VERSION = '4.17';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4724,6 +4727,113 @@ function buildFleetData(json) {
   return fd;
 }
 
+// == v4.17 (L-17) -- apply Cadence completedProjects[] (Close/Complete + Cancel) ==================
+// Pairs with Cadence v18.15/v18.16. On load, materialise each close/cancel event ONCE (idempotent via
+// the entry's `applied` flag): a completed component builds a componentHistory record for the old fitting
+// and resets to a fresh cycle from the completion date; a cancelled project / not-completed component does
+// nothing (Cadence already broke the link). Mutates the LIVE lensRawData so SAVE FILE (deep clone) persists
+// it. completedProjects[] is a Cadence-owned slice (allow-listed above).
+function _l17Days(fromISO, toISO) {
+  const a = new Date(String(fromISO).slice(0,10) + 'T00:00:00');
+  const b = new Date(String(toISO).slice(0,10) + 'T00:00:00');
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.round((b - a) / 86400000);
+}
+function _l17AddDays(iso, days) {
+  const d = new Date(String(iso).slice(0,10) + 'T00:00:00');
+  if (isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + Math.round(days));
+  return d.toISOString().slice(0,10);
+}
+function _findCompletedProjects(j) {
+  const w = (j.workingData && typeof j.workingData === 'object') ? j.workingData
+          : (j.working && typeof j.working === 'object') ? j.working : null;
+  if (w && Array.isArray(w.completedProjects)) return w.completedProjects;
+  if (Array.isArray(j.completedProjects)) return j.completedProjects;
+  return null;
+}
+function _applyCompletedProjects(j) {
+  const cps = _findCompletedProjects(j);
+  if (!cps || !cps.length) return;
+  const comps = _readComponents(j);
+  if (!comps || !comps.length) return;
+  let histArr;
+  if (j.masterData && typeof j.masterData === 'object') {
+    if (!Array.isArray(j.masterData.componentHistory)) j.masterData.componentHistory = [];
+    histArr = j.masterData.componentHistory;
+  } else {
+    if (!Array.isArray(j.componentHistory)) j.componentHistory = [];
+    histArr = j.componentHistory;
+  }
+  const w = (j.workingData && typeof j.workingData === 'object') ? j.workingData
+          : (j.working && typeof j.working === 'object') ? j.working : null;
+  function voidOverride(id) {
+    if (!w) return;
+    if (Array.isArray(w.componentDateOverrides)) w.componentDateOverrides = w.componentDateOverrides.filter(function(o){ return !(o && (o.id === id || o.component_id === id)); });
+    if (Array.isArray(w.componentDates))         w.componentDates         = w.componentDates.filter(function(o){ return !(o && (o.id === id || o.component_id === id)); });
+  }
+  function findComp(cc, e) {
+    let c = comps.find(function(x){ return x.id != null && x.id === cc.id; });
+    if (c) return c;
+    const key = _histName(cc.unit || e.unit, cc.component);
+    return comps.find(function(x){ return _histName(x.unit || x.unit_id, x.component || x.name) === key; }) || null;
+  }
+  let nApplied = 0, nHist = 0, nReset = 0;
+  cps.forEach(function(e) {
+    if (!e || e.applied) return;
+    const D = e.completedDate || e.end_date || null;
+    (e.closedComponents || []).forEach(function(cc) {
+      if (e.state === 'cancelled' || !cc || !cc.completed) return;   // nothing to apply
+      const c = findComp(cc, e);
+      if (!c || !D) return;
+      const ur = Number(c.util_rate) || 0;
+      const bench = Number(c.benchmark) || 0;
+      const oldInstallDate = c.install_date || null;
+      const oldInstallHours = (c.install_hours != null) ? Number(c.install_hours) : null;
+      let smuAtD = null;
+      if (ur > 0 && c.last_read && c.last_smu != null) {
+        const dd = _l17Days(c.last_read, D);
+        if (dd != null) smuAtD = Math.max(0, Math.round((Number(c.last_smu) || 0) + ur * dd));
+      }
+      const removalHrs = (smuAtD != null) ? smuAtD : ((c.last_smu != null) ? Number(c.last_smu) : null);
+      const lifeAch = (removalHrs != null && oldInstallHours != null) ? Math.max(0, removalHrs - oldInstallHours) : null;
+      const lifePct = (lifeAch != null && bench > 0) ? Math.round(lifeAch / bench * 100) : null;
+      histArr.push({
+        component_id: c.id,
+        unit_id: c.unit || c.unit_id || cc.unit || e.unit || '',
+        component_name: c.component || c.name || cc.component || '',
+        machine_down_date: D,
+        source: 'CADENCE_close',
+        install_date: oldInstallDate,
+        install_hours: oldInstallHours,
+        removal_hours: removalHrs,
+        life_achieved: lifeAch,
+        benchmark: bench || null,
+        life_pct: lifePct,
+        serial_number: c.serial_number || null,
+        part_number: c.part_number || null,
+        replacement_wo: null,
+        install_wo: null,
+        cost_actual: (c.cost != null) ? c.cost : null,
+        cost_verified: false,
+        project_name: e.name || e.id || '',
+        notes: (cc.notes || e.note || '')
+      });
+      nHist++;
+      c.install_date = D;
+      if (smuAtD != null) c.install_hours = smuAtD;
+      const newChangeout = (ur > 0 && bench > 0) ? _l17AddDays(D, bench / ur) : null;
+      c.changeout_date = newChangeout;   /* null = undateable (never invented) */
+      c.original_date  = newChangeout;
+      voidOverride(c.id);
+      nReset++;
+    });
+    e.applied = true;
+    nApplied++;
+  });
+  if (nApplied) { try { console.log('[L-17] applied', nApplied, 'project close/cancel event(s):', nHist, 'history record(s),', nReset, 'component(s) reset'); } catch(_){} }
+}
+
 function loadLensJSON(json) {
   // Validate — accept V5 (masterData.components) or V4 Flat (json.components).
   // Chunk 5: graceful degradation — Lens reads either shape so the suite can
@@ -4742,6 +4852,8 @@ function loadLensJSON(json) {
   lensHideUnits = {};
   lensHideComponents = {};
   lensHiddenComps = []; lensHideDefaultsOff = []; lensBenchHidden = []; _rebuildHidIdx();   // v4.14
+  // v4.17 (L-17) — materialise Cadence close/cancel events into components + componentHistory (once, idempotent) before FLEET_DATA builds.
+  try { _applyCompletedProjects(json); } catch(e) { console.warn('[L-17] applyCompletedProjects:', e); }
   // Build FLEET_DATA
   FLEET_DATA = buildFleetData(json);
   if(typeof rebuildUnitIndex==='function') rebuildUnitIndex(); // DR-004: refresh search index after data load
@@ -5622,8 +5734,8 @@ const EMBED_OWNED_SLICES = {
   // `working.*` fallback to PARITY with the V5 `workingData.*` list — projConfig /
   // visibleMonths / granularity / abScopeState / deColOrder were previously dropped for
   // V4-Flat files too. budgetConfig stays OPAQUE to Lens (pass-through only; Cadence owns it).
-  cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder', 'workingData.budgetConfig',
-            'working.projects', 'working.componentDates', 'working.decisionLog', 'working.projConfig', 'working.visibleMonths', 'working.granularity', 'working.abScopeState', 'working.deColOrder', 'working.budgetConfig', 'working.replacedWhileLinked', 'workingData.replacedWhileLinked'],   /* v4.15 — Cadence's coming review list writes each record's status */  // V4 Flat fallback shapes (parity with V5 list; +budgetConfig v4.9.1)
+  cadence: ['workingData.projects', 'workingData.componentDateOverrides', 'workingData.decisions', 'workingData.decisionLog', 'workingData.projConfig', 'workingData.visibleMonths', 'workingData.granularity', 'workingData.abScopeState', 'workingData.deColOrder', 'workingData.budgetConfig', 'workingData.completedProjects',   /* v4.17 L-17 — Cadence close/cancel events */
+            'working.projects', 'working.componentDates', 'working.decisionLog', 'working.projConfig', 'working.visibleMonths', 'working.granularity', 'working.abScopeState', 'working.deColOrder', 'working.budgetConfig', 'working.completedProjects', 'working.replacedWhileLinked', 'workingData.replacedWhileLinked'],   /* v4.15 — Cadence's coming review list writes each record's status */  // V4 Flat fallback shapes (parity with V5 list; +budgetConfig v4.9.1)
   // v4.8 — paired with Deploy v8.18 dual-shape retirement. Deploy now emits
   // ONE canonical slice: workingData.deployData (wholesale-replaced on
   // receipt; Deploy owns it per slice-ownership rule — the Risk Report
@@ -6133,6 +6245,20 @@ function _hzPct(iso, ax) {
   return Math.max(0, Math.min(100, (x - s) / (e - s) * 100));
 }
 // one row per machine in the plan (all of them, including those past their end date)
+function _hzProjForUnit(K) {
+  const cps = (typeof _findCompletedProjects === 'function') ? _findCompletedProjects(lensRawData) : null;
+  if (!cps || !cps.length) return [];
+  const out = [];
+  cps.forEach(function (e) {
+    if (!e || String(e.unit || '').toUpperCase() !== K) return;
+    const d = e.completedDate || e.end_date; if (!d) return;
+    const cancelled = e.state === 'cancelled';
+    const doneN = (e.closedComponents || []).filter(function (c) { return c && c.completed; }).length;
+    out.push({ date: d, cancelled: cancelled,
+      title: (cancelled ? 'Cancelled: ' : 'Completed: ') + (e.name || e.id || '') + ' (' + _lensFmtD(d) + (cancelled ? '' : ' · ' + doneN + ' changed') + ')' });
+  });
+  return out;
+}
 function _hzRows() {
   const rows = [], h = _hz();
   Object.keys(FLEET_DATA || {}).forEach(function (f) { Object.keys(FLEET_DATA[f]).forEach(function (m) { Object.keys(FLEET_DATA[f][m]).forEach(function (u) {
@@ -6141,7 +6267,7 @@ function _hzRows() {
     rows.push({ fleet: f, model: m, unit: u, K: K, n: cs.length, planned: planned, like: mm.like || (cs.find(function (c) { return c.like; }) || {}).like || null,
       arrival: _lensNotOnSite[K] || null, end: mm.active_to || null,
       parked: (Array.isArray(mm.parked) ? mm.parked : []).filter(function (p) { return p && p.from && p.to; }).slice().sort(function (a, b) { return a.from.localeCompare(b.from); }),
-      own: mm.class || '', cls: _hzClassOf(f, u), notes: mm.notes || '' });
+      own: mm.class || '', cls: _hzClassOf(f, u), notes: mm.notes || '', projects: _hzProjForUnit(K) });
   }); }); });
   return rows;
 }
@@ -6210,6 +6336,11 @@ function _hzRowHTML(r, ax, today, clsOpts) {
     if (movable) track += '<i class="hz-h" data-u="' + esc(r.unit) + '" data-w="from" data-d="' + esc(r.arrival) + '" style="left:' + x0 + '%" title="arrival: drag to move"></i>';
     track += '<i class="hz-h hz-hend' + (r.end ? '' : ' hz-open') + '" data-u="' + esc(r.unit) + '" data-w="to" data-d="' + esc(r.end || '') + '" style="left:' + x1 + '%" title="' + (r.end ? 'end ' + esc(_lensFmtD(r.end)) + ': drag to move, or to the far right for no end' : 'no end date: drag left to set one') + '"></i>';
   }
+  (r.projects || []).forEach(function (pr) {
+    const px = _hzPct(pr.date, ax);
+    if (px < -2 || px > 102) return;
+    track += '<i class="hz-proj hz-proj-' + (pr.cancelled ? 'cancel' : 'done') + '" style="left:' + px + '%" title="' + esc(pr.title) + '"></i>';
+  });
   return '<div class="hz-row' + (st.kind === 'gone' ? ' hz-dim' : '') + '" data-u="' + esc(r.unit) + '">' +
     '<div><b>' + esc(r.unit) + '</b> <span class="hz-mdl">' + esc(r.model) + '</span>' + (r.planned ? ' <span class="hz-tag">planned' + (r.like ? ' · like ' + esc(r.like) : '') + '</span>' : '') + '</div>' +
     '<div><select class="hz-uclass' + (r.own ? '' : ' hz-inh') + '" data-u="' + esc(r.unit) + '" title="' + (r.own ? 'its own class' : 'the fleet\'s class; choose one to give this machine its own') + '">' + clsOpts + '</select></div>' +
