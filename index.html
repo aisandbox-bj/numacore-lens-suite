@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.17 — Mission Control</title>
+<title>NumaCore Lens v4.18 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.2"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -1935,7 +1935,7 @@ body { background: #030f0c; }
         <span><i style="background:linear-gradient(90deg,#378add,#5fa8e0)"></i>arrives (not on site yet)</span>
         <span><i style="background:repeating-linear-gradient(90deg,#9b97e8 0 10px,#7f77dd 10px 20px)"></i>planned machine</span>
         <span><i style="background:repeating-linear-gradient(45deg,rgba(0,0,0,0.65) 0 4px,rgba(255,213,79,0.45) 4px 8px)"></i>parked</span>
-        <span><i style="background:#f09595;width:8px"></i>end handle (decommissioned after it)</span>
+        <span><i style="background:#f09595;width:8px"></i>end handle (retired after it)</span>
         <span>Drag a handle to move a date; click a machine to edit it. The fleet class sets Pulse's and Bench's order.</span>
       </div>
       <div class="hz-zoom" id="hz-zoom" title="Zoom and pan the timeline. This view is kept in this browser only."></div>
@@ -1989,7 +1989,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.17';
+const VERSION = '4.18';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -6273,7 +6273,7 @@ function _hzRows() {
 }
 function _hzStatus(r) {
   const t = _lensTodayISO();
-  if (r.end && r.end < t) return { kind: 'gone', text: 'decommissioned ' + _lensFmtD(r.end) };
+  if (r.end && r.end < t) return { kind: 'gone', text: 'retired ' + _lensFmtD(r.end) };
   const pk = r.parked.find(function (p) { return p.from <= t && p.to >= t; });
   if (pk) return { kind: 'parked', text: 'parked to ' + _lensFmtD(pk.to) };
   if (r.arrival) return { kind: r.planned ? 'planned' : 'arrive', text: (r.planned ? 'planned · ' : '') + 'arrives ' + _lensFmtD(r.arrival) + (r.end ? ' · to ' + _lensFmtD(r.end) : '') };
@@ -6357,6 +6357,21 @@ function _hzAfterChange(msg, compsChanged) {
   if (compsChanged) _hzCadenceNote = true;
   if (msg) showToast(msg, 'success', 4500);
 }
+// v4.18 (L-18) — revive a retired machine: mandatory current SMU written to the unit's components (today), end date cleared -> Active.
+function _hzRevive(unit) {
+  const el = document.getElementById('hz-e-smu');
+  const smu = el ? Number(el.value) : NaN;
+  if (!(smu > 0)) { showToast('Enter the machine\'s current SMU (hours) to revive it.', 'warn', 4500); if (el) { el.focus(); } return; }
+  const K = String(unit).toUpperCase(), t = _lensTodayISO(); let n = 0;
+  _readComponents(lensRawData).forEach(function (c) {
+    if (String(c.unit || c.unit_id || '').toUpperCase() !== K) return;
+    c.last_smu = smu; c.last_read = t; n++;
+  });
+  _hzSetEnd(unit, null);                 // clear the retired date -> back to Active
+  const m = _hzM(unit, true); _hzLog(m, 'revived', 'SMU ' + smu + ' on ' + _lensFmtD(t));
+  _hzClose();
+  _hzAfterChange(unit + ' revived — Active again; current SMU ' + smu + ' set on ' + n + ' component' + (n === 1 ? '' : 's') + ' (today). SAVE FILE keeps it.', true);
+}
 // the arrival of a machine not on site yet = its components' last read date (0 h)
 function _hzSetArrival(unit, iso) {
   const K = String(unit).toUpperCase(); let n = 0;
@@ -6384,7 +6399,7 @@ function _hzCommitDrag(unit, which, iso) {
   } else {
     if (iso >= _lensIsoAdd(fx.end, -10)) { _hzSetEnd(unit, null); _hzAfterChange(unit + ': no end date.'); return; }
     if (row.arrival && iso <= row.arrival) { showToast('The end date has to be after the arrival (' + _lensFmtD(row.arrival) + ').', 'warn', 4500); renderHorizon(); return; }
-    if (iso < t && !confirm('Decommission ' + unit + ' from ' + _lensFmtD(iso) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it; clear the end date to bring it back).')) { renderHorizon(); return; }
+    if (iso < t && !confirm('Retire ' + unit + ' from ' + _lensFmtD(iso) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it; open the editor to Revive it).')) { renderHorizon(); return; }
     _hzSetEnd(unit, iso);
     _hzAfterChange(unit + ': end date ' + _lensFmtD(iso) + '. Nothing is planned for it after that date.');
   }
@@ -6406,8 +6421,11 @@ function _hzOpenEditor(unit) {
   _hzOverlay(
     '<h3>' + esc(r.unit) + ' <small>' + esc(r.fleet) + ' · ' + esc(r.model) + (r.planned ? ' · planned' + (r.like ? ' (like ' + esc(r.like) + ')' : '') : '') + '</small></h3>' +
     '<div class="hz-f"><label>Status</label><span>' + esc(st.text) + '</span></div>' +
+    (st.kind === 'gone'
+      ? '<div class="hz-f" style="background:rgba(63,201,160,0.08);border:1px solid rgba(63,201,160,0.3);border-radius:6px;padding:8px 10px"><label>Revive</label><div>This machine is <b>retired</b>. To bring it back to <b>Active</b>, enter its <b>current SMU (hours)</b>: <input type="number" id="hz-e-smu" min="1" step="1" placeholder="current SMU" style="width:120px"> <button class="hz-btn hz-pri hz-sm" id="hz-e-revive">Revive</button><div class="hz-hint">clears the end date and sets the current reading (today) on every component. Planning restarts.</div></div></div>'
+      : '') +
     '<div class="hz-f"><label>Arrives</label>' + (r.arrival ? '<input type="date" id="hz-e-from" value="' + esc(r.arrival) + '"> <span class="hz-hint">not on site yet: its components are planned from this date</span>' : '<span class="hz-hint">on site (hours on file). A machine with no hours gets an arrival date in the update sheet (last read date) or here once it has one.</span>') + '</div>' +
-    '<div class="hz-f"><label>End (decommissioned)</label><input type="date" id="hz-e-to" value="' + esc(r.end || '') + '"> <button class="hz-btn hz-sm" id="hz-e-noend">no end</button> <span class="hz-hint">nothing is planned after it</span></div>' +
+    '<div class="hz-f"><label>End (retired)</label><input type="date" id="hz-e-to" value="' + esc(r.end || '') + '"> <button class="hz-btn hz-sm" id="hz-e-noend">no end</button> <span class="hz-hint">nothing is planned after it</span></div>' +
     '<div class="hz-f"><label>Parked</label><div id="hz-e-pk">' + (pk || '<span class="hz-hint">none</span>') + '</div></div>' +
     '<div class="hz-f"><label></label><button class="hz-btn hz-sm" id="hz-e-addpk">+ parked period</button> <span class="hz-hint">no hours while parked: later change-outs move out by its length</span></div>' +
     '<div class="hz-f"><label>Class</label><select id="hz-e-cls">' + '<option value="">Fleet: ' + esc(fc ? _hzClassName(fc) : 'no class') + '</option>' + HZ_CLASSES.map(function (k) { return '<option value="' + k[0] + '"' + (r.own === k[0] ? ' selected' : '') + '>' + k[1] + '</option>'; }).join('') + '</select></div>' +
@@ -6421,6 +6439,7 @@ function _hzOpenEditor(unit) {
     const d = document.createElement('div'); d.className = 'hz-pk'; d.innerHTML = '<input type="date" class="hz-pf"> to <input type="date" class="hz-pt"> <button class="hz-x" title="remove">&times;</button>'; box.appendChild(d);
   };
   document.getElementById('hz-e-pk').onclick = function (e) { if (e.target.classList.contains('hz-x')) e.target.parentElement.remove(); };
+  const rvBtn = document.getElementById('hz-e-revive'); if (rvBtn) rvBtn.onclick = function () { _hzRevive(unit); };
   document.getElementById('hz-e-cancel').onclick = _hzClose;
   document.getElementById('hz-e-save').onclick = function () { _hzSaveEditor(unit); };
   const rm = document.getElementById('hz-e-remove'); if (rm) rm.onclick = function () { _hzRemovePlanned(unit); };
@@ -6437,7 +6456,7 @@ function _hzSaveEditor(unit) {
   if (fromEl && (!from || from <= t)) bad = bad || 'The arrival has to be a date after today.';
   if (to && from && to <= from) bad = bad || 'The end date has to be after the arrival.';
   if (bad) { showToast(bad, 'warn', 5000); return; }
-  if (to && to < t && to !== r.end && !confirm('Decommission ' + unit + ' from ' + _lensFmtD(to) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it).')) return;
+  if (to && to < t && to !== r.end && !confirm('Retire ' + unit + ' from ' + _lensFmtD(to) + '?\n\nThat date has passed, so it leaves Pulse, Vitals and Bench (Horizon keeps it). Reopen the editor to Revive it.')) return;
   const m = _hzM(unit, true); let comps = false; const said = [];
   if (fromEl && from !== r.arrival) { _hzSetArrival(unit, from); comps = true; said.push('arrives ' + _lensFmtD(from)); }
   if ((to || null) !== (r.end || null)) { _hzSetEnd(unit, to); said.push(to ? 'end ' + _lensFmtD(to) : 'no end date'); }

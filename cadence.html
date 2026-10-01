@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.16 — NumaCore Lens Suite</title>
+<title>Cadence v18.17 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -182,6 +182,7 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
    pattern already used by .diamond.ghost and .diamond.today-marker (lines 129-130). */
 .diamond.projected-d{clip-path:none;width:8px;height:8px;background:transparent;border:1.5px solid currentColor;opacity:0.7;pointer-events:none;z-index:8;transform:translate(-50%,-50%) rotate(45deg)}
 .diamond.projected-d.condition{border-style:dashed}
+.retired-line{position:absolute;top:0;bottom:0;width:2px;background:repeating-linear-gradient(#f85149 0 4px,transparent 4px 8px);opacity:.55;z-index:4;pointer-events:none}
 .cm-label{position:absolute;font-size:7px;font-weight:800;pointer-events:none;letter-spacing:.3px;font-family:monospace;opacity:.75}
 
 /* ── PROJECT BARS ── */
@@ -1385,6 +1386,7 @@ document.addEventListener('drop', function(e) {
 
 let DATA = [];  // populated from JSON data file
 let HIST = [];  // componentHistory[] — loaded from JSON via _initFromJSON; populated by Import History from Excel
+let _cadRetired = {};  // v18.17 (C-09) — UNIT(uppercase) -> retired date (from the plan's horizon.machines[].active_to; read-only)
 // v18.4 (Chunk 5 / Slide 6) — vocabulary unified across the suite. Canonical
 // keys come from numacore_lib.js v1.4.0+ via canonicalCategory(). Legacy
 // values (tracks, drill_swing, Title-cased "Undercarriage" from operator
@@ -3044,7 +3046,9 @@ function renderTimeline() {
         const ox = dateToX(r.original_date);
         const cx = dateToX(r.changeout_date);
         // Suppress diamonds beyond the timeline window (prevents overflow scroll)
-        if (cx > tw) { /* skip */ } else {
+        // v18.17 (C-09) — also suppress a changeout after the machine's retired date (nothing is planned once retired).
+        const _retD = _cadRetired[String(r.unit || '').toUpperCase()];
+        if (cx > tw || (_retD && r.changeout_date && r.changeout_date > _retD)) { /* skip */ } else {
         const changed = r.changeout_date !== r.original_date;
         if (changed && ox <= tw) {
           const ghost = document.createElement('div');
@@ -3093,6 +3097,7 @@ function renderTimeline() {
               const projMs = startMs + n * cycleDays * DAY_MS;
               if (projMs > windowEndMs) break;
               const projDate = new Date(projMs).toISOString().split('T')[0];
+              if (_retD && projDate > _retD) break;   // v18.17 (C-09) — stop projecting past the retired date
               const projX = dateToX(projDate);
               if (projX > tw) break;   // beyond timeline edge
               const pd = document.createElement('div');
@@ -3106,6 +3111,9 @@ function renderTimeline() {
         }  // end else (cx <= tw)
       }
     } else if (row.type === 'unit') {
+      // v18.17 (C-09) — a faint marker at the machine's retired date (nothing is planned after it).
+      const _uRet = _cadRetired[String(row.unit || '').toUpperCase()];
+      if (_uRet) { const _rx = Math.max(0, dateToX(_uRet)); if (_rx <= tw) { const rl = document.createElement('div'); rl.className = 'retired-line'; rl.style.cssText = `left:${_rx}px`; rl.title = 'retired ' + _uRet; wrap.appendChild(rl); } }
       const unitProjs = getUnitProjects(row.unit);
       const BAR_H = 20, barTop = (h - BAR_H) / 2;
 
@@ -7913,6 +7921,14 @@ function _initFromJSON(json) {
   const _completed = Array.isArray(wd.completedProjects) ? wd.completedProjects
                    : (Array.isArray(wf.completedProjects) ? wf.completedProjects : null);
   state.completedProjects = _completed || [];
+  // v18.17 (C-09) — machine retired dates from the plan's horizon section (Lens-owned; read-only).
+  _cadRetired = {};
+  try {
+    const _hzMach = (json && json.horizon && json.horizon.machines) || null;
+    if (_hzMach && typeof _hzMach === 'object') {
+      Object.keys(_hzMach).forEach(function(k){ const a = _hzMach[k] && _hzMach[k].active_to; if (a) _cadRetired[String(k).toUpperCase()] = String(a).slice(0, 10); });
+    }
+  } catch(e) { console.warn('C-09 retired map:', e); }
   if (_decisions)              state.decisionLog = _decisions;
   if (_projConfig)             Object.assign(state.projConfig, _projConfig);
   if (_visibleMonths != null)  state.visibleMonths = _visibleMonths;
