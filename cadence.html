@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.15 — NumaCore Lens Suite</title>
+<title>Cadence v18.16 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -244,6 +244,8 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .cadc-hcomp{font-size:11.5px}
 .cadc-hcomp.done{color:#3fb950}
 .cadc-hcomp.left{color:#7d8590}
+.cadc-hentry.cancelled{border-left:3px solid #f85149}
+.cadc-hbadge.cancelled{color:#f85149;border-color:#5d2d2d;background:#2d1618}
 
 /* ── CONNECTOR SVG ── */
 #connectorSvg{position:absolute;top:0;left:0;pointer-events:none;z-index:6;overflow:visible}
@@ -3141,6 +3143,7 @@ function renderTimeline() {
               : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
             { sep: true },
             { label: '✓  Close / Complete', action: () => closeProjectDialog(proj.id) },
+            { label: `✕  Cancel ${termLabel()}`, action: () => cancelProjectDialog(proj.id) },
             { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => removeProject(proj.id) }
           ]);
         });
@@ -3716,9 +3719,9 @@ function _cadcConfirm() {
     };
   });
   const entry = {
-    kind: 'project-close',   /* v18.15 — A-16 forward-compat: self-describing lifecycle event */
+    kind: 'project-complete',   /* v18.16 — A-16 project state (completed). Was 'project-close' in v18.15 (free rename, pre-client) */
     schema: 1,               /* bump on shape change; a future A-16 migrator keys off kind+schema */
-    state: 'closed',
+    state: 'completed',
     id: proj.id, name: proj.name || proj.id,
     unit: proj.unit, fleet: proj.fleet, model: proj.model,
     start_date: proj.start_date, end_date: proj.end_date,
@@ -3738,8 +3741,65 @@ function _cadcConfirm() {
   [...(proj.linkedIds || [])].forEach(id => breakLinkSilent(id));
   state.projects = state.projects.filter(p => p.id !== projId);
   _cadcCancel();
-  render(); renderConnectors();
+  rerenderActiveTab(); renderConnectors();
   showToast(termLabel() + ' "' + (proj.name || proj.id) + '" closed — ' + doneN + ' to history, ' + leftN + ' left on schedule');
+}
+
+function cancelProjectDialog(projId) {
+  const proj = state.projects.find(p => p.id === projId);
+  if (!proj) return;
+  const n = (proj.linkedIds || []).length;
+  showPopup(
+    'Cancel ' + termLower() + ' <strong>' + esc(proj.name || projId) + '</strong>? <em>(off the cards — work not done)</em>'
+    + '<br><br>All <strong>' + n + '</strong> linked component' + (n === 1 ? '' : 's')
+    + ' will be <strong>unlinked</strong> and returned to their theoretical change-out dates. The ' + termLower()
+    + ' is kept as a <strong>cancelled</strong> record under History (no history is built — nothing was done).'
+    + '<br><br><input type="text" id="cad-cancel-reason" placeholder="reason (optional)" '
+    + 'style="width:100%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:12px;padding:6px 8px">',
+    [
+      { label: 'Cancel ' + termLower(), cls: 'danger', action: () => _commitCancelProject(projId, (document.getElementById('cad-cancel-reason') || {}).value || '') },
+      { label: 'Keep' }
+    ]
+  );
+}
+
+function _commitCancelProject(projId, reason) {
+  const proj = state.projects.find(p => p.id === projId);
+  if (!proj) return;
+  const closedComponents = (proj.linkedIds || []).map(id => {
+    const rec = state.data.find(r => r.id === id);
+    return {
+      id: id,
+      component: rec ? (rec.component || '') : '',
+      unit: rec ? (rec.unit || '') : (proj.unit || ''),
+      completed: false,
+      notes: '',
+      changeout_date: rec ? (rec.changeout_date || null) : null,
+      original_date:  rec ? (rec.original_date  || null) : null
+    };
+  });
+  const entry = {
+    kind: 'project-cancel',   /* v18.16 — A-16 lifecycle event (cancelled = off the cards, work not done) */
+    schema: 1,
+    state: 'cancelled',
+    id: proj.id, name: proj.name || proj.id,
+    unit: proj.unit, fleet: proj.fleet, model: proj.model,
+    start_date: proj.start_date, end_date: proj.end_date,
+    completedDate: _projTodayDS(),   /* the cancel date — nothing was completed */
+    closedAt: new Date().toISOString(),
+    applied: false,
+    note: (reason || '').trim(),
+    closedComponents: closedComponents
+  };
+  state.completedProjects = state.completedProjects || [];
+  state.completedProjects.push(entry);
+  logEvent('PROJECT_CANCEL',
+    termLabel() + ' "' + (proj.name || proj.id) + '" cancelled (off the cards) — ' + closedComponents.length + ' component(s) unlinked, back to theoretical',
+    proj.id, { links: (proj.linkedIds || []).length }, { state: 'cancelled' });
+  [...(proj.linkedIds || [])].forEach(id => breakLinkSilent(id));
+  state.projects = state.projects.filter(p => p.id !== projId);
+  rerenderActiveTab(); renderConnectors();
+  showToast(termLabel() + ' "' + (proj.name || proj.id) + '" cancelled — ' + closedComponents.length + ' component(s) back on the schedule');
 }
 
 function _renderProjectHistory() {
@@ -3758,14 +3818,17 @@ function _renderProjectHistory() {
       '</div>'
     ).join('');
     const closedOn = (e.closedAt || '').slice(0, 10);
-    return '<details class="cadc-hentry"><summary>' +
+    const cancelled = e.state === 'cancelled';
+    const badge = cancelled ? '✕ cancelled · ' + cc.length + ' unlinked' : (doneN + ' history · ' + leftN + ' left');
+    const noteHtml = (cancelled && e.note) ? ' — <em>' + esc(e.note) + '</em>' : '';
+    return '<details class="cadc-hentry' + (cancelled ? ' cancelled' : '') + '"><summary>' +
       '<span class="cadc-hname">' + esc(e.name || e.id) + '</span>' +
       '<span class="cadc-hmeta">' + esc(e.unit || '') + ' · ' + esc(e.model || '') + ' · ' +
-        esc(e.completedDate || e.end_date || '') + ' · closed ' + esc(closedOn) + '</span>' +
-      '<span class="cadc-hbadge">' + doneN + ' history · ' + leftN + ' left</span>' +
+        (cancelled ? 'cancelled ' : esc(e.completedDate || e.end_date || '') + ' · closed ') + esc(closedOn) + noteHtml + '</span>' +
+      '<span class="cadc-hbadge' + (cancelled ? ' cancelled' : '') + '">' + badge + '</span>' +
       '</summary><div class="cadc-hbody">' + (comps || '<em>no components</em>') + '</div></details>';
   }).join('');
-  host.innerHTML = '<div class="cadc-hhdr">⧗ History — completed ' + termPlural().toLowerCase() + ' (' + cp.length + ')</div>' + rows;
+  host.innerHTML = '<div class="cadc-hhdr">⧗ History — completed & cancelled ' + termPlural().toLowerCase() + ' (' + cp.length + ')</div>' + rows;
 }
 
 // ─── PROJECT DRAG ────────────────────────────────────────────────
@@ -4248,6 +4311,7 @@ function renderProjectList() {
           : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
         { sep: true },
         { label: '✓  Close / Complete', action: () => closeProjectDialog(proj.id) },
+        { label: `✕  Cancel ${termLabel()}`, action: () => cancelProjectDialog(proj.id) },
         { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => removeProject(proj.id) }
       ]);
     });
@@ -4468,6 +4532,7 @@ function renderProjectOptimiser() {
               : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
             { sep: true },
             { label: '✓  Close / Complete', action: () => { closeProjectDialog(proj.id); } },
+            { label: `✕  Cancel ${termLabel()}`, action: () => { cancelProjectDialog(proj.id); } },
             { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => { removeProject(proj.id); renderProjectOptimiser(); } }
           ]);
         });
