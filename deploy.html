@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NumaCore Deploy v8.20 — Shutdown &amp; Project Manager</title>
+<title>NumaCore Deploy v8.22 — Shutdown &amp; Project Manager</title>
 <script src="numacore_lib.js"></script>
 <style>
 /* ══════════════════════════════════════════════════
@@ -80,6 +80,24 @@ body { font-family:'Segoe UI',Arial,sans-serif; background:var(--bg); color:var(
 .proj-item.activated:not(.selected) { border-left-color:var(--green); }
 .proj-item.in-horizon:not(.activated) { border-left-color:var(--amber); }
 .proj-item.in-horizon:not(.activated) .pi-name { color:var(--amber); }
+/* v8.21 — in-execution chip + prompt */
+.pi-exec { color:#7ee787; font-weight:700; cursor:pointer; }
+#dep-exec-banner { position:fixed; top:64px; left:50%; transform:translateX(-50%); z-index:9000; background:#1c2128; border:1px solid #d29922; border-radius:8px; box-shadow:0 8px 28px rgba(0,0,0,.6); padding:8px 12px; max-width:min(880px,94vw); max-height:40vh; overflow:auto; }
+.deb-row { display:flex; align-items:center; gap:10px; padding:4px 0; font-size:12px; color:#c9d1d9; }
+.deb-q { flex:1; }
+.deb-yes, .deb-no { border-radius:6px; font-size:11px; font-weight:700; padding:5px 12px; cursor:pointer; border:1px solid #30363d; background:#21262d; color:#c9d1d9; white-space:nowrap; }
+.deb-yes { background:#1a4d2e; border-color:#2ea043; color:#7ee787; }
+/* v8.22 — Mark as complete */
+.pi-done { color:#7ee787; font-weight:600; }
+.pi-review { color:var(--amber); font-weight:700; }
+.pd-done-tag { color:#7ee787; font-size:11px; font-weight:600; }
+.btn-done { background:#1a4d2e; border:1px solid #2ea043; color:#7ee787; border-radius:6px; font-size:11px; font-weight:700; padding:5px 12px; cursor:pointer; }
+.btn-done:hover { background:#2ea043; color:#fff; }
+.pd-lock { color:var(--amber); font-size:11px; font-weight:700; }
+/* a completed project is view only: fields, buttons and dragging are off; tabs, scrolling, Reopen and Review done still work */
+#proj-detail.pd-readonly .tab-panels :is(input, select, textarea, button, [onmousedown], [ondragstart], [contenteditable]) { pointer-events:none; }
+#proj-detail.pd-readonly .tab-panels :is(input, select, textarea) { opacity:.7; }
+#proj-detail.pd-readonly .gate-strip :is([onclick], button) { pointer-events:none; }
 .pi-toggle { margin-top:3px; flex:0 0 auto; padding-left:10px; }
 .pi-info { flex:1; min-width:0; }
 .pi-name { font-size:12px; font-weight:600; color:var(--txt2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -634,6 +652,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
           <button class="sb-filter active" id="fAll"    onclick="setFilter('all')">All</button>
           <button class="sb-filter"        id="fActive" onclick="setFilter('active')">Active</button>
           <button class="sb-filter"        id="fPend"   onclick="setFilter('pending')">Pending</button>
+          <button class="sb-filter"        id="fDone"   onclick="setFilter('done')">Done</button>
         </div>
       </div>
       <div class="sb-list" id="sbList"></div>
@@ -848,6 +867,47 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
       <button class="mbtn secondary" id="deactClearBtn" style="border-color:var(--red);color:var(--red)" onclick="_deactivateClear()">🧹 Clear project memory</button>
       <button class="mbtn primary"   onclick="_deactivatePark()">🅿 Park (keep everything)</button>
     </div>
+  </div>
+</div>
+
+<!-- v8.22 — is the information final? (asked before Mark as complete) -->
+<div class="modal-ov" id="modalFinal">
+  <div class="modal" style="min-width:460px">
+    <div class="modal-title">✓ Mark as complete</div>
+    <div class="mrow"><span class="mlbl">Project</span><div style="font-size:13px;color:var(--txt2);font-weight:600" id="finProjName"></div></div>
+    <div class="mrow"><div style="font-size:13px;color:var(--txt);line-height:1.6"><strong>Is the information captured in Deploy final?</strong><br>Closing this project will make these read-only.</div></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="_depFinalValidate()">Let me validate</button>
+      <button class="mbtn primary" onclick="_depFinalYes()">Yes — it is final</button>
+    </div>
+  </div>
+</div>
+<!-- v8.22 — Mark as complete (D-04) -->
+<div class="modal-ov" id="modalComplete">
+  <div class="modal" style="min-width:540px">
+    <div class="modal-title">✓ Mark as complete</div>
+    <div class="mrow"><span class="mlbl">Project</span><div style="font-size:13px;color:var(--txt2);font-weight:600" id="cmpProjName"></div></div>
+    <div class="mrow" style="display:flex;gap:12px">
+      <div style="flex:1"><span class="mlbl">Completed on</span><input type="date" class="minp" id="cmpDate"></div>
+      <div style="flex:1"><span class="mlbl">By (optional)</span><input type="text" class="minp" id="cmpBy" placeholder="name"></div>
+    </div>
+    <div class="mrow"><span class="mlbl">Components — all changed; untick any that were deferred</span>
+      <div id="cmpComps" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:4px;padding:6px 8px"></div>
+      <div id="cmpSummary" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+    </div>
+    <div class="mrow"><span class="mlbl">Learnings (optional — now, or at the review)</span><textarea class="minp" id="cmpLearn" rows="3"></textarea></div>
+    <div class="mrow"><span class="mlbl">Review due</span><input type="date" class="minp" id="cmpReview" style="max-width:200px"> <span style="font-size:11px;color:var(--muted)">default +30 days; clear it for no review</span></div>
+    <div class="m-actions">
+      <button class="mbtn secondary" onclick="closeModal('modalComplete')">Cancel</button>
+      <button class="mbtn primary" onclick="_depConfirmComplete()">✓ Mark as complete</button>
+    </div>
+  </div>
+</div>
+<div class="modal-ov" id="modalDoneSummary">
+  <div class="modal" style="min-width:480px">
+    <div class="modal-title" id="dsTitle"></div>
+    <div id="dsBody" style="font-size:12px;color:var(--txt2);line-height:1.7"></div>
+    <div class="m-actions" id="dsActions"></div>
   </div>
 </div>
 
@@ -1141,7 +1201,7 @@ tr.wo-carried-over .wo-carry-marker { display:inline-block; margin-left:6px; fon
 // ─────────────────────────────────────────────
 // (localStorage removed — deploy data lives in fleetData.workingData.deployData)
 
-const VERSION = '8.20';  // single source of truth for tool version (v8.20: IW39 / Inventory Master from the client folder via Lens; one Save inside Lens; nothing older than 30 days loaded)
+const VERSION = '8.22';  // single source of truth for tool version (v8.20: IW39 / Inventory Master from the client folder via Lens; one Save inside Lens; nothing older than 30 days loaded)
 
 // Time constants — avoid magic numbers throughout the Gantt and overview calculations
 const MS_PER_DAY    = 86400000;
@@ -1419,7 +1479,26 @@ function parseFleet() {
     start:     p.start_date || p.start || '',
     end:       p.end_date   || p.end   || '',
     linkedIds: p.linkedIds  || [],
+    execution: p.execution || null,       /* v8.21 — Cadence's in-execution answer (read-only here) */
+    execAskedOn: p.execAskedOn || null,
   }));
+  // v8.22 — projects closed in Cadence (completedProjects; read-only here) stay viewable in Deploy under Done, read-only.
+  _cadClosed = {};
+  try {
+    const _cp = fleetData?.workingData?.completedProjects || fleetData?.working?.completedProjects || [];
+    _cp.forEach(function (e) {
+      if (!e || !e.id || e.state === 'cancelled') return;
+      const cc = (e.closedComponents || []).map(function (c) { return { id: c.id, component: c.component, completed: !!c.completed }; });
+      _cadClosed[e.id] = { kind: 'project-complete', schema: 1, source: 'cadence', _fromCadence: true, state: 'completed',
+        subject: { type: 'project', id: e.id, unit: e.unit, fleet: e.fleet, model: e.model },
+        effectiveDate: e.completedDate || e.end_date || '', recordedAt: e.closedAt || '', actor: null, note: e.note || '',
+        detail: { name: e.name || e.id, start: e.start_date || '', end: e.end_date || '', components: cc, reviewDue: null, reviewDone: false, log: [] } };
+      if (!fleetProjects.some(function (p) { return p.id === e.id; })) {
+        fleetProjects.push({ id: e.id, name: e.name || e.id, unit: e.unit, fleet: e.fleet, model: e.model, color: '#5b9cf6',
+          start: e.start_date || '', end: e.end_date || '', linkedIds: cc.map(function (c) { return c.id; }), execution: null, execAskedOn: null, _closed: true });
+      }
+    });
+  } catch (e) { console.warn('[v8.22 cadence-closed]', e); }
 
   fleetComps = {};
   rawComp.forEach(c => { fleetComps[c.id] = c; });
@@ -1577,6 +1656,7 @@ function startApp() {
   // Restore call horizon from saved deploy data (DOM is ready at this point)
   if (deploy.callHorizonMonths) setCallHorizon(deploy.callHorizonMonths);
   renderSidebar();
+  try { _depExecPromptCheck(); } catch (e) { console.warn('[v8.21 exec prompt]', e); }
   // v8.19 FIX-3 — header pills reflect this file on every (re)load
   try { _updateIW39StatusPill(); _updateInvMasterStatusPill(); } catch (e) { console.warn('[v8.19 pills]', e); }
   // v8.16 FIX-3 (2026-06-10, operator-reported) — view preservation on re-ingest.
@@ -1806,16 +1886,229 @@ function setFilter(f) {
   });
   // Reset all then set active
   document.getElementById('fAll').classList.toggle('active', f==='all');
+  { const _fd = document.getElementById('fDone'); if (_fd) _fd.classList.toggle('active', f === 'done'); }
   document.getElementById('fActive').classList.toggle('active', f==='active');
   document.getElementById('fPend').classList.toggle('active', f==='pending');
   renderSidebar();
 }
 
+// ═══ v8.21 — A-16 project state "in execution" + the "Project now in execution?" prompt ═══
+// Deploy records its answer in ITS OWN slice (deployData.projectExecution[id] = {inExecution, at, askedOn}); Cadence
+// records its own on the project (projects[].execution = {on, at}), which Deploy reads read-only. The LATEST answer
+// wins, so both tools agree without writing into each other's slice.
+function _depLocalToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function _depExecMap() { if (!deploy) return {}; if (!deploy.projectExecution || typeof deploy.projectExecution !== 'object') deploy.projectExecution = {}; return deploy.projectExecution; }
+function _depInExec(p) {
+  if (!p) return false;
+  const a = (deploy && deploy.projectExecution && deploy.projectExecution[p.id]) || null, b = p.execution || null;
+  const aHas = !!(a && a.at);
+  if (aHas && b) return (String(a.at) >= String(b.at || '')) ? !!a.inExecution : !!b.on;
+  if (aHas) return !!a.inExecution;
+  if (b) return !!b.on;
+  return false;
+}
+function _depSetExec(id, on) {
+  const m = _depExecMap();
+  m[id] = { inExecution: !!on, at: new Date().toISOString(), askedOn: _depLocalToday() };
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  renderSidebar(); _depExecPromptCheck();
+  const p = fleetProjects.find(x => x.id === id);
+  toast((p ? p.name : id) + ' — ' + (on ? 'in execution' : 'back to planning'), 'success');
+}
+function _depExecSnooze(id) {
+  const m = _depExecMap();
+  m[id] = Object.assign({ inExecution: false, at: '' }, m[id] || {}, { askedOn: _depLocalToday() });
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  _depExecPromptCheck();
+}
+function _depExecUndo(id) {
+  const p = fleetProjects.find(x => x.id === id);
+  if (confirm('Set "' + (p ? p.name : id) + '" back to planning (not in execution)?')) _depSetExec(id, false);
+}
+function _depExecDue() {
+  const t = _depLocalToday(), m = (deploy && deploy.projectExecution) || {};
+  return (fleetProjects || []).filter(function (p) {
+    if (!p.start || String(p.start).slice(0, 10) > t) return false;
+    if (_depIsDone(p.id)) return false;
+    if (_depInExec(p)) return false;
+    if (m[p.id] && m[p.id].askedOn === t) return false;
+    if (p.execAskedOn === t) return false;
+    return true;
+  });
+}
+function _depExecPromptCheck() {
+  let host = document.getElementById('dep-exec-banner');
+  const due = (fleetData && deploy) ? _depExecDue() : [];
+  if (!due.length) { if (host) host.remove(); return; }
+  if (!host) { host = document.createElement('div'); host.id = 'dep-exec-banner'; document.body.appendChild(host); }
+  host.innerHTML = due.map(function (p) {
+    return '<div class="deb-row"><span class="deb-q"><b>' + esc(p.name || p.id) + '</b> reached its start date (' + esc(String(p.start).slice(0, 10)) + '). <b>Project now in execution?</b></span>' +
+      '<button class="deb-yes" onclick="_depSetExec(\'' + esc(p.id) + '\', true)">Yes — in execution</button>' +
+      '<button class="deb-no" onclick="_depExecSnooze(\'' + esc(p.id) + '\')">Not yet</button></div>';
+  }).join('');
+}
+
+// ═══ v8.22 — D-04 Mark as complete (A-16 lifecycle shape; no work-order step) ═══════════
+// Deploy records the completion in ITS OWN slice: deployData.completions[projectId], one A-16 lifecycle entry
+// ({kind, schema, source, subject, state, effectiveDate, recordedAt, actor, note, applied, detail}). Deploy never
+// writes components or Cadence's project. Cadence reads this entry and offers its own Close (which Lens then turns
+// into component history), so the change-out is recorded once, by the tool that owns each piece.
+function _depCompletions() { if (!deploy) return {}; if (!deploy.completions || typeof deploy.completions !== 'object') deploy.completions = {}; return deploy.completions; }
+let _cadClosed = {};   /* projects closed in Cadence -> a read-only completion view (built in parseFleet) */
+function _depCompletion(id) { const c = deploy && deploy.completions && deploy.completions[id]; return (c && c.state === 'completed') ? c : (_cadClosed[id] || null); }
+function _depOpenFromShell(id) {
+  if (fleetProjects.some(function (x) { return x.id === id; })) { openProject(id); try { switchTab('overview'); } catch (e) {} }
+  else if (_depIsDone(id)) _depOpenDoneSummary(id);
+  else toast('That project is not in this plan.', 'error');
+}
+function _depIsDone(id) { return !!_depCompletion(id); }
+function _depFmtD(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return iso || '—'; return Number(m[3]) + ' ' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(m[2]) - 1] + ' ' + m[1]; }
+function _depAddDays(iso, n) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); if (!m) return ''; const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function _depReviewDue(c) { const d = (c && c.detail) || {}; return !!(d.reviewDue && !d.reviewDone && d.reviewDue <= _depLocalToday()); }
+function _depDoneList() {
+  const m = (deploy && deploy.completions) || {};
+  const ids = Object.keys(m).filter(function (id) { return m[id] && m[id].state === 'completed'; });
+  Object.keys(_cadClosed).forEach(function (id) { if (ids.indexOf(id) === -1) ids.push(id); });
+  return ids.map(function (id) {
+    const c = _depCompletion(id), d = c.detail || {}, live = fleetProjects.find(function (x) { return x.id === id; });
+    return Object.assign({ id: id, name: d.name || id, unit: (c.subject && c.subject.unit) || '', fleet: (c.subject && c.subject.fleet) || '', model: (c.subject && c.subject.model) || '', color: d.color || '#5b9cf6', start: d.start || '', end: d.end || '', linkedIds: [] }, live || {}, { _done: true });
+  }).sort(function (a, b) { return String((_depCompletion(b.id) || {}).effectiveDate || '').localeCompare(String((_depCompletion(a.id) || {}).effectiveDate || '')); });
+}
+function _depDoneTag(id) {
+  const c = _depCompletion(id); if (!c) return '';
+  return ' · <span class="pi-done">✓ completed ' + esc(_depFmtD(c.effectiveDate)) + '</span>' + (_depReviewDue(c) ? ' · <span class="pi-review">Review due</span>' : '');
+}
+// v8.22 — before completing: is what Deploy holds for this project final? Completing makes it read-only.
+let _finalId = null;
+function _depAskFinal(id) {
+  const p = fleetProjects.find(function (x) { return x.id === id; }); if (!p) return;
+  _finalId = id;
+  document.getElementById('finProjName').textContent = p.unit + ' — ' + p.name;
+  openModal('modalFinal');
+}
+function _depFinalYes() { closeModal('modalFinal'); if (_finalId) _depOpenComplete(_finalId); }
+function _depFinalValidate() {
+  closeModal('modalFinal');
+  if (!_finalId) return;
+  openProject(_finalId);
+  try { switchTab('overview'); } catch (e) {}
+  toast('Nothing was closed. Check the project, then press Mark as complete again.', '');
+}
+let _cmpId = null;
+function _depOpenComplete(id) {
+  const p = fleetProjects.find(function (x) { return x.id === id; }); if (!p) return;
+  _cmpId = id;
+  const date = String(p.end || _depLocalToday()).slice(0, 10);
+  document.getElementById('cmpProjName').textContent = p.unit + ' — ' + p.name + '  (planned ' + _depFmtD(p.start) + ' – ' + _depFmtD(p.end) + ')';
+  document.getElementById('cmpDate').value = date;
+  document.getElementById('cmpBy').value = '';
+  const linked = (p.linkedIds || []).map(function (i) { return fleetComps[i] ? { id: i, name: fleetComps[i].component || fleetComps[i].name || i } : null; }).filter(Boolean);
+  document.getElementById('cmpComps').innerHTML = linked.length
+    ? linked.map(function (c) { return '<label style="display:flex;gap:8px;align-items:center;font-size:12px;padding:2px 0;cursor:pointer"><input type="checkbox" class="cmp-chk" data-cid="' + esc(c.id) + '" data-cname="' + esc(c.name) + '" checked onchange="_depCmpSummary()"> ' + esc(c.name) + '</label>'; }).join('')
+    : '<span style="font-size:11px;color:var(--muted)">No linked components.</span>';
+  document.getElementById('cmpLearn').value = '';
+  document.getElementById('cmpReview').value = _depAddDays(date, 30);
+  _depCmpSummary();
+  openModal('modalComplete');
+}
+function _depCmpSummary() {
+  const all = Array.prototype.slice.call(document.querySelectorAll('#cmpComps .cmp-chk'));
+  const n = all.filter(function (c) { return c.checked; }).length;
+  document.getElementById('cmpSummary').textContent = all.length ? (n + ' changed · ' + (all.length - n) + ' deferred (a deferred component stays in the plan as still due)') : '';
+}
+function _depConfirmComplete() {
+  const id = _cmpId, p = fleetProjects.find(function (x) { return x.id === id; }); if (!p) return;
+  const date = document.getElementById('cmpDate').value;
+  if (!date) { toast('Enter the completion date.', 'error'); return; }
+  const prev = _depCompletions()[id];
+  const log = (prev && prev.detail && Array.isArray(prev.detail.log)) ? prev.detail.log.slice() : [];
+  log.push({ at: new Date().toISOString(), action: 'marked complete', note: date });
+  const comps = Array.prototype.slice.call(document.querySelectorAll('#cmpComps .cmp-chk')).map(function (c) { return { id: c.getAttribute('data-cid'), component: c.getAttribute('data-cname'), completed: !!c.checked }; });
+  _depCompletions()[id] = {
+    kind: 'deploy-changeout', schema: 1, source: 'deploy',
+    subject: { type: 'project', id: id, unit: p.unit, fleet: p.fleet, model: p.model },
+    state: 'completed',
+    effectiveDate: date,
+    recordedAt: new Date().toISOString(),
+    actor: (document.getElementById('cmpBy').value || '').trim() || null,
+    note: (document.getElementById('cmpLearn').value || '').trim(),
+    applied: false,
+    detail: { name: p.name, start: p.start, end: p.end, color: p.color, components: comps,
+              reviewDue: document.getElementById('cmpReview').value || null, reviewDone: false, reviewDoneAt: null, log: log }
+  };
+  const P = pd(id), g12 = P && Array.isArray(P.gates) ? P.gates.find(function (g) { return g.id === 'g12'; }) : null;
+  if (g12) { g12.status = 'complete'; g12.completedDate = date; }
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  closeModal('modalComplete');
+  renderSidebar(); _depExecPromptCheck();
+  if (selProjId === id) openProject(id);
+  const nDone = comps.filter(function (c) { return c.completed; }).length;
+  toast(p.name + ' marked complete — ' + nDone + ' changed' + (comps.length - nDone ? ', ' + (comps.length - nDone) + ' deferred' : '') + '. Cadence will offer to close it.', 'success');
+}
+function _depReopen(id) {
+  const c = _depCompletion(id); if (!c) return;
+  if (c._fromCadence) { toast('Closed in Cadence — it cannot be reopened from Deploy.', 'error'); return; }
+  if (!confirm('Reopen "' + ((c.detail && c.detail.name) || id) + '"? It goes back to the active lists. (Logged.)')) return;
+  c.state = 'reopened';
+  c.detail = c.detail || {}; c.detail.log = c.detail.log || [];
+  c.detail.log.push({ at: new Date().toISOString(), action: 'reopened', note: '' });
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  closeModal('modalDoneSummary');
+  renderSidebar(); _depExecPromptCheck();
+  if (selProjId === id && fleetProjects.some(function (x) { return x.id === id; })) openProject(id);
+  toast('Reopened.', 'success');
+}
+function _depReviewDone(id) {
+  const c = _depCompletion(id); if (!c || c._fromCadence) return;
+  const t = prompt('Review notes / learnings (optional):', c.note || '');
+  if (t === null) return;
+  c.note = t.trim();
+  c.detail = c.detail || {}; c.detail.reviewDone = true; c.detail.reviewDoneAt = new Date().toISOString();
+  (c.detail.log = c.detail.log || []).push({ at: c.detail.reviewDoneAt, action: 'review done', note: '' });
+  if (typeof _markUnsaved === 'function') _markUnsaved();
+  closeModal('modalDoneSummary');
+  renderSidebar();
+  if (selProjId === id && fleetProjects.some(function (x) { return x.id === id; })) openProject(id);
+  toast('Review recorded.', 'success');
+}
+function _depDoneControlsHtml(id) {
+  const c = _depCompletion(id); if (!c) return '';
+  const d = c.detail || {};
+  const rev = d.reviewDone ? '<span class="pd-done-tag">review done</span>'
+            : d.reviewDue ? '<span class="' + (_depReviewDue(c) ? 'pi-review' : 'pd-done-tag') + '">review ' + (_depReviewDue(c) ? 'due ' : 'on ') + esc(_depFmtD(d.reviewDue)) + '</span> <button class="mbtn secondary" style="padding:3px 10px;font-size:11px" onclick="_depReviewDone(\'' + esc(id) + '\')">Review done</button>'
+            : '';
+  return '<span class="pd-lock" title="A completed project is view only. Reopen it to make changes.">🔒 read-only</span> <span class="pd-done-tag">✓ Completed ' + esc(_depFmtD(c.effectiveDate)) + (c.actor ? ' · ' + esc(c.actor) : '') + '</span> ' + rev +
+         (c._fromCadence ? ' <span class="pd-done-tag" title="Closed in Cadence — its history is built; it cannot be reopened from Deploy.">closed in Cadence</span>'
+                         : ' <button class="mbtn secondary" style="padding:3px 10px;font-size:11px" onclick="_depReopen(\'' + esc(id) + '\')">Reopen</button>');
+}
+function _depOpenDoneSummary(id) {
+  const c = _depCompletion(id); if (!c) return;
+  const d = c.detail || {}, cc = d.components || [];
+  document.getElementById('dsTitle').textContent = '✓ ' + (d.name || id);
+  document.getElementById('dsBody').innerHTML =
+    '<div>' + esc((c.subject && c.subject.unit) || '') + ' · ' + esc((c.subject && c.subject.model) || '') + ' · planned ' + esc(_depFmtD(d.start)) + ' – ' + esc(_depFmtD(d.end)) + '</div>' +
+    '<div style="margin:8px 0">' + cc.map(function (x) { return '<div style="color:' + (x.completed ? 'var(--green)' : 'var(--muted)') + '">' + (x.completed ? '✓ ' : '○ ') + esc(x.component || x.id) + (x.completed ? '' : ' — deferred') + '</div>'; }).join('') + '</div>' +
+    (c.note ? '<div><b>Learnings:</b> ' + esc(c.note) + '</div>' : '');
+  document.getElementById('dsActions').innerHTML = _depDoneControlsHtml(id) + ' <button class="mbtn primary" onclick="closeModal(\'modalDoneSummary\')">Close</button>';
+  openModal('modalDoneSummary');
+}
+function _depRenderDoneControls(id) {
+  let box = document.getElementById('pdDoneBox');
+  if (!box) { box = document.createElement('span'); box.id = 'pdDoneBox'; box.style.cssText = 'display:inline-flex;gap:8px;align-items:center;margin-left:10px;flex-wrap:wrap'; document.getElementById('pdRow1Extra').appendChild(box); }
+  const c = _depCompletion(id);
+  { const _det = document.getElementById('proj-detail'); if (_det) _det.classList.toggle('pd-readonly', !!c); }
+  if (!c) { box.innerHTML = '<button class="btn-done" onclick="_depAskFinal(\'' + esc(id) + '\')">✓ Mark as complete</button>'; return; }
+  box.innerHTML = _depDoneControlsHtml(id);
+  const st = document.getElementById('pdStatus'); if (st) { st.textContent = '✓ Completed'; st.className = 'pd-status active'; }
+  const ab = document.getElementById('pdActivateBtn'); if (ab) ab.style.display = 'none';
+}
+
 function renderSidebar() {
   const q = (document.getElementById('sbSearch')?.value || '').toLowerCase();
-  let list = fleetProjects;
+  let list = fleetProjects.filter(p => !_depIsDone(p.id));   /* v8.22 — completed projects live under Done */
   if (sbFilter === 'active')  list = list.filter(p => isActive(p.id));
   if (sbFilter === 'pending') list = list.filter(p => !isActive(p.id));
+  if (sbFilter === 'done')    list = _depDoneList();
   if (q) list = list.filter(p =>
     p.unit.toLowerCase().includes(q) ||
     p.name.toLowerCase().includes(q) ||
@@ -1857,7 +2150,7 @@ function renderSidebar() {
     const inHorizon = withinHorizon(p.id);
     const div = document.createElement('div');
     div.className = 'proj-item' + (sel?' selected':'') + (active?' activated':'') + (inHorizon&&!active?' in-horizon':'');
-    div.onclick = () => openProject(p.id);
+    div.onclick = () => (p._done && !fleetProjects.some(x => x.id === p.id)) ? _depOpenDoneSummary(p.id) : openProject(p.id);
 
     div.innerHTML = `
       <div class="pi-toggle" onclick="event.stopPropagation();handleToggle('${p.id}')">
@@ -1868,7 +2161,7 @@ function renderSidebar() {
       </div>
       <div class="pi-info">
         <div class="pi-name">${esc(p.unit)} — ${esc(p.fleet)}</div>
-        <div class="pi-meta">${esc(p.name)} · ${fmtDate(p.start)||'—'}</div>
+        <div class="pi-meta">${esc(p.name)} · ${fmtDate(p.start)||'—'}${_depInExec(p) ? ` · <span class="pi-exec" title="in execution — click to set back to planning" onclick="event.stopPropagation();_depExecUndo('${p.id}')">▶ in execution</span>` : ''}${_depDoneTag(p.id)}</div>
         ${active ? `<div class="pi-bar"><div class="pi-bar-fill" style="width:${prog}%"></div></div>` : ''}
       </div>`;
     el.appendChild(div);
@@ -1879,6 +2172,7 @@ function renderSidebar() {
 // ACTIVATION
 // ─────────────────────────────────────────────
 function handleToggle(id) {
+  if (typeof _depIsDone === 'function' && _depIsDone(id)) { toast('This project is completed — read-only. Reopen it to make changes.', 'error'); return; }   /* v8.22 */
   if (isActive(id)) {
     // v8.17 — deactivation is now a CHOICE (operator-requested 2026-06-10:
     // "when I de-activate a project I should have the choice to retain the
@@ -2083,6 +2377,7 @@ function renderProjHeader(id) {
     openModal('modalActivate');
   };
 
+  try { _depRenderDoneControls(id); } catch (e) { console.warn('[v8.22 done controls]', e); }
   const linked = (p.linkedIds || []).map(i => fleetComps[i]).filter(Boolean);
   const comps  = [...new Set(linked.map(c => c.component || c.name || '').filter(Boolean))].slice(0,5);
 
@@ -6126,7 +6421,7 @@ function addCustomTask(projId, type) {
     type,                                  // 'task' | 'milestone'
     durationDays:  5,
     planStart:     todayStr(),
-    planEnd:       new Date(Date.now() + 5 * MS_PER_DAY).toISOString().split('T')[0],
+    planEnd:       _depAddDays(todayStr(), 5),   /* v8.22 — local date */
     status:        'not_started',
     owner:         '',
     targetDate:    '',
@@ -6538,7 +6833,7 @@ function hexToRgb(hex) {
   const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex||'#5b9cf6');
   return r ? `${parseInt(r[1],16)},${parseInt(r[2],16)},${parseInt(r[3],16)}` : '91,156,246';
 }
-function todayStr() { return new Date().toISOString().split('T')[0]; }
+function todayStr() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }   /* v8.22 — local date (toISOString is UTC = tomorrow from 5 pm Pacific) */
 // v8.1: esc sourced from numacore_lib.js with inline fallback for resilience
 // v8.17 FIX-2 (review P5) — fallback now escapes single quotes too, verbatim with the
 // lib's 5-char version. The 4-char divergent twin left single-quoted inline-handler
@@ -6546,7 +6841,12 @@ function todayStr() { return new Date().toISOString().split('T')[0]; }
 const esc = (window.NumaCoreLib && NumaCoreLib.esc) || function(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); };
 function fmtDate(d) {
   if (!d) return '—';
-  try { return new Date(d).toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'}); } catch(_) { return d; }
+  try {
+    /* v8.22 — a date-only value (YYYY-MM-DD) is a local calendar date; new Date('YYYY-MM-DD') is UTC midnight = the previous day here */
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d));
+    const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(d);
+    return dt.toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'});
+  } catch(_) { return d; }
 }
 function fmtDatetime(d) {
   if (!d) return '—';
@@ -6688,6 +6988,9 @@ if (_depInShell) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'load-fleet' && m.fleet) {
       _depIngestFromShell(m.fleet);
+    } else if (m.type === 'open-project' && m.projectId) {
+      /* v8.22 — Lens asks Deploy to open a project (Cadence's "Let me validate") */
+      try { _depOpenFromShell(String(m.projectId)); } catch(e) { console.warn('Deploy open-project:', e); }
     } else if (m.type === 'workspace-data') {
       try { _depIngestWorkspace(m); } catch(e) { console.warn('Deploy workspace-data:', e); }
     } else if (m.type === 'flush') {

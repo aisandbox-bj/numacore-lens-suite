@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.18 — Mission Control</title>
+<title>NumaCore Lens v4.19 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.2"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
@@ -326,6 +326,8 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
   font-size: 0.62rem; color: var(--lens-text, #b8ede0); opacity: 0.85;
   line-height: 1.25; margin-top: 1px;
 }
+.hmc-value.hmc-pcr { font-size: 15px; line-height: 1.3; }
+.hmc-inprog { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:9px; font-size:9.5px; font-weight:700; letter-spacing:.04em; color:#7ee787; border:1px solid #2ea043; background:rgba(46,160,67,.14); text-transform:none; }
 .hmc-value.hmc-green  { color: var(--band-normal, #4caf50); }
 .hmc-value.hmc-yellow { color: var(--band-elevated, #ffc107); }
 .hmc-value.hmc-orange { color: var(--band-high, #ff7043); }
@@ -1989,7 +1991,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.18';
+const VERSION = '4.19';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -2599,6 +2601,31 @@ function _lookupUnitMeta(unitDisplay) {
 // the one still to come. Returns null when nothing is scheduled; callers render
 // "None scheduled" rather than reaching backwards for a stale prediction.
 // READ-ONLY against a foreign slice — slice-ownership rule preserved.
+// v4.19 — the planned PCR for a machine (Cadence's project; read-only): the one whose planned window contains today
+// ("In progress"), else the next one to start. Dates are compared as local calendar dates.
+function _unitPcr(unitDisplay) {
+  if (!lensRawData) return null;
+  var projects = (lensRawData.workingData && lensRawData.workingData.projects)
+              || (lensRawData.working    && lensRawData.working.projects)
+              || [];
+  if (!Array.isArray(projects) || !projects.length) return null;
+  var unitUp = String(unitDisplay || '').toUpperCase(), t = _lensTodayISO(), cur = null, next = null;
+  projects.forEach(function (p) {
+    if (!p) return;
+    if (String(p.unit || p.unit_id || '').toUpperCase() !== unitUp) return;
+    var s = String(p.start_date || p.start || '').slice(0, 10), e = String(p.end_date || p.end || '').slice(0, 10);
+    if (!s) return;
+    var o = { name: (p.name || p.id || 'Project'), start: s, end: e, n: (p.linkedIds || []).length };
+    if (s <= t && (!e || e >= t)) { if (!cur || s < cur.start) cur = o; }
+    else if (s > t) { if (!next || s < next.start) next = o; }
+  });
+  var r = cur || next; if (!r) return null;
+  r.inProgress = !!cur;
+  var a = t.split('-'), b = r.start.split('-');
+  r.days = Math.round((new Date(+b[0], +b[1] - 1, +b[2]).getTime() - new Date(+a[0], +a[1] - 1, +a[2]).getTime()) / 86400000);
+  return r;
+}
+
 function _nextUpcomingProject(unitDisplay) {
   if (!lensRawData) return null;
   var projects = (lensRawData.workingData && lensRawData.workingData.projects)
@@ -2612,9 +2639,9 @@ function _nextUpcomingProject(unitDisplay) {
     if (!p) return;
     if (String(p.unit || p.unit_id || '').toUpperCase() !== unitUp) return;
     if (String(p.status || '').toLowerCase() === 'complete') return;
-    var t = Date.parse(p.start);
+    var t = Date.parse(p.start_date || p.start);   /* v4.19 — Cadence writes start_date */
     if (isNaN(t) || t < now) return;          // upcoming only
-    if (!best || t < best.ms) best = { name: (p.name || p.project || 'Project'), start: p.start, ms: t };
+    if (!best || t < best.ms) best = { name: (p.name || p.project || 'Project'), start: (p.start_date || p.start), ms: t };
   });
   return best;
 }
@@ -2702,6 +2729,14 @@ function renderCanvasHero(fleet, model, unit) {
     var _today = new Date(); _today.setHours(0,0,0,0);
     var _d = Math.round((_local.getTime() - _today.getTime()) / 86400000);
     nextPCRSub = _nextProj.name + ' \u00b7 ' + (_d <= 0 ? 'today' : 'in ' + _d + 'd');
+  }
+
+  // v4.19 — the planned PCR for this machine: its dates and components; "In progress" inside its planned window.
+  var _pcr = _unitPcr(unit), pcrBadge = '';
+  if (_pcr) {
+    nextPCRDate = _lensFmtD(_pcr.start) + (_pcr.end ? ' \u2013 ' + _lensFmtD(_pcr.end) : '');
+    nextPCRSub = _pcr.name + ' \u00b7 ' + _pcr.n + ' component' + (_pcr.n === 1 ? '' : 's') + (_pcr.inProgress ? '' : ' \u00b7 in ' + _pcr.days + 'd');
+    if (_pcr.inProgress) pcrBadge = ' <span class="hmc-inprog">In progress</span>';
   }
 
   // SMU (max last_smu across all visible comps)
@@ -2836,8 +2871,8 @@ function renderCanvasHero(fleet, model, unit) {
         '<div class="hmc-sub">' + (idle3Mo !== null ? 'last 3 months' : 'no data') + '</div>' +
       '</div>' +
       '<div class="hero-metric-card">' +
-        '<div class="hmc-label">Next PCR</div>' +
-        '<div class="hmc-value">' + nextPCRDate + '</div>' +
+        '<div class="hmc-label">Planned PCR' + pcrBadge + '</div>' +
+        '<div class="hmc-value' + (_pcr ? ' hmc-pcr' : '') + '">' + esc(nextPCRDate) + '</div>' +
         (nextPCRSub ? '<div class="hmc-sub">' + esc(nextPCRSub) + '</div>' : '') +   /* v4.7 FIX-1 — esc */
       '</div>' +
       // Row 4 \u2014 Util % | Components
@@ -5835,6 +5870,14 @@ function _flashSyncIndicator(tool) {
   setTimeout(function() { el.style.display = 'none'; }, 1600);
 }
 
+// v4.19 — Cadence's "Let me validate": switch to Deploy and open that project there.
+let _pendingDeployOpen = null;
+function _sendDeployOpen() {
+  if (!_pendingDeployOpen || !embedReady.deploy) return;
+  _postToEmbed('deploy', { type: 'open-project', projectId: _pendingDeployOpen });
+  _pendingDeployOpen = null;
+}
+
 window.addEventListener('message', function onEmbedMessage(ev) {
   // Origin filter: same-origin OR file:// (origin == 'null'). Reject other
   // sources to prevent cross-frame injection. childOrigin is unreliable on
@@ -5851,6 +5894,13 @@ window.addEventListener('message', function onEmbedMessage(ev) {
   if (m.type === 'tool-ready') {
     embedReady[knownTool] = true;
     _pushFleetToEmbed(knownTool);
+    if (knownTool === 'deploy') _sendDeployOpen();   /* v4.19 */
+    return;
+  }
+  if (m.type === 'navigate' && m.tool === 'deploy' && m.projectId) {   /* v4.19 — from Cadence */
+    _pendingDeployOpen = String(m.projectId);
+    switchTab('deploy');   /* re-pushes the fleet to Deploy when it is ready; the open request follows it */
+    _sendDeployOpen();
     return;
   }
   if (m.type === 'flushed') {   // v4.11 — a tool confirms it has sent its latest changes (see _flushEmbeds)

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cadence v18.17 — NumaCore Lens Suite</title>
+<title>Cadence v18.18 — NumaCore Lens Suite</title>
 <script src="numacore_lib.js"></script>
 <!-- v18.7 C1 (2026-06-10, review P5) — vendored SheetJS, local-first with CDN fallback.
      Upgraded 0.18.5 -> 0.20.2 (CVE-2023-30533 + CVE-2024-22363 fixed; cdnjs froze at
@@ -183,6 +183,17 @@ body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#0d1117;color:
 .diamond.projected-d{clip-path:none;width:8px;height:8px;background:transparent;border:1.5px solid currentColor;opacity:0.7;pointer-events:none;z-index:8;transform:translate(-50%,-50%) rotate(45deg)}
 .diamond.projected-d.condition{border-style:dashed}
 .retired-line{position:absolute;top:0;bottom:0;width:2px;background:repeating-linear-gradient(#f85149 0 4px,transparent 4px 8px);opacity:.55;z-index:4;pointer-events:none}
+/* v18.18 — project status + in-execution prompt */
+#cad-exec-banner{position:fixed;top:118px;left:50%;transform:translateX(-50%);z-index:650;background:#1c2128;border:1px solid #d29922;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.6);padding:8px 12px;max-width:min(880px,94vw);max-height:40vh;overflow:auto}
+.ceb-row{display:flex;align-items:center;gap:10px;padding:4px 0;font-size:12px;color:#c9d1d9}
+.ceb-q{flex:1}
+.ceb-yes,.ceb-no{border-radius:6px;font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;border:1px solid #30363d;background:#21262d;color:#c9d1d9;white-space:nowrap}
+.ceb-yes{background:#1a4d2e;border-color:#2ea043;color:#7ee787}
+.ceb-yes:hover{background:#2ea043;color:#fff}.ceb-no:hover{background:#30363d}
+.proj-st-chip{display:inline-block;margin-left:8px;font-size:9.5px;font-weight:700;letter-spacing:.03em;padding:1px 7px;border-radius:9px;border:1px solid #30363d;color:#7d8590;vertical-align:middle}
+.proj-st-chip.st-in-planning{color:#58a6ff;border-color:#1f4b8c}
+.proj-st-chip.st-in-execution{color:#7ee787;border-color:#2ea043;background:rgba(46,160,67,.12)}
+.project-bar.in-exec{box-shadow:inset 0 0 0 2px #7ee787}
 .cm-label{position:absolute;font-size:7px;font-weight:800;pointer-events:none;letter-spacing:.3px;font-family:monospace;opacity:.75}
 
 /* ── PROJECT BARS ── */
@@ -1386,6 +1397,8 @@ document.addEventListener('drop', function(e) {
 
 let DATA = [];  // populated from JSON data file
 let HIST = [];  // componentHistory[] — loaded from JSON via _initFromJSON; populated by Import History from Excel
+let _depExec = {};     // v18.18 — Deploy's in-execution answers (deployData.projectExecution; read-only here)
+let _depDone = {};     // v18.18 — Deploy's Mark-as-complete entries (deployData.completions; read-only here)
 let _cadRetired = {};  // v18.17 (C-09) — UNIT(uppercase) -> retired date (from the plan's horizon.machines[].active_to; read-only)
 // v18.4 (Chunk 5 / Slide 6) — vocabulary unified across the suite. Canonical
 // keys come from numacore_lib.js v1.4.0+ via canonicalCategory(). Legacy
@@ -2204,6 +2217,7 @@ function logEvent(type, desc, projId, before, after) {
     after:  after  !== undefined ? after  : null
   });
   _scheduleSave();   // every logged event = a state change worth saving
+  try { _execPromptSoon(); } catch(e) {}
   // ── Usage tracking hook ──
   const _actMap = {
     PROJECT_CREATE: 'create_project',
@@ -3127,7 +3141,7 @@ function renderTimeline() {
         const px  = dateToX(_slip ? _pt : proj.start_date);
         const pw  = Math.max(dateToX(proj.end_date) - px, 14);
         const bar = document.createElement('div');
-        bar.className = 'project-bar' + (_slip ? ' slipped' : '');
+        bar.className = 'project-bar' + (_slip ? ' slipped' : '') + (_projExecOn(proj) ? ' in-exec' : '');
         bar.dataset.projId = proj.id;
         bar.style.cssText = `left:${px}px;top:${barTop}px;width:${pw}px;height:${BAR_H}px;background:${proj.color}`;
         bar.textContent = proj.name || proj.id;
@@ -3150,7 +3164,8 @@ function renderTimeline() {
               ? { label: '✕  Clear flag',         action: () => toggleFlag(proj.id) }
               : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
             { sep: true },
-            { label: '✓  Close / Complete', action: () => closeProjectDialog(proj.id) },
+            { label: (_projExecOn(proj) ? '↩  Back to planning' : '▶  Mark in execution'), action: () => _setProjExecution(proj.id, !_projExecOn(proj)) },
+            { label: '✓  Close / Complete', action: () => _closeAsk(proj.id) },
             { label: `✕  Cancel ${termLabel()}`, action: () => cancelProjectDialog(proj.id) },
             { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => removeProject(proj.id) }
           ]);
@@ -3658,13 +3673,37 @@ function removeProject(projId) {
 // through the embedded merge (that class of write is dropped by Lens — the
 // budgetConfig lesson). The paired Lens change consumes completedProjects[] to
 // reset install dates + append componentHistory, idempotent via the entry.applied flag.
-function closeProjectDialog(projId) {
+// v18.18 — closing from Cadence asks first whether what Deploy holds is final (closing makes it read-only there).
+// "Let me validate" asks Lens to open this project in Deploy; nothing is closed.
+// a completion can not be dated in the future (closing before the planned end = completed today)
+function _capToday(d) { const t = _projTodayDS(); return (d && d > t) ? t : d; }
+function _closeAsk(projId) {
   const proj = state.projects.find(p => p.id === projId);
   if (!proj) return;
+  showPopup(
+    '<strong>' + esc(proj.name || projId) + '</strong><br><br><strong>Is the information captured in Deploy final?</strong><br>Closing this ' + termLower() + ' will make these read-only.',
+    [
+      { label: 'Let me validate', action: () => _gotoDeploy(projId) },
+      { label: 'Yes — it is final', cls: 'primary', action: () => closeProjectDialog(projId) }
+    ]
+  );
+}
+function _gotoDeploy(projId) {
+  if (typeof _inShell !== 'undefined' && _inShell) {
+    try { window.parent.postMessage({ type: 'navigate', tool: 'deploy', projectId: projId }, _msgTarget()); } catch(e) { console.warn('post navigate:', e); }
+  } else {
+    showToast('Open this ' + termLower() + ' in Deploy (inside Lens) to check it.');
+  }
+}
+function closeProjectDialog(projId, preset) {
+  const proj = state.projects.find(p => p.id === projId);
+  if (!proj) return;
+  const _pre = preset || {};   /* v18.18 — optional {date, deferred:[ids]} from Deploy's Mark as complete */
+  document.getElementById('cad-close-modal').dataset.cdate = _pre.date || '';
   const linked = (proj.linkedIds || []).map(id => state.data.find(r => r.id === id)).filter(Boolean);
   const compRows = linked.map(r => (
     '<label class="cadc-row">' +
-      '<input type="checkbox" class="cadc-chk" data-rid="' + r.id + '" checked>' +
+      '<input type="checkbox" class="cadc-chk" data-rid="' + r.id + '"' + ((_pre.deferred && _pre.deferred.indexOf(r.id) !== -1) ? '' : ' checked') + '>' +
       '<span class="cadc-comp">' + esc(r.component || '?') + '</span>' +
       '<span class="cadc-sub">' + esc(r.unit || '') + (r.changeout_date ? ' · ' + esc(r.changeout_date) : '') + '</span>' +
       '<input type="text" class="cadc-note" data-rid="' + r.id + '" placeholder="notes (optional)">' +
@@ -3673,7 +3712,7 @@ function closeProjectDialog(projId) {
   const noLinks = linked.length === 0
     ? '<div class="cadc-empty">This ' + termLower() + ' has no linked components. Closing it just files it under History.</div>'
     : '';
-  const completedDate = proj.end_date || proj.start_date || _projTodayDS();
+  const completedDate = _capToday((document.getElementById('cad-close-modal').dataset.cdate || '') || proj.end_date || proj.start_date || _projTodayDS());
   document.getElementById('cadc-title').textContent = 'Close / Complete: ' + (proj.name || proj.id);
   document.getElementById('cadc-body').innerHTML =
     '<div class="cadc-intro">Tick the components that were <strong>actually completed</strong> — they build history and start a ' +
@@ -3710,7 +3749,7 @@ function _cadcConfirm() {
   const projId = modal ? modal.dataset.projId : '';
   const proj = state.projects.find(p => p.id === projId);
   if (!proj) { _cadcCancel(); return; }
-  const completedDate = proj.end_date || proj.start_date || _projTodayDS();
+  const completedDate = _capToday((document.getElementById('cad-close-modal').dataset.cdate || '') || proj.end_date || proj.start_date || _projTodayDS());
   const closedComponents = [...modal.querySelectorAll('.cadc-row')].map(row => {
     const chk  = row.querySelector('.cadc-chk');
     const note = row.querySelector('.cadc-note');
@@ -3808,6 +3847,96 @@ function _commitCancelProject(projId, reason) {
   state.projects = state.projects.filter(p => p.id !== projId);
   rerenderActiveTab(); renderConnectors();
   showToast(termLabel() + ' "' + (proj.name || proj.id) + '" cancelled — ' + closedComponents.length + ' component(s) back on the schedule');
+}
+
+// ═══ v18.18 — A-16 PROJECT STATES + "Project now in execution?" prompt ═══════════════════
+// States: created (no components) -> in-planning (components linked) -> in-execution (MANUAL) -> completed / cancelled
+// (the last two live in completedProjects[], v18.15/v18.16). In-execution is recorded on the project in Cadence's own
+// slice (proj.execution = {on, at}); Deploy records its own answer in ITS slice (deployData.projectExecution[id]).
+// Each tool reads the other's read-only; the LATEST answer wins, so both screens agree without cross-writing.
+function _projExecOn(proj) {
+  if (!proj) return false;
+  const a = proj.execution || null, b = _depExec[proj.id] || null;
+  if (a && b) return (String(a.at || '') >= String(b.at || '')) ? !!a.on : !!b.inExecution;
+  if (a) return !!a.on;
+  if (b) return !!b.inExecution;
+  return false;
+}
+function _projStatus(proj) {
+  if (_projExecOn(proj)) return 'in-execution';
+  return (proj && proj.linkedIds && proj.linkedIds.length) ? 'in-planning' : 'created';
+}
+function _projStatusChip(proj) {
+  const st = _projStatus(proj);
+  const txt = st === 'in-execution' ? '▶ in execution' : st === 'in-planning' ? 'in planning' : 'created';
+  return '<span class="proj-st-chip st-' + st + '">' + txt + '</span>';
+}
+function _setProjExecution(projId, on) {
+  const proj = state.projects.find(p => p.id === projId);
+  if (!proj) return;
+  proj.execution = { on: !!on, at: new Date().toISOString() };
+  if (on) proj.status = 'in-execution'; else delete proj.status;
+  proj.execAskedOn = _projTodayDS();
+  logEvent('PROJECT_STATUS', termLabel() + ' "' + (proj.name || proj.id) + '" ' + (on ? 'now IN EXECUTION' : 'set back to planning'), proj.id, null, { status: _projStatus(proj) });
+  rerenderActiveTab(); renderConnectors();
+  _execPromptCheck();
+  showToast(termLabel() + ' "' + (proj.name || proj.id) + '" — ' + (on ? 'in execution' : 'back to planning'));
+}
+function _execSnooze(projId) {
+  const proj = state.projects.find(p => p.id === projId);
+  if (!proj) return;
+  proj.execAskedOn = _projTodayDS();
+  _scheduleSave();
+  _execPromptCheck();
+}
+function _execDue() {
+  const t = _projTodayDS();
+  return (state.projects || []).filter(function (p) {
+    if (!p || !p.start_date || p.start_date > t) return false;
+    if (_depDone[p.id] && _depDone[p.id].state === 'completed') return false;
+    if (_projExecOn(p)) return false;
+    if (p.execAskedOn === t) return false;
+    const d = _depExec[p.id];
+    if (d && d.askedOn === t) return false;
+    return true;
+  });
+}
+// v18.18 — the chain from Deploy's Mark as complete (deployData.completions, A-16 entries; read-only here):
+// offer Cadence's own Close for a project Deploy marked complete, pre-ticked from Deploy's answer.
+function _doneDue() {
+  const t = _projTodayDS();
+  return (state.projects || []).filter(function (p) { const d = _depDone[p.id]; return !!(d && d.state === 'completed' && p.doneAskedOn !== t); });
+}
+function _doneRowHtml(p) {
+  const d = _depDone[p.id], cc = (d.detail && d.detail.components) || [];
+  const n = cc.filter(function (c) { return c.completed; }).length, m = cc.length - n;
+  return '<div class="ceb-row"><span class="ceb-q">Deploy marked <b>' + esc(p.name || p.id) + '</b> complete on ' + esc(d.effectiveDate || '') + ' (' + n + ' changed' + (m ? ', ' + m + ' deferred' : '') + '). <b>Close it here?</b></span>' +
+    '<button class="ceb-yes" onclick="_doneReview(\'' + esc(p.id) + '\')">Review &amp; close</button>' +
+    '<button class="ceb-no" onclick="_doneSnooze(\'' + esc(p.id) + '\')">Not now</button></div>';
+}
+function _doneReview(projId) {
+  const d = _depDone[projId]; if (!d) return;
+  const cc = (d.detail && d.detail.components) || [];
+  closeProjectDialog(projId, { date: d.effectiveDate, deferred: cc.filter(function (c) { return !c.completed; }).map(function (c) { return c.id; }) });
+}
+function _doneSnooze(projId) {
+  const proj = state.projects.find(p => p.id === projId); if (!proj) return;
+  proj.doneAskedOn = _projTodayDS();
+  _scheduleSave();
+  _execPromptCheck();
+}
+let _execPromptTimer = null;
+function _execPromptSoon() { clearTimeout(_execPromptTimer); _execPromptTimer = setTimeout(_execPromptCheck, 400); }
+function _execPromptCheck() {
+  let host = document.getElementById('cad-exec-banner');
+  const due = _execDue(), done = _doneDue();
+  if (!due.length && !done.length) { if (host) host.remove(); return; }
+  if (!host) { host = document.createElement('div'); host.id = 'cad-exec-banner'; document.body.appendChild(host); }
+  host.innerHTML = done.map(_doneRowHtml).join('') + due.map(function (p) {
+    return '<div class="ceb-row"><span class="ceb-q"><b>' + esc(p.name || p.id) + '</b> reached its start date (' + esc(p.start_date) + '). <b>' + esc(termLabel()) + ' now in execution?</b></span>' +
+      '<button class="ceb-yes" onclick="_setProjExecution(\'' + esc(p.id) + '\', true)">Yes — in execution</button>' +
+      '<button class="ceb-no" onclick="_execSnooze(\'' + esc(p.id) + '\')">Not yet</button></div>';
+  }).join('');
 }
 
 function _renderProjectHistory() {
@@ -4290,7 +4419,7 @@ function renderProjectList() {
       <td><span class="proj-fleet-dot" style="background:${proj.color}"></span>${esc(proj.fleet)}</td>
       <td>${esc(proj.model)}</td>
       <td>${esc(proj.unit)}</td>
-      <td class="proj-id-cell" title="${esc(proj.name||proj.id)}">${proj.flagged?'<span style="color:#fbbf24;filter:drop-shadow(0 0 3px rgba(251,191,36,.9));margin-right:4px">★</span>':''}${esc(proj.name||proj.id)}</td>
+      <td class="proj-id-cell" title="${esc(proj.name||proj.id)}">${proj.flagged?'<span style="color:#fbbf24;filter:drop-shadow(0 0 3px rgba(251,191,36,.9));margin-right:4px">★</span>':''}${esc(proj.name||proj.id)}${_projStatusChip(proj)}</td>
       <td>${_slip?'<span class="proj-slip-chip" title="Start date is in the past — the bar now tracks TODAY on the Schedule">⚠ past</span> ':''}${fmtDate(proj.start_date)}</td>
       <td>${fmtDate(proj.end_date)}</td>
       <td>${days}d</td>
@@ -4318,7 +4447,8 @@ function renderProjectList() {
           ? { label: '✕  Clear flag',         action: () => toggleFlag(proj.id) }
           : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
         { sep: true },
-        { label: '✓  Close / Complete', action: () => closeProjectDialog(proj.id) },
+        { label: (_projExecOn(proj) ? '↩  Back to planning' : '▶  Mark in execution'), action: () => _setProjExecution(proj.id, !_projExecOn(proj)) },
+        { label: '✓  Close / Complete', action: () => _closeAsk(proj.id) },
         { label: `✕  Cancel ${termLabel()}`, action: () => cancelProjectDialog(proj.id) },
         { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => removeProject(proj.id) }
       ]);
@@ -4539,7 +4669,8 @@ function renderProjectOptimiser() {
               ? { label: '✕  Clear flag',         action: () => toggleFlag(proj.id) }
               : { label: '⭐  Mark for follow-up', action: () => toggleFlag(proj.id) },
             { sep: true },
-            { label: '✓  Close / Complete', action: () => { closeProjectDialog(proj.id); } },
+            { label: (_projExecOn(proj) ? '↩  Back to planning' : '▶  Mark in execution'), action: () => _setProjExecution(proj.id, !_projExecOn(proj)) },
+            { label: '✓  Close / Complete', action: () => { _closeAsk(proj.id); } },
             { label: `✕  Cancel ${termLabel()}`, action: () => { cancelProjectDialog(proj.id); } },
             { label: `🗑  Remove ${termLabel()}`, danger: true, action: () => { removeProject(proj.id); renderProjectOptimiser(); } }
           ]);
@@ -7929,6 +8060,14 @@ function _initFromJSON(json) {
       Object.keys(_hzMach).forEach(function(k){ const a = _hzMach[k] && _hzMach[k].active_to; if (a) _cadRetired[String(k).toUpperCase()] = String(a).slice(0, 10); });
     }
   } catch(e) { console.warn('C-09 retired map:', e); }
+  // v18.18 — Deploy's in-execution answers (its own slice; read-only here) + ask about projects whose start date is reached.
+  _depExec = {}; _depDone = {};
+  try {
+    const _dd = (json && json.workingData && json.workingData.deployData) || null;
+    if (_dd && _dd.projectExecution && typeof _dd.projectExecution === 'object') _depExec = _dd.projectExecution;
+    if (_dd && _dd.completions && typeof _dd.completions === 'object') _depDone = _dd.completions;
+  } catch(e) { console.warn('v18.18 deploy execution map:', e); }
+  setTimeout(function () { try { _execPromptCheck(); } catch(e) { console.warn('exec prompt:', e); } }, 900);
   if (_decisions)              state.decisionLog = _decisions;
   if (_projConfig)             Object.assign(state.projConfig, _projConfig);
   if (_visibleMonths != null)  state.visibleMonths = _visibleMonths;
