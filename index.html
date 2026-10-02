@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.19 — Mission Control</title>
+<title>NumaCore Lens v4.20 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
-<script src="numacore_workspace.js?v=0.3.2"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
+<script src="numacore_workspace.js?v=0.3.3"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1991,7 +1991,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.19';
+const VERSION = '4.20';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4572,47 +4572,158 @@ window.addEventListener('resize',()=>{
 function showLoadScreen() {
   document.getElementById('lens-load-screen').style.display = 'flex';
   document.getElementById('banner-meta').style.display = 'none';
-  _landingMsg('');
+  _landingClear();
   _landingRender();   // v4.12
 }
 
-// v4.12 — the landing page. "Open a client folder" picks the folder (view only or edit), reads its newest plan from
-// lens\plan (or a fleet JSON waiting in 1 New files) and opens it; the folder then stays connected for that plan.
-// "Recent" lists the folders this browser has opened. "Open a fleet file" is the old drop / browse.
-function _landingMsg(html, kind) {
-  const m = document.getElementById('ll-folder-msg'); if (!m) return;
+// v4.20 — the landing page has three ways in (operator, 2026-09-30):
+//   1 ESTABLISH a client folder — a new client or a new folder location. Lens creates 1 New files, 2 In use, 3 Archive
+//     and lens in the folder picked; nothing already there is changed. Then the client's fleet JSON is chosen once.
+//   2 OPEN a client folder — already set up. View only or "I refresh it" (v4.12), plus TEST CONNECTION: read-only checks
+//     of the folder. A folder that is not set up is sent to Establish (one button, no second pick).
+//   3 DROP TO VIEW a JSON — the file by itself: no client folder is connected or restored (no links).
+let _lensNoLinks = false;        // the plan on screen was opened as a file only
+let _landingAwaitPlan = false;   // a folder is picked and waits for its plan: the next fleet JSON opened connects to it
+function _landingMsg(html, kind, where) {
+  const m = document.getElementById(where === 'est' ? 'll-est-msg' : 'll-folder-msg'); if (!m) return;
   m.style.display = html ? 'block' : 'none'; m.className = 'll-msg' + (kind ? ' ' + kind : ''); m.innerHTML = html || '';
 }
+function _landingClear() { _landingMsg(''); _landingMsg('', '', 'est'); _landingAwaitPlan = false; }
+function _landingReady(where) {
+  if (!window.NumaCoreWorkspace || !NumaCoreWorkspace.testFolder) { _landingMsg('The folder reader (numacore_workspace.js v0.3.3 or later) is not loaded beside this page.', 'bad', where); return false; }
+  if (!window.showDirectoryPicker) { _landingMsg('Working with a folder needs Edge or Chrome. Use "Drop to view a JSON" instead.', 'warn', where); return false; }
+  return true;
+}
+function _landingChooseHtml() {
+  return '<div class="ll-btns" style="margin-top:10px"><button class="ll-btn solid" onclick="document.getElementById(\'lens-file-input-linked\').click()">Choose the fleet JSON</button></div>' +
+    '<div class="ll-note" style="margin-top:8px">Or drop it anywhere on this page.</div>';
+}
+function _landingOpenPlan(r, where) {
+  _lensNoLinks = false; _landingAwaitPlan = false;
+  _landingMsg('Opening <b>' + esc(r.plan.fileName) + '</b> from <b>' + esc(r.folderName) + '</b>' + (r.plan.where === 'new' ? ' (found in 1 New files)' : '') + '…', '', where);
+  setTimeout(function () { loadLensJSON(r.plan.json); _landingClear(); }, 30);
+}
 function _landingOpened(r) {
-  if (r.plan) {
-    _landingMsg('Opening <b>' + esc(r.plan.fileName) + '</b> from <b>' + esc(r.folderName) + '</b>' + (r.plan.where === 'new' ? ' (found in 1 New files)' : '') + '…');
-    setTimeout(function () { loadLensJSON(r.plan.json); _landingMsg(''); }, 30);
+  _landingMsg('', '', 'est');
+  if (r.plan) { _landingOpenPlan(r, 'open'); return; }
+  if (!r.setUp) {
+    _landingAwaitPlan = false;
+    _landingMsg('<b>' + esc(r.folderName) + '</b> is not set up as a Lens client folder: one or more of <code>1 New files</code>, <code>2 In use</code>, <code>3 Archive</code>, <code>lens</code> is missing. Nothing was opened.' +
+      '<div class="ll-btns" style="margin-top:10px"><button class="ll-btn solid" onclick="_landingEstablish(true)">Establish this folder</button></div>', 'warn');
     return;
   }
-  _landingMsg('<b>' + esc(r.folderName) + '</b> ' + (r.setUp ? 'has no saved plan yet.' : 'is not set up as a Lens client folder yet.') +
-    ' Open the client\'s fleet JSON on the right' + (r.mode === 'edit' ? ' (or put it in its <code>1 New files</code>): the folder connects to it, and SAVE FILE keeps the plan there from then on.' : '. The folder connects to it, view only.'), 'warn');
+  _landingAwaitPlan = true;
+  _landingMsg('<b>' + esc(r.folderName) + '</b> is set up but has no saved plan yet. Choose the client\'s fleet JSON: it connects to this folder' +
+    (r.mode === 'edit' ? ', and SAVE FILE keeps the plan there from then on.' : ', view only.') + _landingChooseHtml(), 'warn');
 }
-function _landingFail(e) {
-  if (e && e.name === 'AbortError') return;   // the picker was cancelled
-  _landingMsg(esc(e && e.message || String(e)), 'bad');
+function _landingFail(e, where) {
+  if (e && e.name === 'AbortError') { _landingMsg('', '', where); return; }   // the picker was cancelled
+  _landingMsg(esc(e && e.message || String(e)), 'bad', where);
 }
 function _landingOpenFolder(mode) {
-  if (!window.NumaCoreWorkspace || !NumaCoreWorkspace.openFolder) { _landingMsg('The folder reader (numacore_workspace.js) is not loaded beside this page.', 'bad'); return; }
-  if (!window.showDirectoryPicker) { _landingMsg('Opening a folder needs Edge or Chrome. Use "Open a fleet file" instead.', 'warn'); return; }
+  if (!_landingReady('open')) return;
   NumaCoreWorkspace.openFolder(mode).then(_landingOpened).catch(_landingFail);
+}
+function _landingOpenLast(mode) {
+  NumaCoreWorkspace.openLast(mode).then(_landingOpened).catch(_landingFail);
 }
 function _landingOpenRecent(id) {
   NumaCoreWorkspace.openRecent(id).then(_landingOpened).catch(_landingFail);
+}
+// 1 — Establish. fromLast: the folder just picked for Open / Test (no second pick; the browser asks for edit).
+function _landingEstablish(fromLast) {
+  if (!_landingReady('est')) return;
+  (fromLast ? NumaCoreWorkspace.establishLast() : NumaCoreWorkspace.establishFolder()).then(_landingEstablished).catch(function (e) { _landingFail(e, 'est'); });
+}
+function _landingEstablished(r) {
+  _landingMsg('');
+  const made = (r.made && r.made.length)
+    ? 'Created: ' + r.made.map(function (n) { return '<code>' + esc(n) + '</code>'; }).join(', ') + '. Nothing already there was changed.'
+    : 'It was already set up: nothing was created or changed.';
+  if (r.plan) {
+    _landingAwaitPlan = false;
+    _landingMsg('&#10003; <b>' + esc(r.folderName) + '</b> is ready. ' + made + ' It holds the plan <b>' + esc(r.plan.fileName) + '</b>.' +
+      '<div class="ll-btns" style="margin-top:10px"><button class="ll-btn solid" onclick="_landingOpenLast(\'edit\')">Open it</button></div>', '', 'est');
+    return;
+  }
+  _landingAwaitPlan = true;
+  _landingMsg('&#10003; <b>' + esc(r.folderName) + '</b> is ready. ' + made + '<br><b>Next:</b> choose the client\'s fleet JSON. It connects to this folder, and SAVE FILE keeps the plan there from then on.' + _landingChooseHtml(), '', 'est');
+}
+// 2 — Test connection. id: a folder under Recent; 'last': the folder just tested; none: pick one.
+function _landingTest(id) {
+  if (!_landingReady('open')) return;
+  _landingMsg('', '', 'est');
+  _landingMsg('Testing the folder…');
+  (id === 'last' ? NumaCoreWorkspace.testLast() : id ? NumaCoreWorkspace.testRecent(id) : NumaCoreWorkspace.testFolder()).then(_landingTested).catch(_landingFail);
+}
+function _landingTested(t) {
+  _landingAwaitPlan = false;
+  const row = function (st, txt) { return '<div class="ll-chk ' + st + '"><span>' + (st === 'ok' ? '&#10003;' : st === 'bad' ? '&#10007;' : st === 'warn' ? '!' : '&ndash;') + '</span><div>' + txt + '</div></div>'; };
+  const L = [row('ok', 'The browser can read <b>' + esc(t.folderName) + '</b>.')];
+  let verdict, kind, btns = '';
+  if (t.inside) {
+    L.push(row('bad', 'This is a folder inside a client folder. Pick the client folder itself (the one that holds <code>1 New files</code>).'));
+    verdict = 'Test not passed: wrong folder picked.'; kind = 'bad';
+    btns = '<button class="ll-btn solid" onclick="_landingTest()">Test another folder</button>';
+  } else {
+    L.push(t.setUp ? row('ok', 'The four folders are there: <code>1 New files</code>, <code>2 In use</code>, <code>3 Archive</code>, <code>lens</code>.')
+                   : row('bad', 'Missing: ' + t.missing.map(function (n) { return '<code>' + esc(n) + '</code>'; }).join(', ') + '.'));
+    L.push(t.cc ? row('ok', 'It belongs to client <b>' + esc(t.cc) + '</b>.') : row('na', 'No SAP data has been published in it yet, so it is not tied to a client.'));
+    if (t.planError) L.push(row('bad', esc(t.planError)));
+    else if (t.plan) L.push(row('ok', 'Plan: <b>' + esc(t.plan.fileName) + '</b>' + (t.plan.cc ? ' · ' + esc(t.plan.cc) : '') + ' · ' + t.plan.units + ' machines, ' + t.plan.comps + ' components' +
+      (t.plan.saved ? ' · saved ' + esc(String(t.plan.saved).slice(0, 10)) : '') + (t.plan.where === 'new' ? ' · waiting in <code>1 New files</code>' : '') + '.'));
+    else L.push(row('na', 'No plan saved in it yet.'));
+    (t.sources || []).forEach(function (x) {
+      if (!x.has) { L.push(row('na', esc(x.label) + ': none published yet.')); return; }
+      if (!x.copyThere) { L.push(row('bad', esc(x.label) + ': its dated copy <code>' + esc(x.dataFile) + '</code> could not be read.')); return; }
+      const age = x.age === null ? 'data date unknown' : 'data date ' + esc(x.dataAsOf) + ', ' + x.age + (x.age === 1 ? ' day old' : ' days old');
+      const lim = (window.NumaCoreWorkspace && NumaCoreWorkspace.AGE) || { amber: 7, red: 14, refuse: 30 };
+      if (x.cls === 'ok') L.push(row('ok', esc(x.label) + ': ' + age + '.'));
+      else if (x.cls === 'amber') L.push(row('warn', esc(x.label) + ': ' + age + ' (amber: over ' + lim.amber + ' days).'));
+      else if (x.cls === 'expired') L.push(row('warn', esc(x.label) + ': ' + age + '. Over ' + lim.refuse + ' days, so it is not loaded.'));
+      else L.push(row('warn', esc(x.label) + ': ' + age + ' (red: over ' + lim.red + ' days).'));
+    });
+    if (!t.setUp) {
+      verdict = 'Test not passed: this folder is not set up as a Lens client folder.'; kind = 'warn';
+      btns = '<button class="ll-btn solid" onclick="_landingEstablish(true)">Establish this folder</button>';
+    } else if (!t.ok) {
+      verdict = 'Test not passed: the folder is set up, but a file in it could not be read. If it is a OneDrive folder, right-click it in File Explorer → Always keep on this device, wait for the green tick, then test again.'; kind = 'bad';
+      btns = '<button class="ll-btn solid" onclick="_landingTest(\'last\')">Test again</button>';
+    } else {
+      verdict = 'Connection good.'; kind = '';
+      btns = '<button class="ll-btn solid" onclick="_landingOpenLast(\'view\')">&#x1F4C1; Open — view only</button><button class="ll-btn" onclick="_landingOpenLast(\'edit\')">&#x1F4C1; Open — I refresh it</button>';
+    }
+  }
+  _landingMsg('<div class="ll-verdict">' + verdict + '</div>' + L.join('') + '<div class="ll-btns" style="margin-top:10px">' + btns + '</div>' +
+    '<div class="ll-note" style="margin-top:8px">The test only reads. Nothing in the folder was changed.</div>', kind);
+}
+// a fleet JSON read from this computer. linked: it connects to the folder that waits for its plan; otherwise file only.
+function _landingLoadText(text, linked) {
+  let json;
+  try { json = JSON.parse(text); }
+  catch (err) { console.warn('Lens load — JSON parse failed:', err); showToast('Could not parse file — ensure it is a valid NumaCore fleet JSON.', 'error', 4000); return; }
+  _lensNoLinks = !linked; _landingAwaitPlan = false;
+  loadLensJSON(json);
+  _landingClear();
+}
+function _landingReadFile(file, linked) {
+  if (!file) return;
+  if (!/\.json$/i.test(file.name)) { showToast('Please choose a .json fleet file.', 'warn'); return; }
+  const reader = new FileReader();
+  reader.onload = function (ev) { _landingLoadText(ev.target.result, linked); };
+  reader.onerror = function () { _lensReadFailed(file, reader.error); };
+  reader.readAsText(file);
 }
 function _landingRender() {
   const el = document.getElementById('ll-recent'); if (!el) return;
   if (!window.NumaCoreWorkspace || !NumaCoreWorkspace.recent) { el.innerHTML = ''; return; }
   NumaCoreWorkspace.recent().then(function (list) {
     if (!list.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="ll-eyebrow" style="margin-bottom:6px">Recent in this browser</div>' + list.slice(0, 6).map(function (r) {
+    el.innerHTML = '<div class="ll-eyebrow" style="margin-bottom:6px">Recent client folders in this browser</div>' + list.slice(0, 6).map(function (r) {
       const id = String(r.id).replace(/[^A-Za-z0-9_]/g, '');
-      return '<button class="ll-rec" onclick="_landingOpenRecent(\'' + id + '\')"><b>' + esc(r.cc) + '</b>' + (r.clientName ? '<em style="font-style:normal;color:#B8C4CC">' + esc(r.clientName) + '</em>' : '') +
-        '<span>' + esc(r.folderName) + ' · ' + (r.mode === 'view' ? 'view only' : 'I refresh it') + (r.lastOpened ? ' · opened ' + esc(String(r.lastOpened).slice(0, 10)) : '') + '</span></button>';
+      return '<div class="ll-rec-row"><button class="ll-rec" onclick="_landingOpenRecent(\'' + id + '\')" title="Open this client folder"><b>' + esc(r.cc) + '</b>' + (r.clientName ? '<em style="font-style:normal;color:#B8C4CC">' + esc(r.clientName) + '</em>' : '') +
+        '<span>' + esc(r.folderName) + ' · ' + (r.mode === 'view' ? 'view only' : 'I refresh it') + (r.lastOpened ? ' · opened ' + esc(String(r.lastOpened).slice(0, 10)) : '') + '</span></button>' +
+        '<button class="ll-btn ll-rec-test" onclick="_landingTest(\'' + id + '\')" title="Read-only checks of this folder. Nothing is changed.">Test</button></div>';
     }).join('');
   }).catch(function () { el.innerHTML = ''; });
 }
@@ -4975,7 +5086,7 @@ function loadLensJSON(json) {
   // v4.11 FEAT-1 — the client folder (numacore_workspace). A different client's plan starts clean: no folder data,
   // no stock in Bench, and a fresh Deploy (its session pools would otherwise still hold the last client's SAP data).
   const _ccNow = lensMeta.clientCode || 'DEFAULT';
-  if (_wsClient !== null && _wsClient !== _ccNow) {
+  if (_wsClient !== null && (_wsClient !== _ccNow || _lensNoLinks)) {   /* v4.20 — also when the plan is opened as a file only */
     _embedWorkspace = {};
     try { if (window.NumaCoreBench && NumaCoreBench.clearStock) NumaCoreBench.clearStock(); } catch(_) {}
     try { if (window.NumaCoreBench && NumaCoreBench.setSnapshots) NumaCoreBench.setSnapshots([]); } catch(_) {}   // v4.13 — another client's snapshots never carry over
@@ -4986,7 +5097,7 @@ function loadLensJSON(json) {
   if (window.NumaCoreWorkspace) {
     try {
       NumaCoreWorkspace.mountStrip(document.getElementById('lens-ws-strip'));
-      NumaCoreWorkspace.attach({ clientCode: _ccNow, clientName: cn, planUnits: Array.from(unitSet), lensVersion: 'v' + VERSION,
+      NumaCoreWorkspace.attach({ clientCode: _ccNow, clientName: cn, planUnits: Array.from(unitSet), lensVersion: 'v' + VERSION, noFolder: _lensNoLinks,   /* v4.20 */
         toast: function (msg, sev) { showToast(msg, sev || 'info', 5000); }, onData: _wsOnData, onPlan: _wsOnPlan, onState: _wsOnState,   // v4.12 + onPlan / onState
         benchDef: _wsBenchDef, benchPreview: _wsBenchPreview, onSnapshots: _wsOnSnapshots, onDefinition: _wsOnDefinition });   // v4.13 — snapshots + definition files
     } catch (e) { console.warn('workspace attach:', e); }
@@ -5028,6 +5139,7 @@ function _wsOnDefinition(p) {
 }
 // v4.12 — SAVE FILE goes to the client folder when it is connected with edit; the COPY button then downloads a copy
 function _wsOnState(st) {
+  if (st && st.connected) _lensNoLinks = false;   /* v4.20 — a folder connected later (CONNECT FOLDER) ends file-only */
   const toFolder = !!(st && st.canSavePlan);
   const sb = document.getElementById('lens-save-btn'), cb = document.getElementById('lens-copy-btn');
   if (sb) sb.title = toFolder ? 'Save the plan into the client folder (lens\\plan); the previous one moves to 3 Archive\\Plans. Cadence\'s and Deploy\'s latest changes are collected first.'
@@ -5192,20 +5304,17 @@ document.addEventListener('DOMContentLoaded', function initLoadScreen() {
   if (fileInput) {
     fileInput.addEventListener('change', e => {
       const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => {
-        try {
-          const json = JSON.parse(ev.target.result);
-          loadLensJSON(json);
-        } catch(err) {
-          console.warn('Lens load — JSON parse failed:', err);
-          showToast('Could not parse file — ensure it is a valid NumaCore fleet JSON.', 'error', 4000);
-        }
-      };
-      reader.onerror = () => _lensReadFailed(file, reader.error);   // v4.14 — a failed read used to be silent
-      reader.readAsText(file);
+      _landingReadFile(file, false);   // v4.20 — "Drop to view a JSON": the file only, no folder
       fileInput.value = '';
+    });
+  }
+  // v4.20 — the plan for a folder just established (or set up with no plan yet): it connects to that folder
+  const linkedInput = document.getElementById('lens-file-input-linked');
+  if (linkedInput) {
+    linkedInput.addEventListener('change', e => {
+      const file = e.target.files[0];
+      _landingReadFile(file, true);
+      linkedInput.value = '';
     });
   }
   // Wire drag-and-drop on the FULL load screen — user can drop anywhere, not just the inner box.
@@ -5226,13 +5335,7 @@ document.addEventListener('DOMContentLoaded', function initLoadScreen() {
       dropZone.classList.remove('drag-over');
       const file = e.dataTransfer.files[0];
       if (!file || !file.name.endsWith('.json')) { showToast('Please drop a .json fleet file.', 'warn'); return; }
-      const reader = new FileReader();
-      reader.onload = ev => {
-        try { loadLensJSON(JSON.parse(ev.target.result)); }
-        catch(err) { console.warn('Lens drop — JSON parse failed:', err); showToast('Could not parse file.', 'error'); }
-      };
-      reader.onerror = () => _lensReadFailed(file, reader.error);   // v4.14
-      reader.readAsText(file);
+      _landingReadFile(file, _landingAwaitPlan);   // v4.20 — linked only while a folder waits for its plan; otherwise the file only
     });
   }
 });
@@ -8661,37 +8764,50 @@ function copyPcrPrompt() {
       <svg width="46" height="46" viewBox="0 0 26 26" fill="none"><circle cx="12" cy="12" r="7.5" fill="none" stroke="#3dc9a0" stroke-width="1.2"/><circle cx="12" cy="12" r="2" fill="#3dc9a0" opacity="0.6"/><line x1="12" y1="3" x2="12" y2="6" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="12" y1="18" x2="12" y2="21" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="3" y1="12" x2="6" y2="12" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="18" y1="12" x2="21" y2="12" stroke="#3dc9a0" stroke-width="0.8" opacity="0.45"/><line x1="17" y1="17" x2="23" y2="23" stroke="#1d9e75" stroke-width="2" stroke-linecap="round"/></svg>
       <div><div class="ll-name">NumaCore Lens</div><div class="ll-sub">Asset intelligence · component health &amp; execution</div></div>
     </div>
+    <!-- v4.20 — three ways in (operator, 2026-09-30) -->
     <div class="ll-cards">
       <div class="ll-card">
-        <div class="ll-eyebrow">Recommended</div>
+        <div class="ll-eyebrow">1 · New client or new folder location</div>
+        <h2>Establish a client folder</h2>
+        <p>Pick the client's synced OneDrive folder. Lens creates <code>1 New files</code>, <code>2 In use</code>, <code>3 Archive</code> and <code>lens</code> in it.</p>
+        <div class="ll-btns">
+          <button class="ll-btn solid" onclick="_landingEstablish()" title="The browser asks to edit files in the folder you pick, and in that folder only.">&#x1F4C1; Establish folder</button>
+        </div>
+        <div class="ll-note">Done once per client, by the person who refreshes the folder. Nothing already in the folder is changed.</div>
+        <div id="ll-est-msg" class="ll-msg" style="display:none"></div>
+      </div>
+      <div class="ll-card">
+        <div class="ll-eyebrow">2 · Already set up</div>
         <h2>Open a client folder</h2>
-        <p>The plan and its SAP data together, from the client's synced OneDrive folder.</p>
+        <p>The plan and its SAP data together, from the client folder.</p>
         <div class="ll-btns">
           <button class="ll-btn solid" onclick="_landingOpenFolder('view')" title="Lens reads the folder and never changes it. The browser asks to view files.">&#x1F4C1; Open — view only</button>
           <button class="ll-btn" onclick="_landingOpenFolder('edit')" title="For the person who drops SAP exports and publishes them. The browser asks to edit files in this folder only.">&#x1F4C1; Open — I refresh it</button>
+          <button class="ll-btn ghost" onclick="_landingTest()" title="Read-only checks: the four folders, the client, the plan and each SAP source's data date. Nothing is changed.">Test connection</button>
         </div>
-        <div class="ll-note"><b>View only</b> never changes the folder: most people. <b>I refresh it</b> is for the one person who drops SAP exports and publishes them; SAVE FILE then keeps the plan in the folder.</div>
+        <div class="ll-note"><b>View only</b> never changes the folder: most people. <b>I refresh it</b> is for the one person who drops SAP exports and publishes them; SAVE FILE then keeps the plan in the folder. <b>Test connection</b> checks the folder without opening it.</div>
         <div id="ll-folder-msg" class="ll-msg" style="display:none"></div>
       </div>
       <div class="ll-card" id="lens-drop-zone" tabindex="0" onclick="document.getElementById('lens-file-input').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('lens-file-input').click();}">
-        <div class="ll-eyebrow">Or</div>
-        <h2>Open a fleet file</h2>
-        <p>A fleet JSON on this computer.</p>
+        <div class="ll-eyebrow">3 · No folder · no links</div>
+        <h2>Drop to view a JSON</h2>
+        <p>A fleet JSON by itself. No client folder is connected.</p>
         <div class="ll-drop">&#x2B07; Drop the .json here, or click to browse</div>
-        <div class="ll-note">V4 Flat or V5 · [ClientCode]_fleet.json</div>
+        <div class="ll-note">No SAP data from a folder, and SAVE FILE downloads the file. V4 Flat or V5 · [ClientCode]_fleet.json</div>
       </div>
     </div>
     <div id="ll-recent" class="ll-recent"></div>
   </div>
+  <input type="file" id="lens-file-input-linked" accept=".json" style="display:none">
   <input type="file" id="lens-file-input" accept=".json" style="display:none">
 </div>
 <style>
 /* v4.12 — the landing page (folder first) */
-#lens-landing { width:100%; max-width:980px; margin:0 auto; font-family:var(--nc-font-body,'Barlow',sans-serif); color:#E8E9ED; }
+#lens-landing { width:100%; max-width:1500px; margin:0 auto; font-family:var(--nc-font-body,'Barlow',sans-serif); color:#E8E9ED; }
 .ll-brand { display:flex; align-items:center; gap:14px; margin-bottom:24px; }
 .ll-name { font-family:var(--nc-font-display,'Barlow Condensed',sans-serif); font-weight:700; font-size:36px; letter-spacing:3px; text-transform:uppercase; color:#3dc9a0; line-height:1; }
 .ll-sub { font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:11px; letter-spacing:2px; text-transform:uppercase; color:#5dcaa5; margin-top:5px; }
-.ll-cards { display:grid; grid-template-columns:1.25fr 1fr; gap:16px; }
+.ll-cards { display:grid; grid-template-columns:1fr 1.15fr 1fr; gap:18px; align-items:stretch; }
 .ll-card { border:1px solid rgba(61,201,160,.25); border-radius:12px; background:rgba(8,26,21,.55); padding:20px 22px; }
 .ll-card h2 { font-family:var(--nc-font-display,'Barlow Condensed',sans-serif); font-weight:700; font-size:24px; letter-spacing:2px; text-transform:uppercase; margin:4px 0 6px; color:#E8E9ED; }
 .ll-card p { margin:0 0 14px; color:#B8C4CC; font-size:14px; }
@@ -8711,11 +8827,21 @@ function copyPcrPrompt() {
 .ll-drop { border:1px dashed rgba(61,201,160,.4); border-radius:8px; padding:24px 12px; text-align:center; font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:12px; letter-spacing:1px; color:#5dcaa5; }
 #lens-drop-zone.drag-over { border-color:#3dc9a0; background:rgba(61,201,160,.08); box-shadow:0 0 40px rgba(61,201,160,.2); }
 .ll-recent { margin-top:20px; }
+.ll-card code { font-family:var(--nc-font-mono,'JetBrains Mono',monospace); font-size:12px; color:#9fe3cd; }
+.ll-btn.ghost { border-style:dashed; }
+.ll-verdict { font-family:var(--nc-font-head,'Rajdhani',sans-serif); font-weight:700; font-size:16px; margin-bottom:8px; color:#E8E9ED; }
+.ll-chk { display:flex; gap:9px; align-items:baseline; padding:3px 0; color:#D5DAE0; }
+.ll-chk > span { flex:0 0 14px; text-align:center; font-weight:700; }
+.ll-chk.ok > span { color:#34D399; } .ll-chk.bad > span { color:#EF4444; } .ll-chk.warn > span { color:#FBBF24; } .ll-chk.na > span { color:#8B8FA3; }
+.ll-rec-row { display:flex; gap:8px; align-items:stretch; margin:6px 0; }
+.ll-rec-row .ll-rec { margin:0; flex:1 1 auto; }
+.ll-rec-test { flex:0 0 auto; font-size:13px; padding:6px 14px; }
 .ll-rec { display:flex; align-items:baseline; gap:10px; width:100%; text-align:left; background:rgba(8,26,21,.45); border:1px solid rgba(61,201,160,.15); border-radius:8px; padding:10px 14px; margin:6px 0; color:#E8E9ED; font-family:inherit; font-size:14px; cursor:pointer; }
 .ll-rec b { font-family:var(--nc-font-head,'Rajdhani',sans-serif); font-size:17px; color:#3dc9a0; }
 .ll-rec span { color:#8B8FA3; font-size:12px; margin-left:auto; font-family:var(--nc-font-mono,'JetBrains Mono',monospace); }
 .ll-rec:hover { border-color:rgba(61,201,160,.45); }
-@media (max-width:760px) { .ll-cards { grid-template-columns:1fr; } .ll-name { font-size:28px; } }
+@media (max-width:1100px) { .ll-cards { grid-template-columns:1fr; } }
+@media (max-width:760px) { .ll-name { font-size:28px; } }
 /* ── v3.7 — ConMon Tile (left canvas, unit-level) ─────────────────────── */
 #conmon-tile {
   display: none; background: rgba(4,14,11,0.88);

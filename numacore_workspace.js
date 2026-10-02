@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.3.1 · 2026-09-27
+   v0.3.3 · 2026-10-01
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -74,6 +74,18 @@
        – Opening a folder: a plan OneDrive still lists after it was moved is skipped, and a plan that can't be read
          is named with the same advice (Lens never opens an older plan in its place).
 
+     • v0.3.3 (operator, 2026-09-30: the landing page gets three ways in — Establish client folder, Open client
+       folder with a test-connection button that routes to Establish if it kicks back, Drop to view a JSON with no links):
+       – establishFolder(): pick a folder with edit, create the layout in it (nothing already there is changed),
+         and say which folders were created.
+       – testFolder() / testRecent(id) / testLast(): read-only checks of a folder — the four folders, the register
+         and its client, the newest plan (really read), and each SAP source's dated copy (really read) with its age.
+         Nothing is written and nothing is connected.
+       – The folder last picked on the landing page is kept (in memory only) so Test → Open or Test → Establish
+         needs no second pick: openLast(mode), establishLast().
+       – attach({noFolder:true}): the plan was opened as a file only. No folder is connected or restored; the
+         strip says FILE ONLY · NO FOLDER (CONNECT FOLDER stays available).
+
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
      alias matching after normalising, type coercion, data-date rules, a row ledger,
@@ -101,10 +113,14 @@
              allowEdit() → Promise<bool> — asks the browser (call it straight from a click)
              whyNoSave() → '' | 'no folder' | 'view' | 'permission'
              savePlan(…) → {ok, where, file, note} — note: the older plan could not be archived (the save is done)
+     v0.3.3: establishFolder() / establishLast() → Promise<{folderName, mode:'edit', setUp:true, cc, plan, made:[names], wasSetUp}>
+             testFolder() / testRecent(id) / testLast() → Promise<{folderName, inside, setUp, missing:[names], cc, register,
+                                                                    plan|null, planError, sources:[{source,label,has,dataAsOf,age,cls,copyThere,dataFile}], ok}>
+             openLast(mode) → as openFolder, for the folder last picked · attach host.noFolder
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.3.2';
+  var VERSION = '0.3.3';
   var AGE = { amber: 7, red: 14, refuse: 30 };
   var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans',   // v0.2.0 + plan / Plans
               SNAPS: 'Snapshots', DEFS: 'Definitions' };   // v0.3.0
@@ -1157,6 +1173,7 @@
       .then(function (fh) { return fh.getFile(); }).then(function (f) { return f.text(); }).then(parseScript).catch(function () { return null; });
   }
   function inspectFolder(h, mode) {
+    LAST = { handle: h, mode: mode };   // v0.3.3
     if ([DIR.NEW, DIR.INUSE, DIR.ARCHIVE, DIR.LENS, DIR.DATA, DIR.NOTUSED, DIR.MEETINGS, DIR.PLAN, DIR.PLANS].indexOf(h.name) >= 0)
       return Promise.reject(new Error('"' + h.name + '" is a folder inside the client folder. Pick the client folder itself.'));
     return Promise.all([layoutPresent(h), findPlan(h), readRegisterOf(h)]).then(function (r) {
@@ -1180,6 +1197,90 @@
         if (p !== 'granted') throw new Error('The browser did not allow access to "' + h.name + '".');
         return inspectFolder(h, mode);
       });
+    });
+  }
+
+  // ── v0.3.3 — Lens's landing page: Establish · Test connection ─────────────
+  var LAST = null;   // the folder last picked on the landing page (memory only): Test → Open / Establish need no second pick
+  var TOP4 = [DIR.NEW, DIR.INUSE, DIR.ARCHIVE, DIR.LENS];
+  function insideName(h) { return [DIR.NEW, DIR.INUSE, DIR.ARCHIVE, DIR.LENS, DIR.DATA, DIR.NOTUSED, DIR.MEETINGS, DIR.PLAN, DIR.PLANS].indexOf(h.name) >= 0; }
+  function askPerm(h, mode) { return h.requestPermission ? h.requestPermission({ mode: mode === 'view' ? 'read' : 'readwrite' }) : Promise.resolve('granted'); }
+  function needPicker() { return root.showDirectoryPicker ? null : Promise.reject(new Error('Working with a folder needs Edge or Chrome.')); }
+  function needLast() { return LAST ? null : Promise.reject(new Error('Pick the folder first.')); }
+  function setUpLayoutIn(h) {
+    function mk(names) { var p = Promise.resolve(h); names.forEach(function (n) { p = p.then(function (d) { return d.getDirectoryHandle(n, { create: true }); }); }); return p; }
+    return mk([DIR.NEW, DIR.NOTUSED]).then(function () { return mk([DIR.INUSE]); }).then(function () { return mk([DIR.ARCHIVE, DIR.MEETINGS]); })
+      .then(function () { return mk([DIR.LENS, DIR.DATA]); }).then(function () { return mk([DIR.LENS, DIR.PLAN]); });
+  }
+  function establishIn(h) {
+    LAST = { handle: h, mode: 'edit' };
+    if (insideName(h)) return Promise.reject(new Error('"' + h.name + '" is a folder inside a client folder. Pick the client folder itself.'));
+    return Promise.all(TOP4.map(function (n) { return exists(h, n, 'dir'); })).then(function (had) {
+      var made = TOP4.filter(function (n, i) { return !had[i]; });
+      return setUpLayoutIn(h).then(function () { return inspectFolder(h, 'edit'); }).then(function (r) { r.made = made; r.wasSetUp = !made.length; return r; });
+    });
+  }
+  function establishFolder() {
+    return needPicker() || root.showDirectoryPicker({ id: 'numacore-client', mode: 'readwrite' }).then(establishIn);
+  }
+  function establishLast() {
+    var no = needLast(); if (no) return no;
+    var h = LAST.handle;
+    return askPerm(h, 'edit').then(function (p) {
+      if (p !== 'granted') throw new Error('The browser did not allow edit on "' + h.name + '", so nothing was created.');
+      return establishIn(h);
+    });
+  }
+  function openLast(mode) {
+    var no = needLast(); if (no) return no;
+    var h = LAST.handle; mode = mode === 'view' ? 'view' : 'edit';
+    return askPerm(h, mode).then(function (p) {
+      if (p !== 'granted') throw new Error('The browser did not allow ' + (mode === 'view' ? 'access to' : 'edit on') + ' "' + h.name + '".');
+      return inspectFolder(h, mode);
+    });
+  }
+  // read-only checks; nothing is written, nothing is connected
+  function testIn(h) {
+    LAST = { handle: h, mode: 'view' };
+    var rep = { folderName: h.name, inside: insideName(h), setUp: false, missing: [], cc: '', register: false, plan: null, planError: '', sources: [], ok: false };
+    if (rep.inside) return Promise.resolve(rep);
+    function canRead(d, name) { return d.getFileHandle(name).then(function (fh) { return fh.getFile(); }).then(function (f) { return f.slice(0, 64).text(); }).then(function () { return true; }, function () { return false; }); }
+    return Promise.all(TOP4.map(function (n) { return exists(h, n, 'dir'); })).then(function (had) {
+      rep.missing = TOP4.filter(function (n, i) { return !had[i]; }); rep.setUp = !rep.missing.length;
+      return readRegisterOf(h);
+    }).then(function (reg) {
+      rep.register = !!reg; rep.cc = (reg && reg.meta && reg.meta.clientCode) || '';
+      var cur = SOURCES.map(function (src) { return (reg && reg.sources && reg.sources[src] && reg.sources[src].current) || null; });
+      return h.getDirectoryHandle(DIR.LENS).then(function (l) { return l.getDirectoryHandle(DIR.DATA); }).then(function (d) {
+        return Promise.all(cur.map(function (c) { return c && c.dataFile ? canRead(d, c.dataFile) : Promise.resolve(false); }));
+      }, function () { return cur.map(function () { return false; }); }).then(function (there) {
+        rep.sources = SOURCES.map(function (src, i) {
+          var c = cur[i];
+          return { source: src, label: REG[src].label, has: !!c, dataAsOf: c ? (c.dataAsOf || '') : '', age: c ? ageDays(c.dataAsOf) : null, cls: c ? ageClass(c.dataAsOf) : '', copyThere: !!there[i], dataFile: c ? (c.dataFile || '') : '' };
+        });
+      });
+    }).then(function () {
+      return findPlan(h).then(function (p) {
+        if (p) rep.plan = { fileName: p.fileName, where: p.where, saved: p.info.saved, units: p.info.units, comps: p.info.comps, cc: p.info.cc, client: p.info.client };
+      }, function (e) { rep.planError = (e && e.message) || String(e); });
+    }).then(function () {
+      rep.ok = rep.setUp && !rep.planError && rep.sources.every(function (x) { return !x.has || x.copyThere; });
+      return rep;
+    });
+  }
+  function testFolder() {
+    return needPicker() || root.showDirectoryPicker({ id: 'numacore-client', mode: 'read' }).then(testIn);
+  }
+  function testLast() {
+    var no = needLast(); if (no) return no;
+    var h = LAST.handle;
+    return askPerm(h, 'view').then(function (p) { if (p !== 'granted') throw new Error('The browser did not allow access to "' + h.name + '".'); return testIn(h); });
+  }
+  function testRecent(id) {
+    id = String(id || '').replace(/[^A-Z0-9_]/gi, '_');
+    return idbGet('folder_' + id).then(function (h) {
+      if (!h) throw new Error('That folder is no longer remembered in this browser. Open it again.');
+      return askPerm(h, 'view').then(function (p) { if (p !== 'granted') throw new Error('The browser did not allow access to "' + h.name + '".'); return testIn(h); });
     });
   }
 
@@ -1223,6 +1324,7 @@
     var h = '<span class="ncw-strip">';
     var helpBtn = '<button class="ncw-btn ncw-q" data-ncw="help" title="How the client folder works: what to create, where to put what">?</button>';
     if (!S.handle || S.perm === 'none') {
+      if (S.fileOnly) h += '<span class="ncw-chip" title="This plan was opened as a file, with no client folder: no SAP data from a folder, and SAVE FILE downloads the file.">FILE ONLY · NO FOLDER</span>';   // v0.3.3
       h += '<button class="ncw-btn" data-ncw="connect" title="Connect the client\'s synced OneDrive folder once. Lens then reads SAP exports dropped in 1 New files. Edge or Chrome.">📁 CONNECT FOLDER</button>' + helpBtn;
     } else if (S.perm !== 'granted') {
       h += '<button class="ncw-btn gold" data-ncw="allow" title="The browser needs your OK once per session to read the client folder ' + esc(S.folderName) + '.">📁 ALLOW ' + esc(S.folderName).toUpperCase() + '</button>' + helpBtn;
@@ -1371,6 +1473,9 @@
     S.host = host; S.cc = host.clientCode || 'DEFAULT';
     if (!sameClient) { S.handle = null; S.perm = 'none'; S.folderName = ''; S.register = null; S.loaded = {}; S.newFiles = []; }
     else S.loaded = {};   // a re-load of the same client re-delivers the copies (Lens rebuilt its state)
+    // v0.3.3 — the plan was opened as a file only (Lens's landing page, "Drop to view a JSON"): no folder is connected or restored
+    S.fileOnly = !!host.noFolder;
+    if (S.fileOnly) { S.pending = null; S.handle = null; S.folderName = ''; S.register = null; S.loaded = {}; S.newFiles = []; setState({ perm: 'none' }); return Promise.resolve(); }
     renderStrip();
     if (!root.indexedDB || !root.document) return Promise.resolve();
     // v0.2.0 — a folder opened on Lens's landing page is adopted for this plan instead of the remembered one
@@ -1396,6 +1501,7 @@
     attach: attach, mountStrip: mountStrip, connect: connect, allow: allow, checkNew: checkNew, rescan: scanNew,
     openFolder: openFolder, openRecent: openRecent, recent: recent, savePlan: savePlan, canSavePlan: canSavePlan, setMode: setMode,   // v0.2.0
     needsEdit: needsEdit, allowEdit: allowEdit, whyNoSave: whyNoSave,   // v0.3.1
+    establishFolder: establishFolder, establishLast: establishLast, openLast: openLast, testFolder: testFolder, testLast: testLast, testRecent: testRecent,   // v0.3.3
     meetingRecord: meetingRecord, forDeploy: forDeploy, forBench: forBench, state: publicState,
     _internal: { REG: REG, norm: norm, mapColumns: mapColumns, recognise: recognise, findHeaderRow: findHeaderRow, coerce: coerce, dateFromFileName: dateFromFileName,
       iw39DataDate: iw39DataDate, readWorkbook: readWorkbook, buildDigest: buildDigest, toScript: toScript, parseScript: parseScript, ageDays: ageDays, ageClass: ageClass,
