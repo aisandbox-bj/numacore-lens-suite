@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_workspace.js — WORKSPACE (the client-folder reader) for NumaCore Lens
-   v0.3.3 · 2026-10-01
+   v0.3.4 · 2026-10-06
 
    What it does
      The operator connects the client's synced OneDrive folder once. Lens then
@@ -86,6 +86,18 @@
        – attach({noFolder:true}): the plan was opened as a file only. No folder is connected or restored; the
          strip says FILE ONLY · NO FOLDER (CONNECT FOLDER stays available).
 
+     • v0.3.4 (operator, 2026-10-06: "the app saw the files and then allowed me to publish… then I saw that the WO
+       status' did not update" — the header said Work orders 6 Oct, Deploy still said 29 Sep):
+       – Publish wrote each dated copy to lens\data and then READ IT BACK from the folder to hand it to Lens. On a
+         OneDrive folder a file just written can be unreadable for a while (OneDrive is uploading it). That read was
+         tried once; when it failed, a 5-second message was the only sign, the header went on showing the new date
+         (it reads the register, not what was delivered), and Bench and Deploy kept the older data.
+       – Now: a copy this session wrote is handed over from memory (no read-back); a copy read from the folder is
+         retried for ~20 s; a copy that still cannot be read turns its header chip red — "NOT LOADED" — with the
+         reason, and ↻ TRY AGAIN. The header never shows a date for data that was not delivered without saying so.
+       – ↻ now reads the folder again in full (the register, the dated copies, 1 New files). It only looked in
+         1 New files before, so nothing in the app could recover a failed read short of reopening the page.
+
    Building Blocks
      Built to the ingest SPEC (blocks/ingest, spec 0.1) and SOURCE-REGISTRY v1: exact
      alias matching after normalising, type coercion, data-date rules, a row ledger,
@@ -120,7 +132,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
   'use strict';
-  var VERSION = '0.3.3';
+  var VERSION = '0.3.4';
   var AGE = { amber: 7, red: 14, refuse: 30 };
   var DIR = { NEW: '1 New files', NOTUSED: 'Not used', INUSE: '2 In use', ARCHIVE: '3 Archive', MEETINGS: 'Meetings', LENS: 'lens', DATA: 'data', PLAN: 'plan', PLANS: 'Plans',   // v0.2.0 + plan / Plans
               SNAPS: 'Snapshots', DEFS: 'Definitions' };   // v0.3.0
@@ -711,16 +723,43 @@
         return p.then(function () {
           var cur = reg.sources[src] && reg.sources[src].current; if (!cur || !cur.dataFile) return;
           if (S.loaded[src] && S.loaded[src].dataFile === cur.dataFile) return;   // already delivered
-          return readText(dataDir, cur.dataFile).then(parseScript).then(function (dg) {
+          return readCopy(dataDir, cur.dataFile).then(function (dg) {
+            delete FAILED[src];
+            if (S.loaded[src] && S.loaded[src].dataFile === cur.dataFile) return;   // v0.3.4 — delivered meanwhile by a second pass
             var a = ageDays(cur.dataAsOf);
             var payload = { source: src, label: REG[src].label, dataAsOf: cur.dataAsOf || null, method: cur.method, methodWords: methodWords(cur.method), window: cur.window || null,
               fileName: cur.standardName, originalName: cur.originalName, rows: dg.rows.length, ageDays: a, age: ageClass(cur.dataAsOf), expired: a !== null && a > AGE.refuse, clientCode: S.cc, digest: dg };
             S.loaded[src] = { dataFile: cur.dataFile, dataAsOf: cur.dataAsOf, rows: dg.rows.length };
             try { if (S.host && S.host.onData) S.host.onData(payload); } catch (e) { console.warn('workspace onData:', e); }
-          }).catch(function (e) { toast('Could not read the dated copy for ' + REG[src].short + ' (' + cur.dataFile + '): ' + e.message + '. Refresh from the folder, or check that OneDrive has downloaded lens\\data.', 'error'); });
+          }).catch(function (e) {
+            // v0.3.4 — said on the header chip (red, NOT LOADED) as well as in a message; Bench and Deploy keep what they had
+            var why = unreadableWords(e, 'the dated copy ' + cur.dataFile).replace('then press Try again', 'then press ↻ TRY AGAIN in the header');
+            FAILED[src] = { dataFile: cur.dataFile, msg: why };
+            toast(REG[src].label + ' dated ' + (cur.dataAsOf ? fmtShort(cur.dataAsOf) : 'unknown') + ' is in the folder but was NOT loaded, so Bench and Deploy still use the data they had. ' + why, 'error');
+          });
         });
-      }, Promise.resolve()).then(function () { return loadSnapshots(dataDir); });   // v0.3.0
+      }, Promise.resolve()).then(function () { renderStrip(); return loadSnapshots(dataDir); });   // v0.3.0
     }).catch(function () {});
+  }
+  // v0.3.4 — a dated copy's contents: from memory when this session wrote it (Publish), else from the folder, retried
+  // for ~20 s (OneDrive can hold a file it is still uploading or downloading).
+  var MEM = {};      // dataFile → digest, for the copies this session wrote
+  var FAILED = {};   // source → { dataFile, msg } while its current dated copy cannot be read
+  function readCopy(dataDir, name) {
+    if (MEM[name]) return Promise.resolve(MEM[name]);
+    var waits = [0, 1000, 3000, 6000, 10000];
+    function attempt(i) {
+      return sleep(waits[i]).then(function () { return readText(dataDir, name); }).then(parseScript).catch(function (e) {
+        if (e && e.name === 'NotFoundError') throw e;   // not there: waiting will not help
+        if (i + 1 < waits.length) return attempt(i + 1);
+        throw e;
+      });
+    }
+    return attempt(0);
+  }
+  function keepCopy(src, dataFile, script) {
+    Object.keys(MEM).forEach(function (k) { if (k.indexOf(src + ' ') === 0) delete MEM[k]; });   // one per source
+    try { MEM[dataFile] = parseScript(script); } catch (e) { /* falls back to the folder */ }
   }
   // v0.3.0 — every snapshot in 2 In use goes to Bench in one call (Bench compares them with the definition)
   function loadSnapshots(dataDir) {
@@ -1004,8 +1043,9 @@
             var std = src + ' ' + safeName(S.cc) + ' ' + dateTag + ext, dataFile = src + ' ' + safeName(S.cc) + ' ' + dateTag + '.js';
             var s0 = c.digest.meta.sources[0]; s0.file = std; s0.dataAsOf = c.dataAsOf || null; s0.asOfMethod = c.method;
             var prev = reg.sources[src] && reg.sources[src].current;
-            // 1 · the dated copy
-            return writeFile(dataDir, dataFile, toScript(c.digest, REG[src].key, REG[src].label + ' · data ' + (c.dataAsOf || 'unknown') + ' · from ' + c.name + ' · written ' + stamp + ' by numacore_workspace ' + VERSION))
+            // 1 · the dated copy (v0.3.4 — and kept in memory, so handing it to Lens needs no read-back from the folder)
+            var script = toScript(c.digest, REG[src].key, REG[src].label + ' · data ' + (c.dataAsOf || 'unknown') + ' · from ' + c.name + ' · written ' + stamp + ' by numacore_workspace ' + VERSION);
+            return writeFile(dataDir, dataFile, script).then(function () { keepCopy(src, dataFile, script); })
               // 2 · the file in use goes to the archive
               .then(function () {
                 if (!prev || !prev.standardName) return;
@@ -1318,6 +1358,9 @@
     document.head.appendChild(st);
   }
   function mountStrip(el) { injectStyle(); S.stripEl = el; renderStrip(); }
+  function anyFailed() {
+    return SOURCES.some(function (src) { var cur = S.register && S.register.sources && S.register.sources[src] && S.register.sources[src].current; return !!(cur && FAILED[src] && FAILED[src].dataFile === cur.dataFile); });
+  }
   function renderStrip() {
     var el = S.stripEl; if (!el || !root.document) return;
     if (!S.host) { el.innerHTML = ''; return; }
@@ -1334,6 +1377,14 @@
         var cur = S.register && S.register.sources && S.register.sources[src] && S.register.sources[src].current;
         if (!cur) { h += '<span class="ncw-chip" title="No ' + esc(REG[src].label) + ' in the folder yet. Drop an export in 1 New files.">' + esc(REG[src].short) + ' · none</span>'; return; }
         var a = ageDays(cur.dataAsOf), cls = ageClass(cur.dataAsOf);
+        if (FAILED[src] && FAILED[src].dataFile === cur.dataFile) {   // v0.3.4 — in the folder, but not delivered
+          h += '<span class="ncw-chip red" title="' + esc(REG[src].label + ' dated ' + fmtDate(cur.dataAsOf) + ' is in the folder, but it was not loaded: Bench and Deploy still use the data they had. ' + FAILED[src].msg) + '">' + esc(REG[src].short) + ' ' + esc(cur.dataAsOf ? fmtShort(cur.dataAsOf) : 'date unknown') + ' · NOT LOADED</span>';
+          return;
+        }
+        if (!(S.loaded[src] && S.loaded[src].dataFile === cur.dataFile)) {   // v0.3.4 — read from the folder, not handed over yet
+          h += '<span class="ncw-chip" title="' + esc(REG[src].label + ' dated ' + fmtDate(cur.dataAsOf) + ' is being read from the folder. Bench and Deploy get it when this finishes.') + '">' + esc(REG[src].short) + ' ' + esc(cur.dataAsOf ? fmtShort(cur.dataAsOf) : 'date unknown') + ' · loading…</span>';
+          return;
+        }
         var words = !cur.dataAsOf ? 'date unknown' : cls === 'expired' ? fmtShort(cur.dataAsOf) + ' · expired, refresh' : fmtShort(cur.dataAsOf) + ' · ' + a + ' d';
         var tip = REG[src].label + ': data ' + fmtDate(cur.dataAsOf) + (a !== null ? ' (' + a + ' days old)' : '') + ' · dated from ' + methodWords(cur.method) + (cur.window ? ' · covers ' + fmtDate(cur.window.from) + ' – ' + fmtDate(cur.window.to) : '') +
           ' · ' + cur.standardName + ' · ' + (cur.rows || 0).toLocaleString() + ' rows · refreshed ' + String(cur.refreshedAt || '').slice(0, 16).replace('T', ' ') + ' · amber after ' + AGE.amber + ' days, red after ' + AGE.red + ', not loaded after ' + AGE.refuse;
@@ -1343,13 +1394,14 @@
       if (snIn.length) h += '<span class="ncw-chip" title="' + esc('Component Snapshots in 2 In use\\Snapshots (reference lists: no age limit): ' + snIn.map(function (k) { return S.register.snapshots[k].current.standardName; }).join(', ') + '. Bench compares them with its definition.') + '">Snapshots · ' + snIn.length + '</span>';
       if (S.newFiles.length && S.mode === 'view') h += '<span class="ncw-chip amber" title="' + esc(S.newFiles.join(', ')) + ' — waiting for the person who refreshes the folder">' + S.newFiles.length + ' NEW · FOR THE REFRESHER</span>';   // v0.2.0
       else if (S.newFiles.length) h += '<button class="ncw-btn gold" data-ncw="check" title="' + esc(S.newFiles.join(', ')) + '">' + S.newFiles.length + ' NEW FILE' + (S.newFiles.length > 1 ? 'S' : '') + ': CHECK</button>';
-      else h += '<button class="ncw-btn" data-ncw="rescan" title="Folder: ' + esc(S.folderName) + '. Look in 1 New files again.">↻</button>';
+      else if (!anyFailed()) h += '<button class="ncw-btn" data-ncw="rescan" title="Folder: ' + esc(S.folderName) + '. Read the folder again: the SAP data in use and 1 New files.">↻</button>';
+      if (anyFailed()) h += '<button class="ncw-btn gold" data-ncw="rescan" title="Read the folder again and load the data that could not be read.">↻ TRY AGAIN</button>';   // v0.3.4
       h += helpBtn;
     }
     h += '</span>';
     el.innerHTML = h;
     el.querySelectorAll('[data-ncw]').forEach(function (b) {
-      b.onclick = function () { var a = b.getAttribute('data-ncw'); if (a === 'connect') connect(); else if (a === 'allow') allow(); else if (a === 'check') checkNew(); else if (a === 'rescan') scanNew(); else if (a === 'help') openHelp(); };
+      b.onclick = function () { var a = b.getAttribute('data-ncw'); if (a === 'connect') connect(); else if (a === 'allow') allow(); else if (a === 'check') checkNew(); else if (a === 'rescan') refreshAll();   /* v0.3.4 — the whole folder, not only 1 New files */ else if (a === 'help') openHelp(); };
     });
   }
   // v0.2.0 — CONNECT FOLDER asks how the folder will be used, then asks the browser for exactly that permission
@@ -1471,7 +1523,7 @@
   function attach(host) {
     var sameClient = S.host && S.cc === (host.clientCode || 'DEFAULT');
     S.host = host; S.cc = host.clientCode || 'DEFAULT';
-    if (!sameClient) { S.handle = null; S.perm = 'none'; S.folderName = ''; S.register = null; S.loaded = {}; S.newFiles = []; }
+    if (!sameClient) { S.handle = null; S.perm = 'none'; S.folderName = ''; S.register = null; S.loaded = {}; S.newFiles = []; MEM = {}; FAILED = {}; }   /* v0.3.4 */
     else S.loaded = {};   // a re-load of the same client re-delivers the copies (Lens rebuilt its state)
     // v0.3.3 — the plan was opened as a file only (Lens's landing page, "Drop to view a JSON"): no folder is connected or restored
     S.fileOnly = !!host.noFolder;
