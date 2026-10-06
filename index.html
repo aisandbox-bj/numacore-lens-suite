@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.20.1 — Mission Control</title>
+<title>NumaCore Lens v4.21 — Mission Control</title>
 <script src="numacore_lib.js"></script>
-<script src="numacore_bench.js?v=1.3.1"></script><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_bench.js?v=1.3.1"></script>
+<script src="numacore_budget.js?v=1.0.0"></script><!-- v4.21 (L-08) — the budget in Horizon: Cadence's budget engine, report and Excel, plus the machine timeline --><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.4"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -507,6 +508,24 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #tab-horizon select.hz-inh { color:#6a7fa0; border-color:rgba(55,138,221,0.15); background:transparent; }
 #tab-horizon .hz-tag { font-size:10px; color:#c9c6f5; border:1px solid rgba(155,151,232,0.5); border-radius:8px; padding:0 6px; }
 #tab-horizon .hz-st-arrive { color:#85b7eb; } #tab-horizon .hz-st-planned { color:#c9c6f5; } #tab-horizon .hz-st-parked { color:#ffd54f; } #tab-horizon .hz-st-gone { color:#f09595; }
+#tab-horizon .hz-seg { display:inline-flex; border:1px solid rgba(61,201,160,0.45); border-radius:5px; overflow:hidden; }
+#tab-horizon .hz-segb { background:transparent; border:0; color:#b8ede0; padding:5px 14px; font-size:12px; cursor:pointer; font-family:inherit; }
+#tab-horizon .hz-segb + .hz-segb { border-left:1px solid rgba(61,201,160,0.45); }
+#tab-horizon .hz-segb.on { background:#3dc9a0; color:#030f0c; font-weight:700; }
+#hz-view-bud { flex-direction:column; gap:10px; min-height:0; }
+#hz-view-bud .hzb-kpis { display:flex; gap:10px; flex-wrap:wrap; }
+#hz-view-bud .hzb-kpi { flex:1 1 150px; background:rgba(8,26,21,0.6); border:1px solid rgba(61,201,160,0.2); border-radius:8px; padding:10px 14px; text-align:center; }
+#hz-view-bud .hzb-kpi b { display:block; font-size:22px; color:#e0faf2; font-weight:700; line-height:1.15; }
+#hz-view-bud .hzb-kpi.hzb-main b { color:#3dc9a0; font-size:26px; }
+#hz-view-bud .hzb-kpi span { font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:#8b8fa3; }
+#hz-view-bud .hzb-note { font-size:12.5px; line-height:1.55; color:#d5dae0; background:rgba(8,26,21,0.6); border:1px solid rgba(61,201,160,0.2); border-radius:8px; padding:10px 14px; }
+#hz-view-bud .hzb-note b { color:#e0faf2; }
+#hz-view-bud .hzb-note.hzb-warn { border-color:rgba(251,191,36,0.45); color:#fde68a; }
+#hz-view-bud .hzb-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:12px; color:#8b8fa3; }
+#hz-view-bud .hzb-btn { background:transparent; border:1px solid rgba(61,201,160,0.5); color:#3dc9a0; border-radius:5px; padding:6px 14px; font-size:12px; cursor:pointer; font-family:inherit; }
+#hz-view-bud .hzb-btn:hover { background:rgba(61,201,160,0.1); }
+#hz-view-bud .hzb-btn.hzb-pri { background:#3dc9a0; color:#030f0c; border-color:#3dc9a0; font-weight:700; }
+#hz-view-bud iframe { width:100%; height:calc(100vh - 330px); min-height:520px; border:1px solid rgba(61,201,160,0.2); border-radius:8px; background:#0d1117; }
 #tab-horizon .hz-zoom { margin:0 0 10px; padding:6px 10px; background:rgba(8,26,21,0.6); border:1px solid rgba(255,255,255,0.07); border-radius:8px; }
 #tab-horizon .hz-empty { padding:24px; color:#5dcaa5; opacity:0.7; font-size:12px; }
 #hz-ov { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9100; display:none; align-items:center; justify-content:center; }
@@ -1925,13 +1944,15 @@ body { background: #030f0c; }
     <div id="tab-horizon" class="tab-page" style="flex-direction:column;padding:18px 24px;overflow:auto">
       <div class="hz-head">
         <div class="hz-title">HORIZON</div>
-        <div class="hz-sub">Machine timeline &middot; fleet classes &middot; planned machines</div>
+        <div class="hz-sub">Machine timeline &middot; fleet classes &middot; planned machines &middot; budget</div>
         <div class="hz-tools">
+          <span class="hz-seg" title="Timeline: every machine's dates. Budget: the life-of-fleet budget, following those dates."><button class="hz-segb on" id="hz-v-time">Timeline</button><button class="hz-segb" id="hz-v-bud">Budget</button></span>
           <label>Budget horizon: today until <select id="hz-end"></select></label>
           <select id="hz-fleet"></select>
           <button class="hz-btn" id="hz-add">+ Add planned machine</button>
         </div>
       </div>
+      <div id="hz-view-time">
       <div class="hz-legend">
         <span><i style="background:linear-gradient(90deg,#1d9e75,#3dc9a0)"></i>on site</span>
         <span><i style="background:linear-gradient(90deg,#378add,#5fa8e0)"></i>arrives (not on site yet)</span>
@@ -1942,6 +1963,9 @@ body { background: #030f0c; }
       </div>
       <div class="hz-zoom" id="hz-zoom" title="Zoom and pan the timeline. This view is kept in this browser only."></div>
       <div class="hz-grid" id="hz-body"></div>
+      </div>
+      <!-- v4.21 (L-08) — the budget view: numacore_budget.js does the sums and the report; Lens shows them -->
+      <div id="hz-view-bud" style="display:none"></div>
     </div>
     <!-- BENCH PANEL — critical spares (v4.10 FEAT-1). Content is rendered by numacore_bench.js. -->
     <div id="tab-bench" class="tab-page" style="flex-direction:row;overflow:hidden"></div>
@@ -1991,7 +2015,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.20.1';
+const VERSION = '4.21';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -5085,6 +5109,7 @@ function loadLensJSON(json) {
 
   // v4.11 FEAT-1 — the client folder (numacore_workspace). A different client's plan starts clean: no folder data,
   // no stock in Bench, and a fresh Deploy (its session pools would otherwise still hold the last client's SAP data).
+  try { _hzbReset(); } catch (e) {}   /* v4.21 — another plan: no budget held, Horizon back on its timeline */
   const _ccNow = lensMeta.clientCode || 'DEFAULT';
   if (_wsClient !== null && (_wsClient !== _ccNow || _lensNoLinks)) {   /* v4.20 — also when the plan is opened as a file only */
     _embedWorkspace = {};
@@ -6501,8 +6526,125 @@ function _hzRowHTML(r, ax, today, clsOpts) {
     '<div class="hz-track" data-u="' + esc(r.unit) + '">' + track + '</div></div>';
 }
 
+// ══ v4.21 (L-08) — the budget in Horizon ═════════════════════════════════════════════════════════════════════════════
+// Operator, 2026-09-28: "when machines will be parked / decom (stop budgetting)… The budget function should move to
+// Horizon." Step 1–4 of the agreed order: Horizon's budget is built NEXT TO Cadence's, to be compared on the operator's
+// file; retiring Cadence's budget is a later Cadence change that needs its own yes. Nothing in Cadence changes here.
+//   • numacore_budget.js holds the sums, the dialogs, the Excel workbook and the report: Cadence's own budget code,
+//     lifted by a build script, plus the machine timeline (nothing after a retired date; parked periods move change-outs
+//     out; a machine past its retired date is left out).
+//   • Settings are Horizon's own, in the plan's horizon.budget = { config, baf } (Lens owns `horizon`). They START from
+//     Cadence's budgetConfig (read only). Cadence still owns and writes its own; the two do not overwrite each other.
+//   • The result is never stored: it is worked out again each time the Budget view opens.
+let _hzSubView = 'time', _hzbPack = null, _hzbReady = false, _hzbStart = '';
+function _hzbMoney(v) { v = Number(v) || 0; return v >= 1e6 ? 'CA$' + (v / 1e6).toFixed(2) + 'M' : 'CA$' + Math.round(v).toLocaleString('en-CA'); }
+function _hzbCadenceCfg() {
+  const j = lensRawData || {}, wd = j.workingData, wf = j.working;
+  return (wd && wd.budgetConfig && typeof wd.budgetConfig === 'object') ? wd.budgetConfig : ((wf && wf.budgetConfig && typeof wf.budgetConfig === 'object') ? wf.budgetConfig : null);
+}
+function _hzbReset() { _hzbPack = null; _hzbReady = false; _hzSubView = 'time'; _hzbShowView(); }
+function _hzbEnsure() {
+  if (!window.NumaCoreBudget) return false;
+  if (_hzbReady) return true;
+  NumaCoreBudget.attach({
+    plan: function () { return lensRawData; },
+    horizon: function () { return _hz(); },
+    horizonEnd: function () { const h = _hz(); return (h && h.horizonEnd) || (new Date().getFullYear() + 10); },
+    onConfig: _hzbOnConfig, onResult: _hzbOnResult, seedNote: _hzbSeedNote
+  });
+  const h = _hz(), own = h && h.budget && h.budget.config;
+  if (own) { NumaCoreBudget.setConfig(Object.assign({}, h.budget.config, h.budget.baf ? { baf: h.budget.baf } : {})); _hzbStart = h.budget.startedFrom || ''; }
+  else {
+    const c = _hzbCadenceCfg(), seed = c ? JSON.parse(JSON.stringify(c)) : {};
+    delete seed.periodNum; delete seed.periodUnit;   /* the period follows Horizon's "today until <year>" */
+    NumaCoreBudget.setConfig(seed); _hzbStart = c ? 'cadence' : 'defaults';
+  }
+  _hzbReady = true;
+  return true;
+}
+function _hzbOnConfig(cfg) {
+  const h = _hzEnsure(), c = JSON.parse(JSON.stringify(cfg || {})), baf = c.baf || null; delete c.baf;
+  const first = !h.budget;
+  h.budget = { config: c, baf: baf, startedFrom: (h.budget && h.budget.startedFrom) || _hzbStart || 'defaults', startedAt: (h.budget && h.budget.startedAt) || _hideStamp(), updatedAt: _hideStamp() };
+  if (first) _hzLog(h, 'budget settings', 'Horizon\'s own budget settings started' + (h.budget.startedFrom === 'cadence' ? ' from Cadence\'s' : ''));
+  _lensAutosaveDirty = true; _updateUnsavedDot();
+}
+function _hzbSeedNote() {
+  const h = _hz(), own = h && h.budget, c = _hzbCadenceCfg();
+  const take = c ? ' <a onclick="_hzbTakeCadence()" style="color:#3dc9a0;cursor:pointer;text-decoration:underline">Copy Cadence\'s settings in</a>.' : '';
+  if (own) return 'These are Horizon\'s own budget settings, kept in the plan (SAVE FILE). Cadence\'s are not changed.' + take;
+  return (c ? 'Started from Cadence\'s budget settings (adjustment factors, fiscal year, bucket). ' : 'No budget settings in this plan yet, so these are the defaults. ') + 'They become Horizon\'s own when you run the budget. Cadence\'s are not changed.';
+}
+function _hzbTakeCadence() {
+  const c = _hzbCadenceCfg(); if (!c || !window.NumaCoreBudget) return;
+  if (!confirm('Copy Cadence\'s budget settings into Horizon?\n\nHorizon\'s adjustment factors, fiscal year and bucket are replaced by Cadence\'s. The period keeps following Horizon\'s end year. Cadence is not changed.')) return;
+  const seed = JSON.parse(JSON.stringify(c)), keep = NumaCoreBudget.config();
+  delete seed.periodNum; delete seed.periodUnit;
+  if (keep.periodManual) { seed.periodManual = true; seed.periodNum = keep.periodNum; seed.periodUnit = keep.periodUnit; }
+  seed.windows = keep.windows;
+  NumaCoreBudget.setConfig(seed); _hzbStart = 'cadence';
+  const h = _hzEnsure(); if (h.budget) h.budget.startedFrom = 'cadence';
+  _hzbOnConfig(NumaCoreBudget.config()); _hzLog(h, 'budget settings', 'Cadence\'s settings copied in');
+  try { closeBudgetModal(); } catch (e) {}
+  NumaCoreBudget.open();
+}
+function _hzbOpen() {
+  if (!lensRawData) { showToast('Load a fleet file first.', 'warn'); return; }
+  if (!_hzbEnsure()) { showToast('The budget could not load (numacore_budget.js is missing beside this page).', 'error', 6000); return; }
+  NumaCoreBudget.open();
+}
+function _hzbOnResult(pack) { _hzbPack = pack; _hzSubView = 'bud'; _hzbShowView(); _hzbRender(); }
+function _hzbShowView() {
+  const a = document.getElementById('hz-view-time'), b = document.getElementById('hz-view-bud'); if (!a || !b) return;
+  const bud = _hzSubView === 'bud';
+  a.style.display = bud ? 'none' : ''; b.style.display = bud ? 'flex' : 'none';
+  const x = document.getElementById('hz-v-time'), y = document.getElementById('hz-v-bud');
+  if (x) x.classList.toggle('on', !bud); if (y) y.classList.toggle('on', bud);
+}
+function _hzSub(v) {
+  _hzSubView = v === 'bud' ? 'bud' : 'time';
+  _hzbShowView();
+  if (_hzSubView === 'bud') { _hzbPack = null; _hzbRender(); } else renderHorizon();
+}
+function _hzbRender() {
+  const el = document.getElementById('hz-view-bud'); if (!el) return;
+  if (!lensRawData) { el.innerHTML = '<div class="hzb-note">Load a fleet file to see the budget.</div>'; return; }
+  if (!_hzbEnsure()) { el.innerHTML = '<div class="hzb-note hzb-warn">The budget could not load: <code>numacore_budget.js</code> is missing beside this page.</div>'; return; }
+  if (!_hzbPack) { try { _hzbPack = NumaCoreBudget.run(); } catch (e) { console.warn('budget run:', e); el.innerHTML = '<div class="hzb-note hzb-warn">The budget could not be worked out: ' + esc(e.message || String(e)) + '</div>'; return; } }
+  const p = _hzbPack, res = p.res, o = p.opts, rc = res.reconciliation, rk = res.risk.count, w = res.windowEffect || {};
+  const blend = rc.baseGrand > 0 ? (Math.round((rc.grandTotal / rc.baseGrand - 1) * 1000) / 10) : 0;
+  const kpi = function (label, val, main) { return '<div class="hzb-kpi' + (main ? ' hzb-main' : '') + '"><b>' + val + '</b><span>' + label + '</span></div>'; };
+  let tl;
+  if (!o.windows) tl = '<b>Machine timeline off.</b> This is Cadence\'s rule: every machine is budgeted to the end of the period, whatever its retired date or parked periods.';
+  else {
+    const gone = Object.keys(w.goneUnits || {}).sort(), base = p.base ? p.base.reconciliation.grandTotal : null;
+    const hasWin = Object.keys(NumaCoreBudget.windows() || {}).length > 0;
+    if (!hasWin) tl = '<b>Machine timeline on.</b> No machine has a retired date or a parked period, so this is the same as Cadence\'s rule.';
+    else tl = '<b>Machine timeline on:</b> ' + _hzbMoney(rc.grandTotal) + '. By Cadence\'s rule (every machine to the end of the period) it would be <b>' + (base === null ? '—' : _hzbMoney(base)) + '</b>' +
+      (base === null ? '' : ', a difference of <b>' + _hzbMoney(Math.abs(base - rc.grandTotal)) + '</b>' + (base >= rc.grandTotal ? ' less' : ' more')) + '. ' +
+      gone.length + ' machine' + (gone.length === 1 ? '' : 's') + ' past the retired date left out' + (gone.length ? ' (' + esc(gone.slice(0, 8).join(', ')) + (gone.length > 8 ? ', …' : '') + ')' : '') + ' · ' +
+      (w.dropped || 0) + ' change-out' + (w.dropped === 1 ? '' : 's') + ' after a retired date not budgeted (' + _hzbMoney(w.droppedCost || 0) + ') · ' +
+      (w.moved || 0) + ' moved out by parked periods.';
+  }
+  const riskN = (rk.unscheduled || 0) + (rk.inferredUtil || 0) + (rk.conditionModelled || 0) + (rk.missingBenchmark || 0) + (rk.cost || 0) + (rk.capped || 0);
+  el.innerHTML =
+    '<div class="hzb-bar"><button class="hzb-btn hzb-pri" onclick="_hzbOpen()">&#9881; Settings &amp; run again</button>' +
+      '<button class="hzb-btn" onclick="NumaCoreBudget.exportExcel()">&#11015; Excel</button>' +
+      '<button class="hzb-btn" onclick="NumaCoreBudget.downloadReport()">&#11015; Report (HTML)</button>' +
+      '<button class="hzb-btn" onclick="NumaCoreBudget.openRisk()">&#9888; Risk report (' + riskN + ')</button>' +
+      '<span>' + esc(o.fromDate.slice(0, 7)) + ' &rarr; ' + esc(o.toDate.slice(0, 7)) + ' &middot; ' + NumaCoreBudget.rows(false).length.toLocaleString() + ' components &middot; today\'s money &middot; worked out ' + esc(_lensFmtD(_lensTodayISO())) + '</span></div>' +
+    '<div class="hzb-kpis">' + kpi('Life-of-fleet total', _hzbMoney(rc.grandTotal), true) + kpi('In periods', _hzbMoney(rc.bandsTotal)) + kpi('Overdue / backlog', _hzbMoney(rc.overdueTotal)) +
+      kpi('Unscheduled (no date)', _hzbMoney(rc.unscheduledTotal)) + kpi('Adjustment factor (blended)', blend + '%') + '</div>' +
+    '<div class="hzb-note">' + tl + '</div>' +
+    '<div class="hzb-note">Side by side with Cadence: this budget uses Cadence\'s own sums on the same plan. With <b>Machine timeline</b> unticked and the same period and settings, the totals should equal Cadence\'s Budget. Cadence\'s Budget button still works and is not changed.</div>' +
+    '<iframe id="hzb-frame" title="Budget report"></iframe>';
+  const fr = document.getElementById('hzb-frame');
+  try { fr.srcdoc = NumaCoreBudget.reportHtml(); } catch (e) { console.warn('budget report:', e); }
+}
+
 // ── changes (each one logged on the machine, or on the horizon section for a fleet class) ──
 function _hzAfterChange(msg, compsChanged) {
+  _hzbPack = null;   /* v4.21 — the budget is worked out again next time it is shown */
   FLEET_DATA = buildFleetData(lensRawData);
   _lensAutosaveDirty = true; _updateUnsavedDot();
   renderHorizon();
@@ -6716,6 +6858,8 @@ function _hzRemovePlanned(unit) {
   document.addEventListener('click', function (e) {
     const t = e.target; if (!t.closest || !t.closest('#tab-horizon')) return;
     if (t.id === 'hz-add') { if (lensRawData) _hzOpenAdd(); return; }
+    if (t.id === 'hz-v-time') { _hzSub('time'); return; }   /* v4.21 */
+    if (t.id === 'hz-v-bud') { _hzSub('bud'); return; }
     const g = t.closest('.hz-grp'); if (g && !t.closest('select')) { const f = g.dataset.fleet; _hzClosed[f] = !_hzClosed[f]; renderHorizon(); return; }
     const tr = t.closest('.hz-track'); if (tr && !t.classList.contains('hz-h')) { _hzOpenEditor(tr.dataset.u); return; }
     const rw = t.closest('.hz-row'); if (rw && rw.dataset.u && !t.closest('select') && !t.classList.contains('hz-h')) _hzOpenEditor(rw.dataset.u);
