@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>NumaCore Lens v4.21 — Mission Control</title>
+<title>NumaCore Lens v4.22 — Mission Control</title>
 <script src="numacore_lib.js"></script>
 <script src="numacore_bench.js?v=1.3.1"></script>
-<script src="numacore_budget.js?v=1.0.0"></script><!-- v4.21 (L-08) — the budget in Horizon: Cadence's budget engine, report and Excel, plus the machine timeline --><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
+<script src="numacore_budget.js?v=1.1.0"></script><!-- v4.21 (L-08) — the budget in Horizon: Cadence's budget engine, report and Excel, plus the machine timeline --><!-- v4.10 FEAT-1 — Bench tab (critical spares); SheetJS loads on first INV_MSTR read -->
 <script src="numacore_workspace.js?v=0.3.4"></script><!-- v4.11 FEAT-1 — the client-folder reader (IW39 + INV_MSTR from the synced OneDrive folder; Meeting record) -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -508,6 +508,10 @@ canvas#mm-lines { position: absolute; inset: 0; pointer-events: none; z-index: 1
 #tab-horizon select.hz-inh { color:#6a7fa0; border-color:rgba(55,138,221,0.15); background:transparent; }
 #tab-horizon .hz-tag { font-size:10px; color:#c9c6f5; border:1px solid rgba(155,151,232,0.5); border-radius:8px; padding:0 6px; }
 #tab-horizon .hz-st-arrive { color:#85b7eb; } #tab-horizon .hz-st-planned { color:#c9c6f5; } #tab-horizon .hz-st-parked { color:#ffd54f; } #tab-horizon .hz-st-gone { color:#f09595; }
+.lens-drag { display:inline-block; color:#fbbf24; border:1px solid rgba(251,191,36,0.5); border-radius:3px; padding:0 4px; font-size:10px; font-weight:600; letter-spacing:0.02em; white-space:nowrap; cursor:help; }
+#hz-view-bud .hzb-drag { border-color:rgba(251,191,36,0.55); background:rgba(251,191,36,0.07); }
+#hz-view-bud .hzb-drag b { color:#fde68a; }
+#hz-view-bud .hzb-drag .hzb-btn { margin:8px 8px 0 0; }
 #tab-horizon .hz-seg { display:inline-flex; border:1px solid rgba(61,201,160,0.45); border-radius:5px; overflow:hidden; }
 #tab-horizon .hz-segb { background:transparent; border:0; color:#b8ede0; padding:5px 14px; font-size:12px; cursor:pointer; font-family:inherit; }
 #tab-horizon .hz-segb + .hz-segb { border-left:1px solid rgba(61,201,160,0.45); }
@@ -2015,7 +2019,7 @@ const showToast = (window.NumaCoreLib && NumaCoreLib.showToast) || function(m, s
 };
 
 // ── VERSION + SCHEMA SHAPE (v4-alpha, Chunk 5) ─────────────────────────────
-const VERSION = '4.21';
+const VERSION = '4.22';
 
 // V5/V4-Flat shape resolver. Lens v4 reads V5 nested (masterData/workingData)
 // AND V4 Flat (root components, working{}) — graceful degradation. The shape
@@ -4216,6 +4220,41 @@ function _lensNum(v, suf) { return (v == null || v === '' || !isFinite(Number(v)
 // Machines not on site yet: UNIT → arrival date. Set by buildFleetData on every load.
 let _lensNotOnSite = {};
 // Cadence's own sum from the last read date (the arrival): last read + (benchmark − hours used) ÷ hours a day.
+// v4.22 — ONE order for a component's planned date, on every screen and in the budget (operator, 2026-10-06: "keep to
+// the current order logic, but applied consistently everywhere"):
+//   1 the project's date (the component is linked to a Cadence project);
+//   2 a date dragged by hand in Cadence, with no project behind it: used, but marked (legacy, not preferred);
+//   3 the theoretical date worked out from hours (Cadence's own sum, via numacore_budget.js). Only when hours cannot
+//     give one (no benchmark or no use rate) is the date stored in the plan file shown.
+// Before v4.22 step 3 was the plan-file date, so Pulse / Vitals / the tiles could disagree with Cadence and the budget.
+function _lensPlanDate(c, unit, ovr, pd, linked) {
+  const arr = _lensNotOnSite[String(unit).toUpperCase()] || null, id = c.id;
+  const o = (id != null && ovr[id]) ? ovr[id] : null, info = (pd && id != null) ? (pd.byId[id] || null) : null;
+  // in a project: the project's date. Cadence keeps it as an entry in its date list, or (when it equals the theoretical
+  // date at the time of saving) only as the component's own date in the plan; either way it is never worked out again.
+  // A project date that has passed while the theoretical date is still ahead gives way to the theoretical date: that is
+  // what Cadence shows and what the budget uses (Cadence brings a past date to the theoretical one, or to today).
+  const _t0 = info ? info.theo : null, _today = _lensTodayISO();
+  const _stale = function (d) { return !!(_t0 && String(d).slice(0, 10) < _today && _t0 >= _today); };
+  if (id != null && linked[String(id)] && !o && c.changeout_date && !_stale(c.changeout_date)) return { date: c.changeout_date, basis: 'project' };
+  if (o && !(arr && String(o).slice(0, 10) < arr)) {
+    if (linked[String(id)] && !_stale(o)) return { date: o, basis: 'project' };
+    // a dragged date counts only while it is live by Cadence's own test (an old entry dated in the past no longer moves
+    // anything: Cadence shows the theoretical date and drops the entry at its next save). Without the module: as before.
+    if (!pd || (info && info.dragged)) return { date: o, basis: 'dragged' };
+  }
+  const t = info ? info.theo : null;
+  if (t) return { date: t, basis: 'theoretical' };
+  if (arr) { const a = _arrivalForecast(c); return { date: a, basis: a ? 'theoretical' : 'none' }; }
+  return { date: c.changeout_date, basis: c.changeout_date ? 'file' : 'none' };
+}
+function _lensBasisTag(c, long) {
+  const b = c && c.date_basis;
+  if (b === 'dragged') return ' <span class="lens-drag" title="This date was dragged by hand in Cadence and the component is in no project. It is used, but it is legacy: a project date or the theoretical date is preferred. To clear it: Cadence, Config, Open Override Audit, Clear All Orphans.">' + (long ? 'dragged date, no project' : 'dragged') + '</span>';
+  if (!long) return '';
+  const w = b === 'project' ? 'project date' : b === 'theoretical' ? 'theoretical, from hours' : b === 'file' ? 'date in the plan file' : '';
+  return w ? ' <span style="color:#6a7fa0;font-weight:400">(' + w + ')</span>' : '';
+}
 function _arrivalForecast(c) {
   const bm = Number(c.benchmark || 0), ur = Number(c.util_rate || 0), ref = String(c.last_read || '').slice(0, 10);
   if (!(bm > 0) || !(ur > 0) || _lensIsoMs(ref) === null) return null;
@@ -4378,7 +4417,7 @@ function openCompDrill(fleet, model, unit, c) {
     '<div class="cd-row"><span class="cd-label">Life used</span><span class="cd-val">' + pct + '%</span></div>' +
     '<div class="cd-row"><span class="cd-label">Hours</span><span class="cd-val">' + eH + ' / ' + bn + '</span></div>' +
     '<div class="cd-row"><span class="cd-label">Installed</span><span class="cd-val">' + esc(c.install_date || '—') + '</span></div>' +   /* v4.7 FIX-1 — esc */
-    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + esc(c.pred_changeout || '—') + (c.on_site_from ? ' <span style="color:#6a7fa0;font-weight:400">(from arrival)</span>' : '') + '</span></div>' +
+    '<div class="cd-row"><span class="cd-label">Predicted change-out</span><span class="cd-val">' + esc(c.pred_changeout || '—') + _lensBasisTag(c, true) + (c.on_site_from ? ' <span style="color:#6a7fa0;font-weight:400">(from arrival)</span>' : '') + '</span></div>' +
     (c.on_site_from ? '<div class="cd-row"><span class="cd-label">Not on site yet</span><span class="cd-val">on site from ' + esc(_lensFmtD(c.on_site_from)) + '</span></div>' : '') +   /* v4.15 */
     _rwlDrillHTML(c, unit) + _histHTML(c, unit);   /* v4.15 — replaced while linked + the component's history */
   document.getElementById('comp-drill-overlay').classList.add('open');
@@ -4488,7 +4527,7 @@ function renderComponents(fleet, model, unit) {
         '<span class="tt-line">📌 ' + esc(c.component) + '</span>' +
         '<span class="tt-line">⏱ ' + eH + ' hrs of ' + bn + ' hrs benchmark</span>' +
         '<span class="tt-line">📅 Installed: ' + esc(c.install_date || '—') + '</span>' +
-        '<span class="tt-line">🔄 Predicted change-out: ' + esc(c.pred_changeout || '—') + '</span>' +
+        '<span class="tt-line">🔄 Predicted change-out: ' + esc(c.pred_changeout || '—') + _lensBasisTag(c) + '</span>' +
       '</div>';
     grid.appendChild(card);
   });
@@ -4757,6 +4796,14 @@ function hideLoadScreen() {
   document.getElementById('banner-meta').style.display = 'flex';
 }
 
+// v4.22 — a fingerprint of what the planned dates are built from: Cadence's dragged / project dates and its project links
+let _lensPlanSigLast = '';
+function _lensPlanSig(j) {
+  const w = _readWorking(j) || {};
+  const a = Array.isArray(w.componentDateOverrides) ? w.componentDateOverrides : (Array.isArray(w.componentDates) ? w.componentDates : []);
+  return a.map(function (o) { return o && (o.id + ':' + o.changeout_date); }).join('|') + '#' +
+    (Array.isArray(w.projects) ? w.projects : []).map(function (p) { return p && (p.id + ':' + (p.linkedIds || []).join(',')); }).join('|');
+}
 function buildFleetData(json) {
   const fd = {};
   // V5: components live under json.masterData.components[]; V4 Flat: under json.components[].
@@ -4816,6 +4863,10 @@ function buildFleetData(json) {
     });
   }
 
+  // v4.22 — each component's theoretical date, by Cadence's own rules (numacore_budget.js); null when the module is missing
+  let _pd = null;
+  try { if (window.NumaCoreBudget && NumaCoreBudget.planDates) _pd = NumaCoreBudget.planDates(json); } catch (e) { console.warn('plan dates:', e); }
+  if (json === lensRawData) _lensPlanSigLast = _lensPlanSig(json);   // v4.22 — what the dates on screen were built from
   _readComponents(json).forEach(c => {
     // FIX-1 — resolve fleet/unit/component names from V5 fields when V4 fields are missing.
     // Mutates c in place so all downstream reads (here AND later code paths that re-read
@@ -4849,6 +4900,7 @@ function buildFleetData(json) {
     const estHours = Math.max(0, (c.last_smu || 0) - (c.install_hours || 0));
     const bench    = (c.benchmark && c.benchmark > 0) ? c.benchmark : null;
     const pct      = bench ? estHours / bench : null; // DR-003: null = no benchmark; never divide by 1
+    const _pdte = _lensPlanDate(c, unit, _ovr, _pd, _hzLinked);   // v4.22 — project date, dragged date (marked), theoretical date
     fd[fleet][model][unit].push({
       component:            c.component,
       benchmark:            c.benchmark,
@@ -4858,7 +4910,8 @@ function buildFleetData(json) {
       // v4.7 — override-aware (planner's dragged date wins). v4.15 — a machine not on site yet is planned from arrival,
       // and a date override dated BEFORE its arrival is set aside (nothing can be changed on a machine that isn't there;
       // Cadence shows the forecast from arrival there too).
-      pred_changeout:       (c.id != null && _ovr[c.id] && !(_lensNotOnSite[String(unit).toUpperCase()] && String(_ovr[c.id]).slice(0, 10) < _lensNotOnSite[String(unit).toUpperCase()])) ? _ovr[c.id] : (_lensNotOnSite[String(unit).toUpperCase()] ? _arrivalForecast(c) : c.changeout_date),
+      pred_changeout:       _pdte.date,
+      date_basis:           _pdte.basis,   // v4.22 — 'project' | 'dragged' | 'theoretical' | 'file' | 'none'
       on_site_from:         _lensNotOnSite[String(unit).toUpperCase()] || null,   // v4.15
       original_date:        c.original_date,
       last_smu:             c.last_smu,
@@ -5988,6 +6041,9 @@ function _mergeChildEdits(tool, childSlice) {
   }
   // Refresh dependent renderers — components untouched, but project/date
   // state may have changed.
+  // v4.22 — when Cadence changed a dragged date, a project date or a project link, Lens's dates are worked out again so
+  // every screen shows what Cadence shows (before, they kept the old dates until the plan was reopened).
+  try { if (tool === 'cadence' && _lensPlanSig(lensRawData) !== _lensPlanSigLast) { FLEET_DATA = buildFleetData(lensRawData); _hzbPack = null; } } catch (e) { console.warn('dates after Cadence change:', e); }
   try { if (typeof renderPulse === 'function') renderPulse(); } catch(_) {}
 }
 
@@ -6536,13 +6592,13 @@ function _hzRowHTML(r, ax, today, clsOpts) {
 //   • Settings are Horizon's own, in the plan's horizon.budget = { config, baf } (Lens owns `horizon`). They START from
 //     Cadence's budgetConfig (read only). Cadence still owns and writes its own; the two do not overwrite each other.
 //   • The result is never stored: it is worked out again each time the Budget view opens.
-let _hzSubView = 'time', _hzbPack = null, _hzbReady = false, _hzbStart = '';
+let _hzSubView = 'time', _hzbPack = null, _hzbReady = false, _hzbStart = '', _hzbDragAck = -1;   /* v4.22 — the dragged-date count the person has already seen */
 function _hzbMoney(v) { v = Number(v) || 0; return v >= 1e6 ? 'CA$' + (v / 1e6).toFixed(2) + 'M' : 'CA$' + Math.round(v).toLocaleString('en-CA'); }
 function _hzbCadenceCfg() {
   const j = lensRawData || {}, wd = j.workingData, wf = j.working;
   return (wd && wd.budgetConfig && typeof wd.budgetConfig === 'object') ? wd.budgetConfig : ((wf && wf.budgetConfig && typeof wf.budgetConfig === 'object') ? wf.budgetConfig : null);
 }
-function _hzbReset() { _hzbPack = null; _hzbReady = false; _hzSubView = 'time'; _hzbShowView(); }
+function _hzbReset() { _hzbPack = null; _hzbReady = false; _hzbDragAck = -1; _hzSubView = 'time'; _hzbShowView(); }
 function _hzbEnsure() {
   if (!window.NumaCoreBudget) return false;
   if (_hzbReady) return true;
@@ -6604,12 +6660,52 @@ function _hzbShowView() {
 function _hzSub(v) {
   _hzSubView = v === 'bud' ? 'bud' : 'time';
   _hzbShowView();
-  if (_hzSubView === 'bud') { _hzbPack = null; _hzbRender(); } else renderHorizon();
+  if (_hzSubView === 'bud') {
+    // v4.22 — Cadence's latest changes first (a date just dragged, dragged dates just cleared), then the budget
+    _hzbPack = null;
+    const el = document.getElementById('hz-view-bud'); if (el && lensRawData) el.innerHTML = '<div class="hzb-note">Collecting Cadence\'s latest changes…</div>';
+    _flushEmbeds().then(function () { if (_hzSubView === 'bud') _hzbRender(); }, function () { if (_hzSubView === 'bud') _hzbRender(); });
+  } else renderHorizon();
+}
+// v4.22 — dates dragged by hand on components with no project (Cadence's "orphans"): the count, and how to clear them
+function _hzbDragHtml(d, before) {
+  const n = d.count, same = n - d.differ;
+  return '<div class="hzb-note hzb-drag"><b>' + n.toLocaleString() + ' component' + (n === 1 ? ' carries' : 's carry') + ' a date dragged by hand, with no project.</b> ' +
+    'The order is: the project\'s date, then a dragged date, then the theoretical date from hours. A dragged date is legacy and not preferred: ' +
+    'execution follows projects. ' + d.differ.toLocaleString() + ' of them differ from the theoretical date' + (same ? ' (' + same.toLocaleString() + ' match it)' : '') + '. ' +
+    'Cadence\'s Override Audit can list more: it also lists old entries dated in the past, which no longer move anything. ' +
+    (before ? 'The budget will use the dragged dates.' : 'This budget uses the dragged dates.') +
+    '<div><button class="hzb-btn hzb-pri" onclick="_hzbClearDragged()">Clear them in Cadence&hellip;</button>' +
+    (before ? '<button class="hzb-btn" onclick="_hzbRunAnyway()">Run the budget with them</button>' : '') + '</div></div>';
+}
+function _hzbRunAnyway() { const d = NumaCoreBudget.dragged(); _hzbDragAck = d ? d.count : 0; _hzbRender(); }
+function _hzbClearDragged() {
+  showToast('Opening Cadence\'s Override Audit. Press "Clear All Orphans" there, then come back to Horizon → Budget.', 'info', 9000);
+  switchTab('cadence');
+  let tries = 0;
+  const go = function () {
+    tries++;
+    try {
+      const f = document.getElementById('embedFrame-cadence'), b = f && embedReady.cadence && f.contentWindow && f.contentWindow.document.getElementById('openOverrideAuditBtn');
+      if (b) { b.click(); return; }
+    } catch (e) { tries = 99; }
+    if (tries < 40) setTimeout(go, 300);
+    else showToast('In Cadence: Config → Open Override Audit → Clear All Orphans.', 'warn', 9000);
+  };
+  setTimeout(go, 400);
 }
 function _hzbRender() {
   const el = document.getElementById('hz-view-bud'); if (!el) return;
   if (!lensRawData) { el.innerHTML = '<div class="hzb-note">Load a fleet file to see the budget.</div>'; return; }
   if (!_hzbEnsure()) { el.innerHTML = '<div class="hzb-note hzb-warn">The budget could not load: <code>numacore_budget.js</code> is missing beside this page.</div>'; return; }
+  // v4.22 — before the budget runs: the dragged dates, and the way to clear them
+  if (!_hzbPack) {
+    let dg = null; try { dg = NumaCoreBudget.refresh(); } catch (e) { console.warn('budget rows:', e); }
+    if (dg && dg.count > 0 && _hzbDragAck !== dg.count) {
+      el.innerHTML = '<div class="hzb-bar"><span>Before the budget runs</span></div>' + _hzbDragHtml(dg, true);
+      return;
+    }
+  }
   if (!_hzbPack) { try { _hzbPack = NumaCoreBudget.run(); } catch (e) { console.warn('budget run:', e); el.innerHTML = '<div class="hzb-note hzb-warn">The budget could not be worked out: ' + esc(e.message || String(e)) + '</div>'; return; } }
   const p = _hzbPack, res = p.res, o = p.opts, rc = res.reconciliation, rk = res.risk.count, w = res.windowEffect || {};
   const blend = rc.baseGrand > 0 ? (Math.round((rc.grandTotal / rc.baseGrand - 1) * 1000) / 10) : 0;
@@ -6622,7 +6718,7 @@ function _hzbRender() {
     if (!hasWin) tl = '<b>Machine timeline on.</b> No machine has a retired date or a parked period, so this is the same as Cadence\'s rule.';
     else tl = '<b>Machine timeline on:</b> ' + _hzbMoney(rc.grandTotal) + '. By Cadence\'s rule (every machine to the end of the period) it would be <b>' + (base === null ? '—' : _hzbMoney(base)) + '</b>' +
       (base === null ? '' : ', a difference of <b>' + _hzbMoney(Math.abs(base - rc.grandTotal)) + '</b>' + (base >= rc.grandTotal ? ' less' : ' more')) + '. ' +
-      gone.length + ' machine' + (gone.length === 1 ? '' : 's') + ' past the retired date left out' + (gone.length ? ' (' + esc(gone.slice(0, 8).join(', ')) + (gone.length > 8 ? ', …' : '') + ')' : '') + ' · ' +
+      gone.length + ' machine' + (gone.length === 1 ? '' : 's') + ' past the retired date left out' + (gone.length ? ' (' + esc(gone.slice(0, 8).join(', ')) + (gone.length > 8 ? ', …' : '') + '); their backlog of <b>' + _hzbMoney(w.goneBacklog || 0) + '</b> stays with them, outside the budget' : '') + ' · ' +
       (w.dropped || 0) + ' change-out' + (w.dropped === 1 ? '' : 's') + ' after a retired date not budgeted (' + _hzbMoney(w.droppedCost || 0) + ') · ' +
       (w.moved || 0) + ' moved out by parked periods.';
   }
@@ -6636,7 +6732,12 @@ function _hzbRender() {
     '<div class="hzb-kpis">' + kpi('Life-of-fleet total', _hzbMoney(rc.grandTotal), true) + kpi('In periods', _hzbMoney(rc.bandsTotal)) + kpi('Overdue / backlog', _hzbMoney(rc.overdueTotal)) +
       kpi('Unscheduled (no date)', _hzbMoney(rc.unscheduledTotal)) + kpi('Adjustment factor (blended)', blend + '%') + '</div>' +
     '<div class="hzb-note">' + tl + '</div>' +
-    '<div class="hzb-note">Side by side with Cadence: this budget uses Cadence\'s own sums on the same plan. With <b>Machine timeline</b> unticked and the same period and settings, the totals should equal Cadence\'s Budget. Cadence\'s Budget button still works and is not changed.</div>' +
+    (function () {   /* v4.22 — the dragged dates in this budget, and what they change */
+      const d = NumaCoreBudget.dragged(); if (!d || !d.count) return '';
+      const eff = p.theo ? (rc.grandTotal - p.theo.reconciliation.grandTotal) : null;
+      return _hzbDragHtml(d, false).replace('</div></div>', '</div>' + (eff === null ? '' : '<div style="margin-top:8px">On theoretical dates the total would be <b>' + _hzbMoney(p.theo.reconciliation.grandTotal) + '</b>: the dragged dates make it <b>' + _hzbMoney(Math.abs(eff)) + (eff >= 0 ? ' more' : ' less') + '</b>.</div>') + '</div>');
+    })() +
+    '<div class="hzb-note">Side by side with Cadence: this budget uses Cadence\'s own sums on the same plan. With <b>Machine timeline</b> unticked and the same period and settings, the totals should equal Cadence\'s Budget (both use the same order: project date, dragged date, theoretical date). Cadence\'s Budget button still works and is not changed.</div>' +
     '<iframe id="hzb-frame" title="Budget report"></iframe>';
   const fr = document.getElementById('hzb-frame');
   try { fr.srcdoc = NumaCoreBudget.reportHtml(); } catch (e) { console.warn('budget report:', e); }
@@ -7262,7 +7363,7 @@ function renderPulse() {
           '<span class="pw-dot" style="background:'+clr+'"></span>'+
           '<span class="pw-comp">'+esc(c.component)+'</span>'+
           '<span class="pw-unit">'+esc(c.unit)+'</span>'+
-          '<span class="pw-unit">'+esc(ds)+'</span>'+
+          '<span class="pw-unit">'+esc(ds)+_lensBasisTag(c)+'</span>'+
           '</div>';
       }).join('');
     }
@@ -7350,7 +7451,7 @@ function renderPulse() {
           '<span class="pr-unit">'+esc(c.unit)+'</span>'+
           '<span class="pr-fleet">'+esc(fm)+'</span>'+
           '<span class="pr-pct" style="color:'+clr+'">'+pctTxt+'</span>'+
-          '<span class="pr-date">'+esc(ds)+'</span>'+
+          '<span class="pr-date">'+esc(ds)+_lensBasisTag(c)+'</span>'+
           '<span><span class="pr-badge" style="background:'+clr+'22;color:'+clr+';border:1px solid '+clr+'55">'+esc(status)+'</span></span>'+
           '</div>';
       }).join('');
@@ -7609,7 +7710,7 @@ function renderHeatmap(fleet, model) {
             '<span class="tip-line">&#x1F4CC; ' + esc(comp) + '</span>' +
             '<span class="tip-line">&#x23F1; ' + eH + ' hrs / ' + bn + ' hrs planned</span>' +
             '<span class="tip-line">&#x1F4C5; Installed: ' + esc(cData.install_date || '—') + '</span>' +
-            '<span class="tip-line">&#x1F504; Change-out: ' + esc(cData.pred_changeout || '—') + '</span>' +
+            '<span class="tip-line">&#x1F504; Change-out: ' + esc(cData.pred_changeout || '—') + _lensBasisTag(cData) + '</span>' +
             '</div>';
         } else {
           td.className = 'hm-cell hc-nobench';

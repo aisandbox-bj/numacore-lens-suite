@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    numacore_budget.js — the life-of-fleet BUDGET for NumaCore Lens (Horizon)
-   v1.0.0 · 2026-10-06
+   v1.1.0 · 2026-10-06
 
    Where it comes from
      The costing engine, the Excel workbook, the interactive report and the dialogs are LIFTED from Cadence v18.18
@@ -20,6 +20,15 @@
        date overrides, the theoretical date from hours (never for an overridden or project-linked component), dates in
        the past brought to today, the replacement-strategy default. A machine not on site yet is planned from its
        arrival (its last read date), as in Cadence.
+     • v1.1.0 (operator, 2026-10-06: "keep to the current order logic, but applied consistently everywhere: 1. Project
+       date wins 2. dragged date second... but with warnings (this is legacy and not preferred) 3. theoretical date"):
+         – the order itself is unchanged (it is Cadence's); what is new is that it is COUNTED and SHOWN. dragged() gives
+           the dates dragged by hand on components with no project: how many, how many differ from the theoretical
+           date, and (after a run) how much they change the total against the theoretical dates;
+         – planDates(json) gives Lens each component's theoretical date and whether it is project-linked or dragged,
+           so Pulse, Vitals and the machine tiles show the same date the budget uses;
+         – the backlog of a machine past its retired date is reported as its own figure (kept with the machine,
+           never budgeted).
      • Settings live in the plan's `horizon.budget` (Lens owns `horizon`). Cadence's `budgetConfig` is only read, to
        start Horizon's settings from; Cadence still owns and writes its own.
 
@@ -31,11 +40,15 @@
      NumaCoreBudget.compute(opts)  the engine (opts.windows: true = machine timeline on)
      NumaCoreBudget.setPlan(json, horizon) · rows(windows) · config() · setConfig(cfg) · last()
      NumaCoreBudget.reportHtml() · exportExcel() · downloadReport() · openRisk()
+     v1.1.0: planDates(json) → { byId:{id:{theo, linked, dragged}}, dragged, differ } · dragged() → { count, differ, list }
+             run() / onResult → { res, opts, base, theo }  (theo = the same run on theoretical dates; null when nothing is dragged)
    ═══════════════════════════════════════════════════════════════════════════ */
 (function (root) {
-var VERSION = '1.0.0', LIFTED_FROM = 'Cadence v18.18';
-var DATA = [];      // the plan rows, Cadence's rule
+var VERSION = '1.1.0', LIFTED_FROM = 'Cadence v18.18';
+var DATA = [];      // the plan rows, Cadence's rule (project date, else dragged date, else theoretical)
 var DATA_W = [];    // the same rows with parked periods applied to the next change-out (machine timeline on)
+var DATA_T = [], DATA_TW = [];   // v1.1.0 — the rows with dragged dates that have no project set aside (theoretical instead); only to measure their effect
+var DRAG = { count: 0, differ: 0, list: [] };   // v1.1.0 — dates dragged by hand on components with no project
 var WIN = {};       // UNIT → { end:'YYYY-MM-DD'|null, parked:[{from,to}] } from the plan's horizon section
 var HOST = null, LAST = null;
 function _scheduleSave() { try { if (HOST && HOST.onConfig) HOST.onConfig(budgetConfig); } catch (e) { console.warn('budget onConfig:', e); } }
@@ -86,7 +99,7 @@ function _nbWindows(horizon) {
 }
 
 // ── the plan rows: Cadence's load rules, in Cadence's order (see _initFromJSON in Cadence v18.18) ──
-function _nbBuildRows(json) {
+function _nbBuildRows(json, noOrphans) {
   json = json || {};
   var _components = (json.masterData && Array.isArray(json.masterData.components)) ? json.masterData.components
                   : (Array.isArray(json.components) ? json.components : []);
@@ -140,15 +153,18 @@ function _nbBuildRows(json) {
   var _ovV5 = Array.isArray(wd.componentDateOverrides) ? wd.componentDateOverrides : (Array.isArray(wf.componentDateOverrides) ? wf.componentDateOverrides : null);
   var _ovV4 = Array.isArray(wd.componentDates) ? wd.componentDates : (Array.isArray(wf.componentDates) ? wf.componentDates : null);
   var _dateOverrides = (_ovV5 && _ovV5.length) ? _ovV5 : (_ovV4 || []);
+  var linkedIds = new Set();
+  (_projects || []).forEach(function (p) { if (p && Array.isArray(p.linkedIds)) p.linkedIds.forEach(function (id) { linkedIds.add(id); }); });
+  // v1.1.0 — noOrphans: a date dragged by hand on a component with no project is set aside (measuring its effect only)
+  if (noOrphans) _dateOverrides = _dateOverrides.filter(function (o) { var oid = (o.id !== undefined) ? o.id : o.component_id; return oid !== undefined && linkedIds.has(oid); });
+  var byId = new Map(); rows.forEach(function (r) { if (!byId.has(r.id)) byId.set(r.id, r); });   // the first row with an id, as Array.find gives
   _dateOverrides.forEach(function (o) {
     var oid = (o.id !== undefined) ? o.id : o.component_id;
     if (oid === undefined) return;
-    var rec = rows.find(function (r) { return r.id === oid; });
-    if (rec) rec.changeout_date = o.changeout_date;
+    var rec = byId.get(oid);
+    if (rec) { rec.changeout_date = o.changeout_date; rec._nb_override = true; rec._nb_dragged_to = o.changeout_date; }
   });
   var overrideIds = new Set(_dateOverrides.map(function (o) { return (o.id !== undefined) ? o.id : o.component_id; }).filter(function (x) { return x !== undefined; }));
-  var linkedIds = new Set();
-  (_projects || []).forEach(function (p) { if (p && Array.isArray(p.linkedIds)) p.linkedIds.forEach(function (id) { linkedIds.add(id); }); });
   // the theoretical date from hours: (benchmark − hours used) ÷ use rate, from the last reading
   var _todayMs = Date.now();
   rows.forEach(function (r) {
@@ -161,7 +177,7 @@ function _nbBuildRows(json) {
     var newMs = refMs + daysRemaining * 86400000;
     if (isNaN(newMs)) return;
     var newTheoretical = new Date(newMs).toISOString().split('T')[0];
-    r.original_date = newTheoretical;
+    r.original_date = newTheoretical; r._nb_theo = newTheoretical;
     if (overrideIds.has(r.id)) return;
     if (linkedIds.has(r.id)) return;
     r.changeout_date = newTheoretical;
@@ -176,10 +192,40 @@ function _nbBuildRows(json) {
   });
   return rows;
 }
+// v1.1.0 — the dates dragged by hand on components that are in no project (Cadence calls them orphan overrides)
+function _nbDragged(rows) {
+  var list = [], differ = 0, _td = _localDs(new Date());
+  rows.forEach(function (r) {
+    if (!r._nb_override || r._nb_linked) return;
+    // Cadence's own test for a live dragged date: after its load rules the working date still differs from the
+    // theoretical one, and it is not just an overdue date brought to today. An old entry dated in the past no longer
+    // moves anything (Cadence drops it at its next save), so it is not counted.
+    if (r.changeout_date === r.original_date) return;
+    if (r.changeout_date === _td && r.original_date && r.original_date < _td) return;
+    var d = String(r._nb_dragged_to || '').slice(0, 10), t = r._nb_theo || null, diff = !!(t && d && d !== t);
+    if (diff) differ++;
+    list.push({ id: r.id, fleet: r.fleet || '', model: r.model || '', unit: String(r.unit || ''), component: r.component || '', dragged: d, theoretical: t, differs: diff });
+  });
+  return { count: list.length, differ: differ, list: list };
+}
+function planDates(json) {
+  var rows = _nbBuildRows(json), byId = {}, d = _nbDragged(rows), live = {};
+  d.list.forEach(function (x) { live[x.id] = 1; });
+  rows.forEach(function (r) { if (r.id != null && byId[r.id] === undefined) byId[r.id] = { theo: r._nb_theo || null, linked: !!r._nb_linked, dragged: !!live[r.id] }; });
+  return { byId: byId, dragged: d.count, differ: d.differ };
+}
+function _nbRowsFor(opts) { return opts.theoOnly ? (opts.windows ? DATA_TW : DATA_T) : (opts.windows ? DATA_W : DATA); }
 function setPlan(json, horizon) {
   DATA = _nbBuildRows(json);
+  DRAG = _nbDragged(DATA);
   WIN = _nbWindows(horizon);
-  DATA_W = DATA.map(function (r) {
+  DATA_W = _nbParkedRows(DATA);
+  DATA_T = DRAG.count ? _nbBuildRows(json, true) : DATA;
+  DATA_TW = DRAG.count ? _nbParkedRows(DATA_T) : DATA_W;
+  return DATA.length;
+}
+function _nbParkedRows(rowsIn) {
+  return rowsIn.map(function (r) {
     var w = WIN[String(r.unit || '').toUpperCase()];
     if (!w || !w.parked.length || r._nb_linked || !r.changeout_date) return r;
     var d = String(r.changeout_date).slice(0, 10), ref = String(r.last_read || '').slice(0, 10);
@@ -191,7 +237,6 @@ function setPlan(json, horizon) {
     var nd = new Date(x), iso = nd.getUTCFullYear() + '-' + String(nd.getUTCMonth() + 1).padStart(2, '0') + '-' + String(nd.getUTCDate()).padStart(2, '0');
     return Object.assign({}, r, { changeout_date: iso, _nb_moved: true, _nb_from: d });
   });
-  return DATA.length;
 }
 
 // ── lifted from Cadence: the budget engine (+ the machine timeline, marked "numacore_budget") ──
@@ -265,8 +310,9 @@ function _budgetComponentEvents(r, ctx) {
   // numacore_budget — the machine's Horizon window. null = no window for this machine, or the timeline is off
   // (Cadence's rule: unchanged). wfx reports what the window did to this component.
   const win = ctx.win ? ctx.win(r) : null;
-  const wfx = { gone: false, dropped: 0, droppedCost: 0, moved: r._nb_moved ? 1 : 0 };
-  if (win && win.gone) { wfx.gone = true; return { events, risk, unscheduledCost: 0, overdueCost: 0, wfx }; }
+  const wfx = { gone: false, goneBacklog: 0, dropped: 0, droppedCost: 0, moved: r._nb_moved ? 1 : 0 };
+  // a machine past its retired date: its backlog stays with the machine and is never budgeted (operator, 2026-10-06)
+  if (win && win.gone) { wfx.gone = true; wfx.goneBacklog = (tier !== 'unscheduled' && _budgetIsOverdue(r, todayDs)) ? cost : 0; return { events, risk, unscheduledCost: 0, overdueCost: 0, wfx }; }
   if (tier === 'unscheduled') {
     risk.unscheduled = true;
     return { events, risk, unscheduledCost: cost, overdueCost: 0, wfx };
@@ -389,11 +435,11 @@ function _computeBudget(userOpts) {
     includeOverdueForward: opts.includeOverdueForward,
     win: opts.windows ? _nbWinFn(today) : null
   };
-  const winFx = { on: !!opts.windows, goneUnits: {}, goneComponents: 0, dropped: 0, droppedCost: 0, moved: 0 };
+  const winFx = { on: !!opts.windows, goneUnits: {}, goneComponents: 0, goneBacklog: 0, dropped: 0, droppedCost: 0, moved: 0 };
 
   // Equipment selection: opts.units is a Set of selected unit names (null = all).
   const _selUnits = (opts.units instanceof Set) ? opts.units : null;
-  const rows = ((opts.windows ? DATA_W : DATA) || []).filter(r =>
+  const rows = (_nbRowsFor(opts) || []).filter(r =>
     (!opts.fleets || opts.fleets.has(r.fleet)) &&
     (!_selUnits || _selUnits.has(String(r.unit || '(no unit)')))
   );
@@ -414,7 +460,7 @@ function _computeBudget(userOpts) {
     const _mult  = 1 + bafPct/100;
     const _rAdj  = (bafPct !== 0) ? Object.assign({}, r, { cost: (Number(r.cost)||0) * _mult }) : r;
     const { events, risk, overdueCost, unscheduledCost, wfx } = _budgetComponentEvents(_rAdj, ctx);
-    if (wfx) { if (wfx.gone) { winFx.goneUnits[String(r.unit || '(no unit)')] = 1; winFx.goneComponents++; } winFx.dropped += wfx.dropped; winFx.droppedCost += wfx.droppedCost; winFx.moved += wfx.moved; }
+    if (wfx) { if (wfx.gone) { winFx.goneUnits[String(r.unit || '(no unit)')] = 1; winFx.goneComponents++; winFx.goneBacklog += wfx.goneBacklog || 0; } winFx.dropped += wfx.dropped; winFx.droppedCost += wfx.droppedCost; winFx.moved += wfx.moved; }
     const fkey = r.fleet || '(no fleet)', ukey = String(r.unit || '(no unit)');
     const pf = (perFleet[fkey] = perFleet[fkey] || { monthly:{}, overdue:0, unscheduled:0, base:0 });
     const pu = (perUnit[ukey]  = perUnit[ukey]  || { monthly:{}, overdue:0, unscheduled:0, base:0, fleet:fkey, model:r.model||'' });
@@ -831,7 +877,7 @@ function _bmBuildWorkbook(res, opts){
     ['Projection start', opts.projectionStart==='nextFY'?'Next fiscal year':'This month'],
     ['Short-term bucket', opts.bucketSize],['Fiscal year start (month)', opts.fiscalStartMonth],
     ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],['Equipment', eqNote],
-    ['Machine timeline (Horizon)', _nbWinText(res, opts)],
+    ['Machine timeline (Horizon)', _nbWinText(res, opts)],['Dragged dates with no project', _nbDragText()],
     ['Basis',"Today's money (no inflation)"],[],
     ['GRAND TOTAL', d0(rc.grandTotal)],
     ['In periods', d0(rc.bandsTotal)],['Overdue / backlog', d0(rc.overdueTotal)],['Unscheduled', d0(rc.unscheduledTotal)],[],
@@ -873,6 +919,7 @@ function _bmBuildPivotHtml(res, opts){
     ['Overdue budgeted forward', opts.includeOverdueForward?'Yes':'No'],
     ['Equipment', (opts.units instanceof Set)?(opts.units.size+' unit(s) selected'):'All equipment'],
     ['Machine timeline (Horizon)', _nbWinText(res, opts)],
+    ['Dragged dates with no project', _nbDragText()],
     ['Basis',"Today's money (inflation not applied)"] ];
   const rlab={unscheduled:'Unscheduled (undated)',inferredUtil:'Inferred util_rate',conditionModelled:'Condition-based (modelled)',missingBenchmark:'Missing benchmark',cost:'Cost missing/unparseable',capped:'Cycle-capped (suspect data)'};
   const risk={
@@ -1529,6 +1576,10 @@ function _nbWinText(res, opts) {
   return 'On: nothing after a retired date; parked periods move change-outs out. ' + g.length + ' machine(s) past their retired date left out' +
     (g.length ? ' (' + g.slice(0, 12).join(', ') + (g.length > 12 ? ', …' : '') + ')' : '') + '; ' + (w.dropped || 0) + ' change-out(s) after a retired date not budgeted; ' + (w.moved || 0) + ' moved by parked periods.';
 }
+function _nbDragText() {
+  if (!DRAG.count) return 'None';
+  return DRAG.count + ' component(s) carry a date dragged by hand and are in no project (' + DRAG.differ + ' differ from the theoretical date). The budget uses the dragged date. Legacy: a project date or the theoretical date is preferred.';
+}
 function _nbWindowsOn() { var el = document.getElementById('bmWindows'); return el ? !!el.checked : (budgetConfig.windows !== false); }
 // the period follows Horizon's "today until <year>" until the person sets one in the dialog
 function _nbDefaultPeriod() {
@@ -1548,7 +1599,10 @@ function _nbOpenExtras() {
 function _nbPack(res, opts) {
   var base = null;
   if (opts.windows) { try { base = _computeBudget(Object.assign({}, opts, { windows: false })); } catch (e) { console.warn('budget base run:', e); } }
-  LAST = { res: res, opts: opts, base: base };
+  // v1.1.0 — the same run on theoretical dates (dragged dates with no project set aside): how much they move the total
+  var theo = null;
+  if (DRAG.count) { try { theo = _computeBudget(Object.assign({}, opts, { theoOnly: true })); } catch (e) { console.warn('budget theoretical run:', e); } }
+  LAST = { res: res, opts: opts, base: base, theo: theo };
   return LAST;
 }
 function _nbAfterRun(res, opts) {
@@ -1558,7 +1612,7 @@ function _nbAfterRun(res, opts) {
 }
 function _nbRefresh() {
   if (!HOST) return;
-  try { setPlan(HOST.plan ? HOST.plan() : null, HOST.horizon ? HOST.horizon() : null); } catch (e) { console.warn('budget rows:', e); DATA = []; DATA_W = []; WIN = {}; }
+  try { setPlan(HOST.plan ? HOST.plan() : null, HOST.horizon ? HOST.horizon() : null); } catch (e) { console.warn('budget rows:', e); DATA = []; DATA_W = []; DATA_T = []; DATA_TW = []; DRAG = { count: 0, differ: 0, list: [] }; WIN = {}; }
 }
 function _nbSavedOpts() {
   var fsm = budgetConfig.fiscalStartMonth || 1, proj = budgetConfig.projectionStart || 'thisMonth', now = new Date();
@@ -1586,6 +1640,9 @@ root.NumaCoreBudget = {
   config: function () { return budgetConfig; },
   setConfig: function (cfg) { Object.keys(budgetConfig).forEach(function (k) { delete budgetConfig[k]; }); Object.assign(budgetConfig, NB_DEFAULTS, JSON.parse(JSON.stringify(cfg || {}))); },
   last: function () { return LAST; },
+  planDates: planDates,
+  dragged: function () { return DRAG; },
+  refresh: function () { _nbRefresh(); return DRAG; },
   reportHtml: function () { return LAST ? _bmBuildPivotHtml(LAST.res, LAST.opts) : ''; },
   exportExcel: function () { if (!LAST) return Promise.resolve(false); return _nbEnsureXLSX().then(function () { _bmExportExcel(LAST.res, LAST.opts); return true; }); },
   downloadReport: function () { _bmDownloadPivot(); },
